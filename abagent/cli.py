@@ -89,6 +89,65 @@ def check_api(api: Api) -> None:
                             "etag": etag})
 
 
+GAMEPLAY_FIELDS = ("cost", "deck_limit", "rarity", "supertype", "subtype",
+                   "is_retired", "is_vip")
+
+
+def card_fingerprints(catalog: list[dict]) -> dict[str, str]:
+    """A hash per card over the fields that change how it PLAYS.
+
+    Deliberately not the whole row: rules_text, flavour, art and ratings move
+    without altering a single simulation, and a detector that fires on those
+    is one nobody reads.
+    """
+    import hashlib
+    out = {}
+    for c in catalog:
+        parts = [str(c.get(f)) for f in GAMEPLAY_FIELDS]
+        parts.append(json.dumps(c.get("effects_json"), sort_keys=True))
+        parts.append(json.dumps(c.get("stats_json"), sort_keys=True))
+        parts.append(json.dumps(sorted(c.get("tags") or [])))
+        out[str(c["id"])] = hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
+    return out
+
+
+def detect_card_changes(catalog: list[dict], our_cards: set[int], log=print) -> set[int]:
+    """Cards whose rules moved since the last fetch. Returns the changed ids.
+
+    This matters more than it looks. Every measurement the agent holds was
+    taken under the rules in force at the time -- the tuned card_order, the
+    census, the archetype scores, the historical standings. A balance change
+    silently invalidates all of it, and nothing about it is visible to the
+    search: it compares candidates against the incumbent, so a change that
+    moves the whole format leaves every comparison looking normal while the
+    absolute answer has shifted underneath.
+
+    Observed: Warrior Bee went 2 -> 3 energy, fifteen copies of it in our
+    deck, and the measured cost was -0.7W. Six other cards moved in the same
+    edit, two of them fifteen-copy staples of the explorer's deck.
+    """
+    now = card_fingerprints(catalog)
+    prev = _load_or("card_fingerprints.json")
+    _save("card_fingerprints.json", now)
+    if not prev:
+        return set()
+
+    changed = {int(cid) for cid, h in now.items()
+               if cid in prev and prev[cid] != h}
+    if not changed:
+        return set()
+
+    names = {int(c["id"]): c.get("name") for c in catalog}
+    mine = changed & our_cards
+    log(f"cards: {len(changed)} card(s) changed rules — "
+        + ", ".join(f"{names.get(c, c)}" for c in sorted(changed)[:6]))
+    if mine:
+        log(f"cards: {len(mine)} of them are IN OUR DECK "
+            f"({', '.join(str(names.get(c, c)) for c in sorted(mine))}) — "
+            f"re-baselining rather than waiting for the hourly slot")
+    return changed
+
+
 def cmd_fetch(args, api: Api) -> int:
     check_api(api)
     os.makedirs(BIN, exist_ok=True)
@@ -121,7 +180,26 @@ def cmd_fetch(args, api: Api) -> int:
     # which the engine needs, and playable=1 drops token cards -- a deck that
     # creates tokens silently no-ops if the token definitions are missing.
     cards = api.cards()
+    prev_ids: set[int] = set()
+    try:
+        deck = api.deck(args.deck_id) if getattr(args, "deck_id", None) else None
+        prev_ids = {int(c["card_id"]) for c in (deck or {}).get("cards", [])}
+    except ApiError:
+        pass
+    changed = detect_card_changes(cards, prev_ids)
     _save("cards.json", cards)
+    if changed:
+        # Anything measured under the old rules is now an opinion. The
+        # explored-seed list is cleared for the changed cards specifically, so
+        # the explorer re-tests a card whose rules moved instead of skipping
+        # it forever on the strength of a measurement that no longer applies.
+        st = _load_or("explore.json")
+        if st.get("explored"):
+            st["explored"] = sorted(set(st["explored"]) - changed)
+            _save("explore.json", st)
+        sp = _load_or("slowpath.json")
+        sp["last"] = 0          # force the slow path on this cycle
+        _save("slowpath.json", sp)
     print(f"cards: {len(cards)} (full catalog, tokens included)")
 
     meta = api.meta(args.arena)
