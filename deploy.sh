@@ -45,11 +45,25 @@ sudo -u abagent --preserve-env=AB_API_KEY \
   python3 -u -m abagent.cli --arena pure fetch
 REMOTE
 
-echo "==> enabling timer"
-"${SSH[@]}" 'systemctl daemon-reload && systemctl enable --now abagent.timer \
-  && systemctl list-timers abagent.timer --no-pager'
+echo "==> reloading units (timer NOT enabled)"
+"${SSH[@]}" 'systemctl daemon-reload'
 
-echo "==> done"
-echo "    logs:   ssh root@$HOST journalctl -u abagent -f"
-echo "    status: ssh root@$HOST systemctl list-timers abagent.timer"
-echo "    stop:   ssh root@$HOST systemctl disable --now abagent.timer"
+# Deliberately does not start the timer. Enabling it means the agent begins
+# editing and registering a real deck into real cohorts against real players,
+# which is a decision to make deliberately after watching one cycle by hand.
+cat <<NEXT
+
+==> installed, timer is NOT running.
+
+  dry run one cycle:
+    ssh root@$HOST 'systemd-run --uid=abagent --pipe --wait \\
+      --property=EnvironmentFile=/etc/abagent.env \\
+      --working-directory=/opt/abagent \\
+      /usr/bin/python3 -u -m abagent.cli --arena pure --deck-id <ID> cycle'
+
+  then, to let it run every 10 minutes:
+    ssh root@$HOST systemctl enable --now abagent.timer
+
+  logs:   ssh root@$HOST journalctl -u abagent -f
+  stop:   ssh root@$HOST systemctl disable --now abagent.timer
+NEXT

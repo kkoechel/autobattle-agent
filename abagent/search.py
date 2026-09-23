@@ -61,7 +61,8 @@ def _seed_block(rng: random.Random, n: int) -> list[int]:
 
 
 def climb(harness: Harness, cards: list[int], opponents: list[Opponent],
-          start_plan: dict | None = None, sweep_seeds: int = 5,
+          start_plan: dict | None = None, card_info: dict[int, dict] | None = None,
+          sweep_seeds: int = 5,
           confirm_seeds: int = 21, max_sweeps: int = 6, min_t: float = 2.0,
           rng: random.Random | None = None, deadline: float | None = None,
           log=print) -> tuple[dict, Score, list[Step]]:
@@ -84,7 +85,7 @@ def climb(harness: Harness, cards: list[int], opponents: list[Opponent],
                 return plan, incumbent, history
             if not is_live_field(plan, field) and field != "play_priority":
                 continue
-            cand = neighbors(plan, field, values)
+            cand = neighbors(plan, field, values, cards, card_info)
             if not cand:
                 continue
 

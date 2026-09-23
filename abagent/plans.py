@@ -55,16 +55,65 @@ def is_live_field(plan: dict, field: str) -> bool:
     return True
 
 
-def neighbors(plan: dict, field: str, values: list) -> list[dict]:
-    """Every one-field variation of `plan`, excluding the plan itself."""
+def neighbors(plan: dict, field: str, values: list, cards: list[int] | None = None,
+              card_info: dict[int, dict] | None = None) -> list[dict]:
+    """Every one-field variation of `plan`, excluding the plan itself.
+
+    For play_priority the variation also carries whatever companion list the
+    value needs, so each candidate is the strategy it is named after rather
+    than a silent fallback to draw order.
+    """
     out = []
     for v in values:
         if plan.get(field) == v:
             continue
         p = dict(plan)
         p[field] = v
+        if field == "play_priority" and cards is not None:
+            key = COMPANION_LIST.get(v)
+            if key and not p.get(key):
+                p.update(seed_companion(v, cards, card_info))
+                if key and not p.get(key):
+                    continue  # cannot seed it -> would be a no-op, skip it
         out.append(p)
     return out
+
+
+# play_priority values whose sort is a SILENT NO-OP when their companion list
+# is empty. In validate.go each is guarded by `if len(plan.X) > 0`, so the hand
+# keeps its existing order -- which is draw order. Offering these to a search
+# without seeding the list does not test three strategies; it tests draw_order
+# three times under three names, and then reports the winner under whichever
+# name it happened to try first.
+COMPANION_LIST = {
+    "card_order": "card_order",
+    "type_order": "type_order",
+    "tag_order": "tag_order",
+}
+
+
+def seed_companion(value: str, cards: list[int],
+                   card_info: dict[int, dict] | None = None) -> dict:
+    """The extra keys a play_priority value needs to actually do anything."""
+    key = COMPANION_LIST.get(value)
+    if key is None:
+        return {}
+    if key == "card_order":
+        return {"card_order": card_order_from_deck(cards)}
+    if card_info is None:
+        return {}
+    counts: dict[str, int] = {}
+    for cid in cards:
+        info = card_info.get(cid) or {}
+        if key == "type_order":
+            t = info.get("subtype") or info.get("supertype")
+            if t:
+                counts[t] = counts.get(t, 0) + 1
+        else:
+            for tag in info.get("tags") or []:
+                counts[tag] = counts.get(tag, 0) + 1
+    ranked = [k for k, _ in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
+    return {key: ranked} if ranked else {}
 
 
 def card_order_from_deck(cards: list[int]) -> list[int]:

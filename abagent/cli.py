@@ -89,6 +89,12 @@ def cmd_fetch(args, api: Api) -> int:
     return 0
 
 
+def card_info_map(catalog: list[dict]) -> dict[int, dict]:
+    return {int(c["id"]): {"subtype": c.get("subtype"),
+                           "supertype": c.get("supertype"),
+                           "tags": c.get("tags") or []} for c in catalog}
+
+
 def _setup(args, api: Api):
     cards_cat = _load("cards.json")
     meta = _load(f"meta_{args.arena}.json")
@@ -96,11 +102,11 @@ def _setup(args, api: Api):
     mine = expand(deck)
     opps = opponents_from_meta(meta, exclude_deck_ids={args.deck_id})
     h = Harness(VALIDATOR, cards_cat, workdir=VAR)
-    return h, deck, mine, opps
+    return h, deck, mine, opps, card_info_map(cards_cat)
 
 
 def cmd_baseline(args, api: Api) -> int:
-    h, deck, mine, opps = _setup(args, api)
+    h, deck, mine, opps, _info = _setup(args, api)
     plan = deck.get("battle_plan") or {}
     print(f"deck {args.deck_id} '{deck['name']}' — {len(mine)} cards, "
           f"{len(set(mine))} distinct")
@@ -115,12 +121,12 @@ def cmd_baseline(args, api: Api) -> int:
 
 
 def cmd_climb(args, api: Api) -> int:
-    h, deck, mine, opps = _setup(args, api)
+    h, deck, mine, opps, info = _setup(args, api)
     start = dict(deck.get("battle_plan") or {})
     if args.seed_card_order and not start.get("card_order"):
         start["card_order"] = card_order_from_deck(mine)
     t = time.time()
-    plan, score, hist = climb(h, mine, opps, start,
+    plan, score, hist = climb(h, mine, opps, start, card_info=info,
                               sweep_seeds=args.sweep_seeds,
                               confirm_seeds=args.confirm_seeds,
                               max_sweeps=args.sweeps, min_t=args.min_t,
@@ -140,6 +146,26 @@ def cmd_climb(args, api: Api) -> int:
     return 0
 
 
+def cmd_clone(args, api: Api) -> int:
+    """Copy a deck into a new one for the agent to own.
+
+    The agent gets its own deck rather than editing an existing one: a human's
+    deck is not ours to overwrite, and keeping the original intact means
+    re-registering it is the whole rollback.
+    """
+    src = api.deck(args.source)
+    new = api.create_deck(args.name)
+    deck_id = int(new["deck"]["id"] if "deck" in new else new["id"])
+    cards = [{"card_id": int(c["card_id"]), "quantity": int(c["quantity"])}
+             for c in src["cards"]]
+    api.update_deck(deck_id, cards=cards, battle_plan=src.get("battle_plan") or {})
+    total = sum(c["quantity"] for c in cards)
+    print(f"created deck {deck_id} '{args.name}' from {args.source}: "
+          f"{total} cards, {len(cards)} distinct")
+    print(f"point the agent at it:  --deck-id {deck_id}")
+    return 0
+
+
 def cmd_cycle(args, api: Api) -> int:
     """One unattended pass: refresh, climb within a budget, register if better.
 
@@ -149,11 +175,11 @@ def cmd_cycle(args, api: Api) -> int:
     """
     t0 = time.time()
     cmd_fetch(args, api)
-    h, deck, mine, opps = _setup(args, api)
+    h, deck, mine, opps, info = _setup(args, api)
     start = dict(deck.get("battle_plan") or {})
 
     deadline = t0 + args.budget
-    plan, score, hist = climb(h, mine, opps, start,
+    plan, score, hist = climb(h, mine, opps, start, card_info=info,
                               sweep_seeds=args.sweep_seeds,
                               confirm_seeds=args.confirm_seeds,
                               max_sweeps=args.sweeps, min_t=args.min_t,
@@ -211,6 +237,11 @@ def main(argv=None) -> int:
     c.add_argument("--register", action="store_true")
     c.set_defaults(fn=cmd_climb)
 
+    n = sub.add_parser("clone")
+    n.add_argument("--source", type=int, required=True)
+    n.add_argument("--name", default="abagent Standard")
+    n.set_defaults(fn=cmd_clone)
+
     y = sub.add_parser("cycle")
     y.add_argument("--budget", type=int, default=420,
                    help="seconds of search before it must stop (default 420)")
@@ -226,7 +257,10 @@ def main(argv=None) -> int:
 
     args = ap.parse_args(argv)
     api = Api()
-    if args.deck_id is None and args.cmd in ("baseline", "climb", "cycle"):
+    if args.deck_id is None and args.cmd == "cycle":
+        raise SystemExit("cycle requires an explicit --deck-id: it edits and "
+                         "registers that deck unattended")
+    if args.deck_id is None and args.cmd in ("baseline", "climb"):
         args.deck_id = api.me()["active_deck_id"]
         print(f"(using active deck {args.deck_id})")
     return args.fn(args, api)
