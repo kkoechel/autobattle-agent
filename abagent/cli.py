@@ -13,7 +13,7 @@ import urllib.request
 from .api import Api, ApiError
 from .harness import Harness, opponents_from_meta
 from .plans import card_order_from_deck, describe
-from .search import climb
+from .search import climb, optimise
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VAR = os.path.join(ROOT, "var")
@@ -48,7 +48,39 @@ def expand(deck: dict) -> list[int]:
 
 # --- commands ------------------------------------------------------------
 
+def check_api(api: Api) -> None:
+    """Notice when the server's API changes under us.
+
+    Worth doing every cycle rather than never: the register endpoint gained an
+    `arena` parameter in 1.9.0 that removed an entire class of workaround from
+    this client, and nothing would have told us. New paths are reported by
+    name so a capability we should be using does not sit unnoticed.
+    """
+    try:
+        version, paths = api.api_version(), api.api_paths()
+    except Exception as e:                      # never block a cycle on this
+        print(f"api: version check failed ({e.__class__.__name__}), continuing")
+        return
+
+    prev = {}
+    try:
+        prev = _load("api_seen.json")
+    except (FileNotFoundError, ValueError):
+        pass
+
+    if prev.get("version") != version:
+        print(f"api: version {prev.get('version', '(first run)')} -> {version}")
+    added = paths - set(prev.get("paths") or [])
+    removed = set(prev.get("paths") or []) - paths
+    if prev and added:
+        print(f"api: NEW endpoints: {', '.join(sorted(added))}")
+    if prev and removed:
+        print(f"api: REMOVED endpoints: {', '.join(sorted(removed))}")
+    _save("api_seen.json", {"version": version, "paths": sorted(paths)})
+
+
 def cmd_fetch(args, api: Api) -> int:
+    check_api(api)
     os.makedirs(BIN, exist_ok=True)
     vv = api.validator_version()
     want = vv["go"]["version"]
@@ -160,6 +192,21 @@ def register_when_targetable(api: Api, arena: str, deck_id: int,
     So we wait for the target arena to reach the front of the queue. That
     window is about 50 seconds wide and comes round every 10 minutes.
     """
+    # API >= 1.9.0 takes an explicit arena, which is durable (it writes
+    # user_arena_decks) and validates the deck against that arena's rules.
+    # That makes the whole timing dance below unnecessary -- it stays only as
+    # a fallback for a server that predates the parameter.
+    try:
+        res = api.register(deck_id, arena=arena)
+        print(f"register: {res.get('message') or 'entered ' + arena}"
+              f"{' (standing)' if res.get('standing') else ''}")
+        return True
+    except ApiError as e:
+        if e.status not in (400, 404, 422):
+            raise
+        print(f"register: server did not accept an explicit arena ({e.status}); "
+              f"falling back to waiting for the rotation")
+
     end = time.time() + wait_limit
     while True:
         nxt = api.next_closing_cohort()
@@ -216,6 +263,9 @@ def cmd_cycle(args, api: Api) -> int:
     # number. Overshooting means registering after the close, which does not
     # error -- it silently enters the NEXT cohort instead, so the agent loses
     # a window and the log looks entirely normal.
+    catalog = {int(c["id"]): c for c in _load("cards.json")}
+    meta_decks = _load(f"meta_{args.arena}.json")["decks"]
+
     budget = args.budget
     live = api.open_cohort_for(args.arena)
     if live:
@@ -229,21 +279,44 @@ def cmd_cycle(args, api: Api) -> int:
             return 0
 
     deadline = t0 + budget
-    plan, score, hist = climb(h, mine, opps, start, card_info=info,
+    rng = random.Random(int(t0))
+
+    # Play order and card list FIRST. The scalar surface is close to
+    # exhausted -- the last full run confirmed 2 of 8 challengers and the
+    # final sweep found nothing -- while an unbiased validation costs ~125s,
+    # so leading with scalar sweeps would spend the whole budget confirming
+    # nothing and hit the deadline before a single swap was tried.
+    cards, plan, swaps = optimise(h, mine, opps, meta_decks, catalog, start,
+                                  card_info=info, sweep_seeds=args.sweep_seeds,
+                                  confirm_seeds=args.confirm_seeds,
+                                  min_t=args.min_t, confirm_top=args.confirm_top,
+                                  validate_seeds=args.validate_seeds,
+                                  rounds=args.rounds, rng=rng, deadline=deadline)
+    confirmed = list(swaps)
+
+    # Then the standing instructions, with whatever budget is left -- they
+    # can shift once the card list moves under them.
+    plan, score, hist = climb(h, cards, opps, plan, card_info=info,
                               sweep_seeds=args.sweep_seeds,
                               confirm_seeds=args.confirm_seeds,
                               max_sweeps=args.sweeps, min_t=args.min_t,
                               confirm_top=args.confirm_top,
-                              rng=random.Random(int(t0)),
-                              deadline=deadline)
+                              validate_seeds=args.validate_seeds,
+                              rng=rng, deadline=deadline)
+    confirmed += [f"{s.field}={s.after!r} {s.gain:+.1f}W" for s in hist if s.confirmed]
 
-    confirmed = [s for s in hist if s.confirmed]
     if not confirmed:
         print(f"cycle: no confirmed improvement in {time.time() - t0:.0f}s, "
               f"leaving deck {args.deck_id} as-is")
         return 0
 
-    api.update_deck(args.deck_id, battle_plan=plan)
+    deck_cards = None
+    if cards != mine:
+        counts: dict[int, int] = {}
+        for cid in cards:
+            counts[cid] = counts.get(cid, 0) + 1
+        deck_cards = [{"card_id": c, "quantity": q} for c, q in sorted(counts.items())]
+    api.update_deck(args.deck_id, cards=deck_cards, battle_plan=plan)
     _save(f"plan_{args.deck_id}.json", plan)
     print(f"cycle: applied {len(confirmed)} change(s) to deck {args.deck_id} "
           f"— {describe(plan)}")
@@ -313,6 +386,10 @@ def main(argv=None) -> int:
     y.add_argument("--sweeps", type=int, default=4)
     y.add_argument("--min-t", type=float, default=2.0)
     y.add_argument("--confirm-top", type=int, default=3)
+    y.add_argument("--validate-seeds", type=int, default=161,
+                   help="seeds for the final unbiased test of a chosen move")
+    y.add_argument("--rounds", type=int, default=3,
+                   help="order+swap rounds after the scalar search")
     y.add_argument("--register-wait", type=int, default=240,
                    help="seconds to wait for the arena to reach the front")
     y.add_argument("--margin", type=int, default=90,

@@ -64,7 +64,7 @@ def climb(harness: Harness, cards: list[int], opponents: list[Opponent],
           start_plan: dict | None = None, card_info: dict[int, dict] | None = None,
           sweep_seeds: int = 5,
           confirm_seeds: int = 21, max_sweeps: int = 6, min_t: float = 2.0,
-          confirm_top: int = 3, validate_seeds: int = 41,
+          confirm_top: int = 3, validate_seeds: int = 161,
           rng: random.Random | None = None, deadline: float | None = None,
           log=print) -> tuple[dict, Score, list[Step]]:
     rng = rng or random.Random(20260922)
@@ -167,7 +167,7 @@ def climb(harness: Harness, cards: list[int], opponents: list[Opponent],
 def sweep_and_confirm(harness: Harness, base_cards: list[int], base_plan: dict,
                       cands: list[tuple[list[int], dict]], opponents: list[Opponent],
                       rng: random.Random, sweep_seeds: int, confirm_seeds: int,
-                      min_t: float, confirm_top: int, validate_seeds: int = 41
+                      min_t: float, confirm_top: int, validate_seeds: int = 161
                       ) -> tuple[list[int], dict, float, float] | None:
     """Select cheaply, narrow, then VALIDATE the single survivor.
 
@@ -225,7 +225,8 @@ def optimise(harness: Harness, cards: list[int], opponents: list[Opponent],
              meta_decks: list[dict], catalog: dict[int, dict],
              plan: dict | None = None, card_info: dict[int, dict] | None = None,
              sweep_seeds: int = 5, confirm_seeds: int = 21, min_t: float = 2.0,
-             confirm_top: int = 3, rounds: int = 4, order_samples: int = 12,
+             confirm_top: int = 3, validate_seeds: int = 161,
+             rounds: int = 4, order_samples: int = 12,
              swap_samples: int = 16, rng: random.Random | None = None,
              deadline: float | None = None, log=print
              ) -> tuple[list[int], dict, list[str]]:
@@ -254,7 +255,8 @@ def optimise(harness: Harness, cards: list[int], opponents: list[Opponent],
         # --- play order -------------------------------------------------
         cands = [(cards, p) for p in order_moves(plan, rng, order_samples)]
         got = sweep_and_confirm(harness, cards, plan, cands, opponents, rng,
-                                sweep_seeds, confirm_seeds, min_t, confirm_top)
+                                sweep_seeds, confirm_seeds, min_t, confirm_top,
+                                validate_seeds)
         if got:
             _, plan, gain, t = got
             head = ", ".join(nm(c) for c in (plan.get("card_order") or [])[:3])
@@ -293,7 +295,8 @@ def optimise(harness: Harness, cards: list[int], opponents: list[Opponent],
                 break
 
         got = sweep_and_confirm(harness, cards, plan, cands, opponents, rng,
-                               sweep_seeds, confirm_seeds, min_t, confirm_top)
+                               sweep_seeds, confirm_seeds, min_t, confirm_top,
+                               validate_seeds)
         if got:
             new_cards, new_plan, gain, t = got
             idx = next(i for i, (c, p) in enumerate(cands)

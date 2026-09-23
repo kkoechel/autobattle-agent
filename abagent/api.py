@@ -15,6 +15,7 @@ import urllib.parse
 import urllib.request
 
 BASE = "https://autobattle.online/api/v1"
+SPEC = "https://autobattle.online/api/openapi.json"   # one level up, not under /v1
 UA = "abagent/0.1 (+autobattle deck agent)"
 
 
@@ -143,5 +144,31 @@ class Api:
             body["battle_plan"] = battle_plan
         return self._call("PUT", f"/decks/{deck_id}", body=body)
 
-    def register(self, deck_id: int) -> dict:
-        return self._call("POST", "/cohort/register", body={"deck_id": deck_id})
+    def register(self, deck_id: int, arena: str | None = None) -> dict:
+        """Register a deck, optionally naming the arena.
+
+        Without `arena` the server takes whichever cohort closes soonest
+        across ALL arenas, so which format you enter depends on what second
+        you called -- see register_when_targetable() in cli.py for the
+        workaround that needs. With it (API >= 1.9.0) registration is durable:
+        it writes user_arena_decks, so every future cohort in that arena
+        includes the deck, and it validates the deck against that arena's
+        rules instead of silently entering a format it cannot legally play.
+        """
+        body: dict = {"deck_id": deck_id}
+        if arena:
+            body["arena"] = arena
+        return self._call("POST", "/cohort/register", body=body)
+
+    def api_version(self) -> str:
+        """The served OpenAPI version. Unauthenticated, and not under /v1."""
+        req = urllib.request.Request(SPEC, method="GET")
+        req.add_header("User-Agent", UA)
+        with urllib.request.urlopen(req, timeout=self.timeout) as r:
+            return str(json.loads(r.read().decode())["info"]["version"])
+
+    def api_paths(self) -> set[str]:
+        req = urllib.request.Request(SPEC, method="GET")
+        req.add_header("User-Agent", UA)
+        with urllib.request.urlopen(req, timeout=self.timeout) as r:
+            return set(json.loads(r.read().decode())["paths"])
