@@ -928,7 +928,7 @@ def cmd_explore(args, api: Api) -> int:
     import collections
     import statistics
 
-    from .archetype import generate, name_for, recent_seeds
+    from .archetype import generate, name_for, recent_seeds, theme_of
 
     cmd_fetch(args, api)
     cat_list = _load("cards.json")
@@ -971,12 +971,61 @@ def cmd_explore(args, api: Api) -> int:
     print(f"explore: {len(slice_)} seeds ({len(fresh)} new, "
           f"rotation at {off} of {len(seeds_all)})")
 
+    # Candidates come from two places, and the second matters more.
+    #
+    # Tag archetypes build a deck from scratch around a seed. They are
+    # coherent and they are weak: 12-16 wins against a field of 60-win decks,
+    # because a consistent theme is not the same as a working deck.
+    #
+    # Mutations take a list that demonstrably works -- the top of the recent
+    # standings -- and substitute in cards the metagame has never played. The
+    # shell supplies the engine, the curve and the play order; the unplayed
+    # pool supplies the surprise. An unorthodox deck that also FUNCTIONS is
+    # far likelier to be one swap from a 60-win deck than ten swaps from a
+    # blank sheet.
     archs, seen = [], set()
     for a in generate(slice_, catalog, meta["decks"]):
         key = tuple(sorted(collections.Counter(a.cards).items()))
         if key not in seen:
             seen.add(key)
             archs.append(a)
+
+    mutants = []
+    if args.mutate:
+        from .archetype import Archetype, mutate
+        store = _load_or(f"history_{args.arena}.json")
+        top = history.deck_records(store, min_appearances=3,
+                                   window=24)[:args.mutate_from]
+        rng = random.Random(int(time.time()))
+        pool = [c for c in seeds_all]          # unplayed, already partitioned
+        for rec in top:
+            try:
+                pub = api.public_deck(rec.deck_id)
+            except ApiError:
+                continue
+            ids = pub.get("card_ids") or []
+            if len(ids) < 90:
+                continue
+            for _ in range(args.mutate_each):
+                m = mutate(ids, pub.get("battle_plan") or {}, catalog, pool,
+                           rng, swaps=args.mutate_swaps)
+                if not m:
+                    continue
+                mcards, mplan, mlog = m
+                key = tuple(sorted(collections.Counter(mcards).items()))
+                if key in seen:
+                    continue
+                seen.add(key)
+                nm = catalog.get(mlog[0][1], {}).get("name", "?")
+                mutants.append(Archetype(
+                    seed=mlog[0][1], seed_name=f"{rec.name[:14]}+{nm[:14]}",
+                    cards=mcards, plan=mplan,
+                    theme=theme_of(mlog[0][1], catalog),
+                    members=sorted(collections.Counter(mcards).items(),
+                                   key=lambda kv: -kv[1])))
+        print(f"explore: {len(mutants)} mutations of the top "
+              f"{len(top)} decks, {len(archs)} tag archetypes")
+        archs = mutants + archs
     if not archs:
         print("explore: no archetypes from this slice")
         _save("explore.json", state)
@@ -1282,6 +1331,13 @@ def main(argv=None) -> int:
     e.add_argument("--new-days", type=int, default=7,
                    help="treat cards added this recently as priority seeds")
     e.add_argument("--validate-seeds", type=int, default=161)
+    e.add_argument("--mutate", action="store_true", default=True,
+                   help="mutate top decks with unplayed cards (primary source)")
+    e.add_argument("--no-mutate", dest="mutate", action="store_false")
+    e.add_argument("--mutate-from", type=int, default=8,
+                   help="how many top decks to use as shells")
+    e.add_argument("--mutate-each", type=int, default=4)
+    e.add_argument("--mutate-swaps", type=int, default=3)
     e.add_argument("--seed-mod", type=int, default=1,
                    help="partition the seed space across explorers")
     e.add_argument("--seed-rem", type=int, default=0)

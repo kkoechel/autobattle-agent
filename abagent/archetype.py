@@ -73,14 +73,25 @@ def affinity(cid: int, theme: set[str], catalog: dict[int, dict]) -> float:
 
 def staples(meta_decks: list[dict], catalog: dict[int, dict], top: int = 10
             ) -> list[int]:
-    """Cards the field runs across archetypes, most widespread first."""
+    """Cards the field runs across archetypes, most widespread first.
+
+    Cards with no rules text are excluded even though they are among the most
+    widespread. Straw Man-at-Arms is in 33 of 70 decks, second only to Ancient
+    Power Station -- not because it does anything, but because it is what
+    everyone pads to 100 with. Counting deck presence alone mistakes that
+    popularity for utility, and it put 15 blank cards into every generated
+    deck: 15% of a list, in a format that plays itself, where a dead draw is
+    simply a wasted turn.
+    """
     seen: dict[int, int] = {}
     for d in meta_decks:
         for cid in set(d["cards"]):
             seen[cid] = seen.get(cid, 0) + 1
     from .moves import is_playable
     ranked = sorted(seen.items(), key=lambda kv: -kv[1])
-    return [cid for cid, _ in ranked if is_playable(catalog.get(cid))][:top]
+    return [cid for cid, _ in ranked
+            if is_playable(catalog.get(cid))
+            and (catalog.get(cid, {}).get("rules_text") or "").strip()][:top]
 
 
 def build(seed: int, catalog: dict[int, dict], meta_decks: list[dict],
@@ -124,7 +135,22 @@ def build(seed: int, catalog: dict[int, dict], meta_decks: list[dict],
             picks.append((cid, q))
             total += q
 
-    if total < size:                       # pad to exactly 100
+    # Top up what we already chose before reaching for filler. The first
+    # version padded straight to 100 with Straw Man-at-Arms, whose rules text
+    # is empty -- 15% of every generated deck was a card that does nothing,
+    # in a format where the deck is played for you and a dead draw is simply a
+    # wasted turn. More copies of a card the archetype actually wants is
+    # strictly better than a blank, and only genuinely runs out at the point
+    # every pick is at its deck_limit.
+    if total < size:
+        for i, (cid, q) in enumerate(picks):
+            if total >= size:
+                break
+            headroom = min(limit(cid) - q, size - total)
+            if headroom > 0:
+                picks[i] = (cid, q + headroom)
+                total += headroom
+    if total < size:                       # genuinely nothing left to add
         picks.append((INFINITE_FILLER, size - total))
         total = size
 
@@ -240,3 +266,74 @@ def name_for(theme: list[str], fallback: str) -> str:
     adj = TAG_WORDS[known[0]][0]
     noun = TAG_WORDS[known[1]][1]
     return f"{adj} {noun}"
+
+
+def mutate(cards: list[int], plan: dict, catalog: dict[int, dict],
+           pool: list[int], rng, swaps: int = 3, qty_cap: int = 10
+           ) -> tuple[list[int], dict, list[tuple[int, int, int]]] | None:
+    """Perturb a WORKING deck with cards nobody plays.
+
+    The two generators here fail in opposite directions. Field mining only
+    ever proposes a card someone already runs, so it cannot be unorthodox by
+    construction. Tag archetypes build from scratch and produce naive shells:
+    they score 12-16 wins against a field of 60-win decks, because a coherent
+    theme is not the same as a working deck.
+
+    What neither does is combine them -- take a list that demonstrably works
+    and substitute in cards the metagame has never tried. The shell supplies
+    the engine, the curve and the play order; the pool supplies the surprise.
+    That is where an unorthodox deck that also functions is most likely to be.
+
+    Cuts are biased toward the back of card_order, the cards the deck itself
+    plays last, so the engine that makes it work is left intact. Returns
+    (cards, plan, [(cut, add, qty)]) or None if nothing legal could be built.
+    """
+    import collections
+    counts = collections.Counter(cards)
+    order = list(plan.get("card_order") or [])
+    rank = {cid: i for i, cid in enumerate(order)}
+    # Worst-ranked first, and unranked cards count as worst.
+    victims = sorted(counts, key=lambda c: -rank.get(c, 9999))
+    adds = [c for c in pool if c not in counts and is_playable(catalog.get(c))]
+    if not adds or not victims:
+        return None
+    rng.shuffle(adds)
+
+    new = collections.Counter(counts)
+    log: list[tuple[int, int, int]] = []
+    for cut in victims[:swaps * 3]:
+        if len(log) >= swaps or not adds:
+            break
+        add = adds.pop()
+        limit = int(catalog.get(add, {}).get("deck_limit") or 0)
+        qty = min(new.get(cut, 0), limit, qty_cap)
+        if qty <= 0:
+            continue
+        new[cut] -= qty
+        if new[cut] <= 0:
+            del new[cut]
+        new[add] = new.get(add, 0) + qty
+        log.append((cut, add, qty))
+    if not log:
+        return None
+
+    # The new cards inherit the play-order slots of what they replaced, except
+    # they are placed one rank EARLIER: a card that was being played last was
+    # chosen for removal precisely because it was not worth playing, and
+    # inheriting that slot would test the newcomer under the same handicap.
+    neworder = [c for c in order if c in new]
+    for cut, add, _ in log:
+        pos = rank.get(cut, len(neworder))
+        neworder.insert(max(0, min(pos - 1, len(neworder))), add)
+    for cid in new:
+        if cid not in neworder:
+            neworder.append(cid)
+
+    out: list[int] = []
+    for cid, n in sorted(new.items()):
+        out.extend([cid] * n)
+    if len(out) != len(cards):
+        return None
+    p = dict(plan)
+    p["card_order"] = neworder
+    return out, p, log
