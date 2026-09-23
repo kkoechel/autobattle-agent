@@ -83,6 +83,18 @@ class Api:
     def cohort(self) -> dict:
         return self._call("GET", "/cohort")
 
+    def open_cohort_for(self, arena: str) -> dict | None:
+        """The open (still-accepting) cohort for one arena, or None.
+
+        /cohort returns `open_cohort` (the caller's default arena) plus
+        `open_cohorts` for every arena, so pick from the list rather than
+        assuming the singular field is the arena we want.
+        """
+        for c in self.cohort().get("open_cohorts") or []:
+            if c.get("arena_slug") == arena:
+                return c
+        return None
+
     def meta_index(self) -> list[dict]:
         return self._call("GET", "/meta")["arenas"]
 

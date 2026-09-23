@@ -176,10 +176,25 @@ def cmd_cycle(args, api: Api) -> int:
     """
     t0 = time.time()
     cmd_fetch(args, api)
-    h, deck, mine, opps, info = _setup(args, api)
     start = dict(deck.get("battle_plan") or {})
 
-    deadline = t0 + args.budget
+    # Budget against the cohort we are actually trying to enter, not a fixed
+    # number. Overshooting means registering after the close, which does not
+    # error -- it silently enters the NEXT cohort instead, so the agent loses
+    # a window and the log looks entirely normal.
+    budget = args.budget
+    live = api.open_cohort_for(args.arena)
+    if live:
+        room = int(live["seconds_remaining"]) - args.margin
+        if room < budget:
+            print(f"cycle: {live['seconds_remaining']}s to close, trimming "
+                  f"search budget {budget}s -> {max(room, 0)}s")
+            budget = max(room, 0)
+        if budget <= 0:
+            print("cycle: too close to the cohort close to search, skipping")
+            return 0
+
+    deadline = t0 + budget
     plan, score, hist = climb(h, mine, opps, start, card_info=info,
                               sweep_seeds=args.sweep_seeds,
                               confirm_seeds=args.confirm_seeds,
@@ -254,6 +269,8 @@ def main(argv=None) -> int:
     y.add_argument("--sweeps", type=int, default=4)
     y.add_argument("--min-t", type=float, default=2.0)
     y.add_argument("--confirm-top", type=int, default=3)
+    y.add_argument("--margin", type=int, default=90,
+                   help="seconds to leave between finishing and the cohort close")
     y.set_defaults(fn=cmd_cycle)
 
     r = sub.add_parser("results")
