@@ -158,3 +158,62 @@ def generate(seeds: list[int], catalog: dict[int, dict], meta_decks: list[dict],
         if a:
             out.append(a)
     return out
+
+
+# Names come from the theme tags, so a generated deck arrives describing
+# itself. "abagent explore #47" tells a human nothing; "Rust and Ransom"
+# tells them it breaks its own relics for profit, which is what the deck does.
+TAG_WORDS: dict[str, tuple[str, str]] = {
+    "poison":        ("Venom", "Blight"),
+    "damage":        ("Ember", "Ruin"),
+    "melee":         ("Iron", "Fury"),
+    "honor":         ("Gilded", "Oath"),
+    "shield":        ("Bulwark", "Aegis"),
+    "life":          ("Verdant", "Grace"),
+    "draw":          ("Whispering", "Archive"),
+    "mill":          ("Hollow", "Oblivion"),
+    "discard":       ("Ashen", "Famine"),
+    "energy":        ("Surging", "Current"),
+    "token-copy":    ("Teeming", "Swarm"),
+    "scaling":       ("Rising", "Crescendo"),
+    "cost-scaling":  ("Thrifty", "Bargain"),
+    "cost-modifier": ("Patron", "Tithe"),
+    "exile":         ("Vanishing", "Void"),
+    "bounce":        ("Tidal", "Undertow"),
+    "anthem":        ("Banner", "Chorus"),
+    "on-tag-leave":  ("Rust", "Ransom"),
+    "drawback":      ("Bitter", "Price"),
+    "utilize":       ("Scavenging", "Salvage"),
+    "recycle":       ("Eternal", "Return"),
+    "structure":     ("Bastion", "Keep"),
+    "relic":         ("Reliquary", "Hoard"),
+    "soldier":       ("Marching", "Legion"),
+    "beast":         ("Feral", "Wild"),
+    "elf":           ("Sylvan", "Court"),
+    "dragon":        ("Wyrm", "Pyre"),
+    "bee":           ("Golden", "Hive"),
+    "divine":        ("Radiant", "Choir"),
+    "station":       ("Clockwork", "Engine"),
+    "elemental":     ("Storm", "Tempest"),
+    "token":         ("Legion", "Host"),
+    "scholar":       ("Studious", "Codex"),
+    "trigger-death": ("Mourning", "Wake"),
+}
+
+
+def name_for(theme: list[str], fallback: str) -> str:
+    """An evocative name from the two most characteristic theme tags.
+
+    Adjective from the first, noun from the second, so the name reads as a
+    phrase rather than two nouns stapled together. Unknown tags fall back to
+    the seed card, which is at least specific.
+    """
+    known = [t for t in theme if t in TAG_WORDS]
+    if not known:
+        return fallback
+    if len(known) == 1:
+        adj, noun = TAG_WORDS[known[0]]
+        return f"{adj} {noun}"
+    adj = TAG_WORDS[known[0]][0]
+    noun = TAG_WORDS[known[1]][1]
+    return f"{adj} {noun}"
