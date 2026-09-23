@@ -93,6 +93,14 @@ unbounded process is an OOM rather than a slowdown.
 - **Arena `rules_json` is not exposed by the API.** Pauper's rarity cap,
   Champion's champion requirement and Beginner's whitelist are invisible to a
   client. Standard's is empty, so this is only a problem when moving arenas.
+- **`play_priority` has three silent no-ops.** `card_order`, `type_order` and
+  `tag_order` each sort the hand only `if len(plan.X) > 0`. Set one without its
+  companion list and the engine does nothing at all — the hand keeps draw
+  order. Nothing errors. A search that offers these values unseeded is testing
+  `draw_order` three times under three different names, and will report the
+  result under whichever name it tried first. This cost us a real finding: the
+  unseeded version measured +3.3 wins and named it `card_order`; seeded with an
+  actual ranking, the same field is worth **+17.4 wins (t=11.3)**.
 
 ## Status
 

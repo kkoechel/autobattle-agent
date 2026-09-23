@@ -28,6 +28,12 @@ SCALAR_FIELDS: list[tuple[str, list]] = [
     # choosing from a pile, not lowest HP.
     ("cost_preference", ["random", "weakest", "strongest", "least_armor"]),
     ("discard_priority", ["random", "cheapest", "costliest", "lowest_priority"]),
+    # Only live once play_priority=card_order, which is why it sits last.
+    # validate.go reserves energy for card_order[0] -- the single literal top
+    # entry -- unless this is explicitly false, so the default is ON and
+    # turning it off is the move worth testing. The live meta is split: the
+    # #1 Standard deck sets it true, #2 sets it false.
+    ("card_order_hold", [True, False]),
 ]
 
 # Fields that only do anything when play_priority is set to match.
