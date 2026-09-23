@@ -1031,15 +1031,23 @@ def cmd_explore(args, api: Api) -> int:
         _save("explore.json", state)
         return 0
 
-    # Record how the deck currently in the slot actually did, before replacing
-    # it. Live results are the only check on the offline screen, and they are
-    # free: the slot costs nothing because the primary holds the placement.
+    # Record how the deck currently in the slot actually did, before anything
+    # replaces it. Live results are the only check on the offline screen.
     tried = dict(state.get("tried") or {})
     cur = state.get("current")
     if cur:
         try:
-            rows = api.results(arena=args.arena, deck_id=args.second_deck_id,
-                               limit=12)["results"]
+            # The slot keeps one deck_id while its CONTENTS rotate, so
+            # GET /results returns the id's whole history regardless of what
+            # is in it now. Without the install time every new deck inherits
+            # its predecessors' record -- three different decks in a row all
+            # reported an identical "48.3W, rank 13.9", which is what finally
+            # gave it away.
+            since = str(state.get("installed_at") or "")
+            rows = [r for r in api.results(arena=args.arena,
+                                           deck_id=args.second_deck_id,
+                                           limit=12)["results"]
+                    if not since or r["closes_at"] > since]
             if rows:
                 w = statistics.fmean(r["wins"] for r in rows)
                 rk = statistics.fmean(r["placement"] for r in rows)
@@ -1048,6 +1056,8 @@ def cmd_explore(args, api: Api) -> int:
                      "cohorts": len(rows)})
                 print(f"explore: {cur} played {len(rows)} live cohorts — "
                       f"{w:.1f}W, mean rank {rk:.1f}")
+            else:
+                print(f"explore: {cur} has no finished cohorts yet")
         except ApiError:
             pass
 
@@ -1055,24 +1065,74 @@ def cmd_explore(args, api: Api) -> int:
     inc_cards, inc_plan = expand(incumbent), (incumbent.get("battle_plan") or {})
     allopp = opponents_from_meta(meta, exclude_deck_ids={args.deck_id, args.second_deck_id})
     screen = allopp[::max(1, len(allopp) // 24)][:24]
+    block = [args.rng_base + i for i in range(21)]
 
+    # --- REFINE ---------------------------------------------------------
+    # Scanning alone finds interesting decks and throws them away: rotate,
+    # measure once, mark tried, never return. The point of finding a good
+    # starting point is to iterate on it, so a deck that screens well becomes
+    # the FOCUS and the next cycles mutate the focus itself rather than moving
+    # on. Small swaps this time -- the deck already works, so the question is
+    # what improves it, not what replaces it.
+    focus = state.get("focus")
+    if focus:
+        from .archetype import mutate
+        rng = random.Random(int(time.time()))
+        pool = [c for c in seeds_all]
+        kids = []
+        for _ in range(args.refine_tries):
+            m = mutate(focus["cards"], focus["plan"], catalog, pool, rng,
+                       swaps=1)
+            if m:
+                kids.append(m)
+        if kids:
+            b = [("__focus__", focus["cards"], focus["plan"])]
+            b += [(f"k{i}", c, p) for i, (c, p, _) in enumerate(kids)]
+            sc = h.evaluate(b, screen, block)
+            base = sc.pop("__focus__")
+            best_i, best_w = None, base.wins
+            for i in range(len(kids)):
+                if sc[f"k{i}"].wins > best_w:
+                    best_i, best_w = i, sc[f"k{i}"].wins
+            if best_i is not None:
+                c, p, log = kids[best_i]
+                nm = catalog.get(log[0][1], {}).get("name", "?")
+                focus.update({"cards": c, "plan": p, "screen": round(best_w, 1),
+                              "stale": 0,
+                              "history": (focus.get("history") or []) + [nm]})
+                counts = collections.Counter(c)
+                api.update_deck(args.second_deck_id, name=focus["name"][:80],
+                                cards=[{"card_id": k, "quantity": v}
+                                       for k, v in sorted(counts.items())],
+                                battle_plan=p)
+                print(f"explore: refined {focus['name']} "
+                      f"{base.wins:.1f}W -> {best_w:.1f}W (+{nm})")
+                state["installed_at"] = time.strftime("%Y-%m-%d %H:%M:%S",
+                                                      time.gmtime())
+                state["focus"] = focus
+                state["tried"] = tried
+                _save("explore.json", state)
+                return 0
+            focus["stale"] = int(focus.get("stale") or 0) + 1
+            print(f"explore: {focus['name']} not improved "
+                  f"({focus['stale']}/{args.refine_patience}), best "
+                  f"{focus.get('screen')}W")
+            if focus["stale"] < args.refine_patience:
+                state["focus"] = focus
+                state["tried"] = tried
+                _save("explore.json", state)
+                return 0
+            print(f"explore: banking {focus['name']} at {focus.get('screen')}W "
+                  f"after {len(focus.get('history') or [])} refinements; scanning again")
+            tried.setdefault(focus["name"], {})["refined_to"] = focus.get("screen")
+            state["focus"] = None
+
+    # --- SCAN -----------------------------------------------------------
     batch = [("__inc__", inc_cards, inc_plan)]
     batch += [(f"a{i}", a.cards, a.plan) for i, a in enumerate(archs)]
-    sc = h.evaluate(batch, screen, [args.rng_base + i for i in range(21)])
+    sc = h.evaluate(batch, screen, block)
     inc = sc.pop("__inc__")
 
-    # ROTATE, rather than only promoting a winner. The first version of this
-    # kept the slot for whatever scored highest, and across five runs nothing
-    # ever displaced the first deck -- it screened 17.8W and the generator
-    # kept producing 12-16W. Perfectly reasonable behaviour, and completely
-    # useless: an explorer that holds the best deck it has found is not
-    # exploring, it is exploiting, and the whole point of the rental slot is
-    # that exploiting there buys nothing. The primary keeps the placement.
-    #
-    # So the slot goes to the best archetype that has NOT had live time yet,
-    # above a floor -- a deck scoring a third of the incumbent teaches nothing
-    # and would waste its cohorts. Each rotation earns ~6 live cohorts of real
-    # data against the real field.
     floor = inc.wins * args.floor_frac
     ranked = sorted(((sc[f"a{i}"].wins, i) for i in range(len(archs))), reverse=True)
     pick = None
@@ -1085,24 +1145,38 @@ def cmd_explore(args, api: Api) -> int:
 
     if not pick:
         print(f"explore: nothing new above the {floor:.1f}W floor "
-              f"({len(tried)} archetypes tried so far); holding")
+              f"({len(tried)} archetypes tried); holding")
         state["tried"] = tried
         _save("explore.json", state)
         return 0
 
     w, i, nm = pick
     best = archs[i]
-    counts: dict[int, int] = {}
-    for cid in best.cards:
-        counts[cid] = counts.get(cid, 0) + 1
+    counts = collections.Counter(best.cards)
     api.update_deck(args.second_deck_id, name=nm[:80],
                     cards=[{"card_id": c, "quantity": q} for c, q in sorted(counts.items())],
                     battle_plan=best.plan)
     tried.setdefault(nm, {})["screen_wins"] = round(w, 1)
     state["tried"] = tried
     state["current"] = nm
-    print(f"explore: rotating slot -> '{nm}' ({w:.1f}W screen, incumbent "
-          f"{inc.wins:.1f}W) — {best.summary(catalog, 4)}")
+    state["installed_at"] = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+
+    # A deck that screens better than anything tried so far is a starting
+    # point worth developing, not another sample.
+    # Any pick above the floor becomes the focus. The first version also
+    # required it to beat the best deck ever tried AND the incumbent, which
+    # sounds prudent and never fired once: the scan keeps producing decks
+    # clustered within a win of each other, so the bar was always just above
+    # whatever had been found. Scanning to find a starting point and then
+    # never developing one is the failure mode this exists to fix.
+    if w >= args.refine_floor:
+        state["focus"] = {"name": nm, "cards": best.cards, "plan": best.plan,
+                          "screen": round(w, 1), "stale": 0, "history": []}
+        print(f"explore: rotating slot -> '{nm}' ({w:.1f}W screen) and MAKING IT "
+              f"THE FOCUS — next cycles will iterate on it")
+    else:
+        print(f"explore: rotating slot -> '{nm}' ({w:.1f}W screen, incumbent "
+              f"{inc.wins:.1f}W) — {best.summary(catalog, 4)}")
     _save("explore.json", state)
     return 0
 
@@ -1341,6 +1415,12 @@ def main(argv=None) -> int:
     e.add_argument("--seed-mod", type=int, default=1,
                    help="partition the seed space across explorers")
     e.add_argument("--seed-rem", type=int, default=0)
+    e.add_argument("--refine-tries", type=int, default=8,
+                   help="single-card mutations of the focus deck per cycle")
+    e.add_argument("--refine-patience", type=int, default=4,
+                   help="cycles without improvement before banking the focus")
+    e.add_argument("--refine-floor", type=float, default=15.0,
+                   help="screen wins a deck needs to become the focus")
     e.add_argument("--floor-frac", type=float, default=0.6,
                    help="skip archetypes below this fraction of the incumbent")
     e.add_argument("--rng-base", type=int, default=9100)
