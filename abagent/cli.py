@@ -678,6 +678,16 @@ def cmd_cycle(args, api: Api) -> int:
         return 0
 
     deadline = t0 + budget
+    # A ceiling for the WHOLE cycle, not just the search. The search deadline
+    # governs optimise/climb only, and everything after it -- counter round,
+    # history fetch, re-base, complement re-pick -- is unbounded. Each is a
+    # full-field evaluation costing 1-3 minutes, and raising min_gain to 0.4
+    # made stalling the normal outcome, so what was designed as a rare
+    # escalation now runs almost every cycle. Measured effect: a 260s search
+    # inside a 7m33s-to-9m18s cycle, overrunning the 10-minute timer, which
+    # then silently skips firings because systemd will not schedule a service
+    # that is still active.
+    hard = t0 + args.cycle_max
     rng = random.Random(int(t0))
 
     # Play order and card list FIRST. The scalar surface is close to
@@ -710,7 +720,12 @@ def cmd_cycle(args, api: Api) -> int:
                               rng=rng, deadline=deadline)
     confirmed += [f"{s.field}={s.after!r} {s.gain:+.1f}W" for s in hist if s.confirmed]
 
-    if not confirmed and time.time() < deadline + args.rebase_grace:
+    # Entering a stage is not the same as finishing it: the counter round ends
+    # in a 161-seed full-field validation that alone runs ~2.5 minutes, so it
+    # needs room to COMPLETE, not merely to start. Checking only "is there time
+    # left" is how a ceiling gets overshot by the length of its last stage.
+    if (not confirmed and time.time() + args.stage_reserve < hard
+            and time.time() < deadline + args.rebase_grace):
         # Stalled. Before changing basin, try the cheaper thing: attack the
         # few matchups that still cost anything. Once most of the field is a
         # clean sweep, a fix worth a whole matchup is worth well under a win
@@ -740,9 +755,19 @@ def cmd_cycle(args, api: Api) -> int:
         # Stalled: the complement is worth re-ranking now, before the more
         # expensive re-base. A shifted metagame changes which deck stumbles
         # in different cohorts from ours, which is the whole basis of the pick.
-        if args.second_deck_id:
+        # The expensive stall stages are rate-limited as well as time-boxed.
+        # They answer questions that change with the metagame, not with the
+        # cohort, so asking every ten minutes re-learns the same answer at
+        # full price.
+        slow = _load_or("slowpath.json")
+        due = time.time() - float(slow.get("last") or 0) > args.slow_every
+        if due and args.second_deck_id and time.time() + args.stage_reserve < hard:
             maintain_second(args, api, h, cards, plan, opps, repick=True)
-        if args.rebase and time.time() < deadline + args.rebase_grace:
+        if due:
+            slow["last"] = time.time()
+            _save("slowpath.json", slow)
+        if (args.rebase and due and time.time() + args.stage_reserve < hard
+                and time.time() < deadline + args.rebase_grace):
             try:
                 store = history.fetch(api, args.arena, args.history_cohorts,
                                       _load_or("history_%s.json" % args.arena))
@@ -1012,6 +1037,12 @@ def main(argv=None) -> int:
                    help="wins a field deck must beat ours by to re-base")
     y.add_argument("--rebase-grace", type=int, default=240,
                    help="seconds past the search deadline a re-base may still use")
+    y.add_argument("--stage-reserve", type=int, default=200,
+                   help="time a slow stage needs to FINISH, not just to start")
+    y.add_argument("--cycle-max", type=int, default=420,
+                   help="hard wall-clock ceiling for the entire cycle")
+    y.add_argument("--slow-every", type=int, default=3600,
+                   help="seconds between re-base / complement re-pick attempts")
     y.add_argument("--min-budget", type=int, default=150,
                    help="skip the cycle entirely below this many seconds")
     y.add_argument("--margin", type=int, default=45,
