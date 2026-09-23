@@ -1,0 +1,18 @@
+[Unit]
+Description=AutoBattle archetype discovery, ShadowDrake second slot
+
+[Timer]
+# Every 30 minutes at :05 and :35. The slot now ROTATES each run rather than
+# holding a winner, so cadence is directly how fast the agent learns: each
+# archetype gets ~3 live cohorts before the next one takes the slot. Hourly
+# gave 6 cohorts each and 24 archetypes a day, which is more certainty per
+# deck than the offline screen needs and far too few decks.
+#
+# :20/:50 -- offset from both the competing cycle (:06/10) and the other
+# explorer (:05/30). Three services, one core, no overlap by construction.
+OnCalendar=*:20/30
+AccuracySec=30s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -12,7 +12,7 @@ import urllib.request
 
 from .api import Api, ApiError
 from . import history, second
-from .harness import Harness, opponents_from_meta
+from .harness import Harness, Opponent, opponents_from_meta
 from .plans import card_order_from_deck, describe
 from .search import climb, counter_round, optimise
 
@@ -839,8 +839,13 @@ def cmd_cycle(args, api: Api) -> int:
         # full price.
         slow = _load_or("slowpath.json")
         due = time.time() - float(slow.get("last") or 0) > args.slow_every
+        # Honour the flag rather than forcing it. When the second slot is a
+        # DISCOVERY slot, re-picking a complement into it would overwrite
+        # whatever archetype is being measured -- the two uses of the slot are
+        # mutually exclusive and the cycle must not assume the competing one.
         if due and args.second_deck_id and time.time() + args.stage_reserve < hard:
-            maintain_second(args, api, h, cards, plan, opps, repick=True)
+            maintain_second(args, api, h, cards, plan, opps,
+                            repick=args.repick_complement)
         if due:
             slow["last"] = time.time()
             _save("slowpath.json", slow)
@@ -938,13 +943,20 @@ def cmd_explore(args, api: Api) -> int:
     seeds_all = sorted(i for i, c in catalog.items()
                        if i not in played and is_playable(c)
                        and (c.get("rules_text") or "").strip())
+    # Two explorers share one catalogue. Partitioning by card id keeps them off
+    # each other's archetypes -- without it both would rank the same generated
+    # decks the same way and spend twice the CPU to learn the same thing.
+    if args.seed_mod > 1:
+        seeds_all = [i for i in seeds_all if i % args.seed_mod == args.seed_rem]
     state = _load_or("explore.json")
     done = set(state.get("explored") or [])
 
     # New cards jump the queue. One that shipped this morning has never been
     # built around by anyone, which is a stronger claim than "unplayed" -- an
     # old unplayed card may simply have been tried and found wanting.
-    fresh = [c for c in recent_seeds(catalog, args.new_days) if c not in done]
+    fresh = [c for c in recent_seeds(catalog, args.new_days)
+             if c not in done and (args.seed_mod <= 1
+                                   or c % args.seed_mod == args.seed_rem)]
     if fresh:
         names = ", ".join(catalog[c]["name"] for c in fresh[:4])
         print(f"explore: {len(fresh)} card(s) added in the last {args.new_days}d "
@@ -1043,6 +1055,107 @@ def cmd_explore(args, api: Api) -> int:
     print(f"explore: rotating slot -> '{nm}' ({w:.1f}W screen, incumbent "
           f"{inc.wins:.1f}W) — {best.summary(catalog, 4)}")
     _save("explore.json", state)
+    return 0
+
+
+def cmd_beat(args, api: Api) -> int:
+    """Find a deck that beats ONE named deck.
+
+    A different objective from everything else here, and a much cheaper one.
+    Against the full field a counter to a single deck is worth well under a
+    win -- the effect is diluted 69:1 -- but measured against that deck alone
+    it is enormous, and one opponent costs a sixty-ninth as much, so hundreds
+    of candidates can be screened for the price of a few.
+
+    Candidates come from both directions: every generated archetype, and every
+    deck the field already plays. A deck that beats the target may well exist
+    already.
+
+    The field score is reported alongside but never used to select. A pure
+    counter is allowed to be bad against everything else -- that is a coherent
+    thing to want, and hiding it behind an aggregate would defeat the request.
+    """
+    from .archetype import generate, name_for
+    from .search import paired_t
+    from .moves import is_playable
+    import collections
+
+    cmd_fetch(args, api)
+    cat_list = _load("cards.json")
+    catalog = {int(c["id"]): c for c in cat_list}
+    meta = _load(f"meta_{args.arena}.json")
+    h = Harness(VALIDATOR, cat_list, workdir=VAR)
+
+    tgt = api.public_deck(args.target)
+    tids = tgt.get("card_ids") or []
+    if not tids:
+        for c in tgt.get("cards") or []:
+            tids.extend([int(c["card_id"])] * int(c["quantity"]))
+    target = Opponent(slot_id="T", cards=tids,
+                      battle_plan=tgt.get("battle_plan") or {},
+                      name=tgt.get("name", str(args.target)),
+                      deck_id=args.target)
+    print(f"target: {target.name} (deck {args.target}), "
+          f"{len(tids)} cards, {len(set(tids))} distinct")
+
+    seeds = sorted(i for i, c in catalog.items()
+                   if is_playable(c) and (c.get("rules_text") or "").strip())
+    cands, seen = [], set()
+    for a in generate(seeds, catalog, meta["decks"]):
+        key = tuple(sorted(collections.Counter(a.cards).items()))
+        if key not in seen:
+            seen.add(key)
+            cands.append((name_for(a.theme, a.seed_name), a.cards, a.plan))
+    for d in meta["decks"]:
+        if d.get("deck_id") != args.target:
+            cands.append((f"[field] {d['deck_name'][:22]}", d["cards"],
+                          d.get("battle_plan") or {}))
+    print(f"screening {len(cands)} candidates against that one deck")
+
+    block = [args.rng_base + i for i in range(args.seeds)]
+    ranked = []
+    for start in range(0, len(cands), 60):
+        chunk = cands[start:start + 60]
+        res = h.evaluate([(f"c{start+i}", c, p) for i, (_, c, p) in enumerate(chunk)],
+                         [target], block)
+        for i, (nm, c, p) in enumerate(chunk):
+            sc = res[f"c{start+i}"]
+            # Score.wins is the MEAN wins per seed across the opponent set, so
+            # against a single opponent it is already the win rate. Dividing
+            # by the seed count again reported every candidate at 0% -- which
+            # looked like "nothing beats this deck" rather than like a bug,
+            # because an unbeatable deck is a believable finding.
+            ranked.append((sc.wins, nm, start + i))
+    ranked.sort(reverse=True)
+
+    print(f"\n{'candidate':34} {'win% vs target':>15}")
+    for wr, nm, _ in ranked[:10]:
+        print(f"{nm[:34]:34} {wr * 100:>14.0f}%")
+
+    # Confirm the leaders on unseen seeds, and report what they do to the
+    # rest of the field so the trade-off is visible rather than implied.
+    top = ranked[:args.confirm]
+    vblock = [args.rng_base + 7777 + i for i in range(args.validate_seeds)]
+    field = opponents_from_meta(meta, exclude_deck_ids={args.target})
+    print(f"\nconfirming top {len(top)} on {args.validate_seeds} unseen seeds:")
+    print(f"{'candidate':34} {'win%':>9} {'draw%':>6} {'vs field':>9}")
+    best = None
+    for wr, nm, idx in top:
+        _, c, p = cands[idx]
+        v = h.evaluate([("x", c, p)], [target], vblock)["x"]
+        f = h.evaluate([("x", c, p)], field, vblock[:41])["x"]
+        rate = v.wins
+        print(f"{nm[:34]:34} {rate*100:>8.0f}%  {v.draws*100:>3.0f}%d "
+              f"{f.wins:>8.1f}W")
+        if best is None or rate > best[0]:
+            best = (rate, nm, idx, f.wins)
+    if best:
+        print(f"\nbest counter: {best[1]} — beats {target.name} "
+              f"{best[0]*100:.0f}% of the time, scores {best[3]:.1f}W vs the field")
+        _save(f"counter_{args.target}.json",
+              {"name": best[1], "cards": cands[best[2]][1], "plan": cands[best[2]][2],
+               "win_rate_vs_target": round(best[0], 3), "field_wins": round(best[3], 1)})
+        print(f"wrote var/counter_{args.target}.json")
     return 0
 
 
@@ -1169,10 +1282,21 @@ def main(argv=None) -> int:
     e.add_argument("--new-days", type=int, default=7,
                    help="treat cards added this recently as priority seeds")
     e.add_argument("--validate-seeds", type=int, default=161)
+    e.add_argument("--seed-mod", type=int, default=1,
+                   help="partition the seed space across explorers")
+    e.add_argument("--seed-rem", type=int, default=0)
     e.add_argument("--floor-frac", type=float, default=0.6,
                    help="skip archetypes below this fraction of the incumbent")
     e.add_argument("--rng-base", type=int, default=9100)
     e.set_defaults(fn=cmd_explore)
+
+    b = sub.add_parser("beat")
+    b.add_argument("--target", type=int, required=True, help="deck id to beat")
+    b.add_argument("--seeds", type=int, default=41)
+    b.add_argument("--validate-seeds", type=int, default=121)
+    b.add_argument("--confirm", type=int, default=6)
+    b.add_argument("--rng-base", type=int, default=3300)
+    b.set_defaults(fn=cmd_beat)
 
     r = sub.add_parser("results")
     r.add_argument("--limit", type=int, default=15)

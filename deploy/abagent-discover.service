@@ -1,0 +1,46 @@
+[Unit]
+Description=AutoBattle deck agent — archetype discovery (ShadowDrake second slot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=abagent
+Group=abagent
+WorkingDirectory=/opt/abagent
+EnvironmentFile=/etc/abagent-discover.env
+
+# Its own cache directory. The two agents share code but not state: different
+# accounts, different decks, different histories and pass expiries, and one
+# var/ would have each silently overwriting the other's.
+Environment=ABAGENT_VAR=/opt/abagent/var-discover
+
+# Writes ONLY this account's rental slot, never Golden Hive. That deck is what
+# holds rank 1-5, and the rental slot is free precisely because it does -- only
+# the better-placing entry is paid. Discovering here costs nothing; discovering
+# in the primary would cost the placement.
+#
+# --seed-mod 2 --seed-rem 0 takes the even half of the card space. The other
+# explorer takes the odd half, so the two never generate the same archetypes
+# and never spend the shared core learning the same thing twice.
+ExecStart=/usr/bin/python3 -u -m abagent.cli --arena pure --deck-id ${ABAGENT_DECK_ID} explore --second-deck-id ${ABAGENT_SECOND_DECK_ID} --slice 40 --seed-mod 2 --seed-rem 0
+
+# Lower priority than the competing agent on both knobs. One core, shared with
+# four live games, and that agent was already measured at ~80% duty; this one
+# yields to it as well as to apache/php-fpm/mysql.
+Nice=15
+CPUWeight=10
+IOWeight=10
+
+MemoryHigh=400M
+MemoryMax=600M
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/abagent/var-discover /opt/abagent/bin
+TimeoutStartSec=1500
+
+[Install]
+WantedBy=multi-user.target
