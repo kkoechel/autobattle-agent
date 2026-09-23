@@ -179,6 +179,60 @@ def cmd_climb(args, api: Api) -> int:
     return 0
 
 
+def cmd_adopt(args, api: Api) -> int:
+    """Re-base our deck onto a list from the field, measured first.
+
+    Hill climbing cannot cross a valley. Our deck sits ~19 wins behind the top
+    of the field and the best single swap found so far is worth +1.5, so the
+    incremental path stalls in its own basin long before #1. Every deck is
+    public -- GET /meta returns each finalized cohort deck's full card list
+    and battle plan -- so the cheap move is to start from a basin that is
+    already good and search from there.
+
+    Nothing is adopted unadopted-and-unmeasured: the candidate and the
+    incumbent are scored head to head on shared seeds first, and a list that
+    does not actually beat ours is refused however well it placed. A cohort
+    rank is one seed per pairing; our own measurement is not.
+    """
+    h, deck, mine, opps, _info = _setup(args, api)
+    meta = _load(f"meta_{args.arena}.json")
+    src = next((d for d in meta["decks"] if d["rank"] == args.from_rank), None)
+    if not src:
+        print(f"no deck at rank {args.from_rank} in the cached {args.arena} meta")
+        return 1
+
+    # Score both against the same field, excluding the candidate itself so it
+    # is not credited for beating a copy of itself.
+    field = [o for o in opps if o.deck_id != src.get("deck_id")]
+    seeds = [660000 + i for i in range(args.seeds)]
+    plan = src.get("battle_plan") or {}
+    res = h.evaluate([("ours", mine, deck.get("battle_plan") or {}),
+                      ("theirs", src["cards"], plan)], field, seeds)
+    ours, theirs = res["ours"], res["theirs"]
+    print(f"ours            {ours}")
+    print(f"rank {src['rank']} {src['deck_name'][:18]:18} {theirs}")
+
+    if theirs.key <= ours.key:
+        print(f"refusing: rank {src['rank']} does not beat our deck on {args.seeds} "
+              f"shared seeds ({theirs.wins - ours.wins:+.1f}W)")
+        return 0
+    if not args.apply:
+        print(f"would adopt ({theirs.wins - ours.wins:+.1f}W) — pass --apply")
+        return 0
+
+    counts: dict[int, int] = {}
+    for cid in src["cards"]:
+        counts[cid] = counts.get(cid, 0) + 1
+    api.update_deck(args.deck_id,
+                    cards=[{"card_id": c, "quantity": q} for c, q in sorted(counts.items())],
+                    battle_plan=plan)
+    print(f"adopted rank {src['rank']} '{src['deck_name']}' into deck "
+          f"{args.deck_id}: {sum(counts.values())} cards, {len(counts)} distinct, "
+          f"{theirs.wins - ours.wins:+.1f}W")
+    print("the cycle will iterate from here")
+    return 0
+
+
 def register_when_targetable(api: Api, arena: str, deck_id: int,
                              wait_limit: int = 240, poll: int = 5) -> bool:
     """Register only while `arena` is the cohort register() will actually hit.
@@ -384,6 +438,12 @@ def main(argv=None) -> int:
     c.add_argument("--register", action="store_true")
     c.set_defaults(fn=cmd_climb)
 
+    a = sub.add_parser("adopt")
+    a.add_argument("--from-rank", type=int, default=1)
+    a.add_argument("--seeds", type=int, default=61)
+    a.add_argument("--apply", action="store_true")
+    a.set_defaults(fn=cmd_adopt)
+
     n = sub.add_parser("clone")
     n.add_argument("--source", type=int, required=True)
     n.add_argument("--name", default="abagent Standard")
@@ -418,7 +478,7 @@ def main(argv=None) -> int:
     if args.deck_id is None and args.cmd == "cycle":
         raise SystemExit("cycle requires an explicit --deck-id: it edits and "
                          "registers that deck unattended")
-    if args.deck_id is None and args.cmd in ("baseline", "climb"):
+    if args.deck_id is None and args.cmd in ("baseline", "climb", "adopt"):
         args.deck_id = api.me()["active_deck_id"]
         print(f"(using active deck {args.deck_id})")
     return args.fn(args, api)
