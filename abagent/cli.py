@@ -14,7 +14,7 @@ from .api import Api, ApiError
 from . import history
 from .harness import Harness, opponents_from_meta
 from .plans import card_order_from_deck, describe
-from .search import climb, optimise
+from .search import climb, counter_round, optimise
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VAR = os.path.join(ROOT, "var")
@@ -416,11 +416,32 @@ def cmd_cycle(args, api: Api) -> int:
                               rng=rng, deadline=deadline)
     confirmed += [f"{s.field}={s.after!r} {s.gain:+.1f}W" for s in hist if s.confirmed]
 
+    if not confirmed and time.time() < deadline + args.rebase_grace:
+        # Stalled. Before changing basin, try the cheaper thing: attack the
+        # few matchups that still cost anything. Once most of the field is a
+        # clean sweep, a fix worth a whole matchup is worth well under a win
+        # overall, and the full-field search cannot see it through the
+        # dilution. The counter round screens against those decks alone.
+        got = counter_round(h, cards, plan, opps, catalog, rng,
+                            validate_seeds=args.validate_seeds,
+                            min_t=args.min_t, focus_k=args.focus)
+        if got:
+            cards, plan, gain, t = got
+            counts2: dict[int, int] = {}
+            for cid in cards:
+                counts2[cid] = counts2.get(cid, 0) + 1
+            api.update_deck(args.deck_id,
+                            cards=[{"card_id": c, "quantity": q}
+                                   for c, q in sorted(counts2.items())],
+                            battle_plan=plan)
+            print(f"cycle: counter-tech accepted {gain:+.1f}W t={t:.1f}")
+            register_when_targetable(api, args.arena, args.deck_id,
+                                     wait_limit=args.register_wait)
+            return 0
+
     if not confirmed:
-        # Stalled. That is the signal to consider a different basin rather
-        # than idle: incremental swaps cannot cross a valley, and the goal is
-        # rank 1, not a local optimum. Only checked on a stall, because once
-        # we are at the top this costs ~110s to learn nothing.
+        # Still stuck: consider a different basin. Incremental swaps cannot
+        # cross a valley, and the goal is rank 1, not a local optimum.
         if args.rebase and time.time() < deadline + args.rebase_grace:
             try:
                 store = history.fetch(api, args.arena, args.history_cohorts,
@@ -548,6 +569,8 @@ def main(argv=None) -> int:
                    help="on a stall, adopt a field deck that measurably beats ours")
     y.add_argument("--no-rebase", dest="rebase", action="store_false")
     y.add_argument("--rebase-seeds", type=int, default=41)
+    y.add_argument("--focus", type=int, default=6,
+                   help="how many costly matchups the counter round targets")
     y.add_argument("--history-cohorts", type=int, default=60,
                    help="cohorts of standings to keep for judging decks")
     y.add_argument("--rebase-min", type=float, default=3.0,

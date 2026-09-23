@@ -173,3 +173,40 @@ def order_moves(plan: dict, rng: random.Random, n: int = 12,
         if p:
             out.append(p)
     return out
+
+
+def focus_opponents(per_opponent: dict[str, tuple[int, int, int]],
+                    k: int = 6) -> list[str]:
+    """The slot_ids costing us the most, worst first.
+
+    Ranked by points dropped -- a loss costs a full win, a draw costs half --
+    so a deck we merely stall against is counted for what it actually is: a
+    matchup with a win still sitting in it.
+    """
+    cost = {sid: (l + 0.5 * d) / max(1, w + l + d)
+            for sid, (w, l, d) in per_opponent.items()}
+    return [sid for sid, _ in sorted(cost.items(), key=lambda kv: -kv[1])[:k]
+            if cost[sid] > 0]
+
+
+def counter_candidates(mine: collections.Counter, focus_decks: list[list[int]],
+                       catalog: dict[int, dict]) -> list[tuple[int, int]]:
+    """Cards the decks that trouble us play, and we do not.
+
+    A deck that beats us is a working answer to our deck, and its list is the
+    cheapest available description of why. This is narrower than mining the
+    whole top-15: it asks what THESE decks have, not what good decks have in
+    general.
+    """
+    counts: collections.Counter = collections.Counter()
+    present: collections.Counter = collections.Counter()
+    for cards in focus_decks:
+        for cid, n in collections.Counter(cards).items():
+            counts[cid] += n
+            present[cid] += 1
+    out = []
+    for cid, seen in present.most_common():
+        if cid in mine or cid not in catalog:
+            continue
+        out.append((cid, max(1, round(counts[cid] / seen))))
+    return out

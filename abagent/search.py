@@ -293,3 +293,93 @@ def optimise(harness: Harness, cards: list[int], opponents: list[Opponent],
             break
 
     return cards, plan, changes
+
+
+def counter_round(harness: Harness, cards: list[int], plan: dict,
+                  opponents: list[Opponent], catalog: dict[int, dict],
+                  rng: random.Random, screen_seeds: int = 41,
+                  validate_seeds: int = 161, min_t: float = 2.0,
+                  focus_k: int = 6, samples: int = 10, log=print
+                  ) -> tuple[list[int], dict, float, float] | None:
+    """Target the few matchups that still cost us, screened against them alone.
+
+    Once a deck beats most of the field, its remaining upside is concentrated
+    in a handful of opponents -- for ours, 53 of 69 matchups are already ~100%
+    wins and everything left sits in six decks. Fixing one of those is worth
+    well under a win across the full field, which is below what any affordable
+    number of seeds can resolve. The effect is not small; it is DILUTED, 69:1.
+
+    So candidates are screened against the focus opponents only. There the
+    effect is undiluted and obvious, and scoring six opponents instead of
+    sixty-nine is also ten times cheaper, which buys the seeds to see it.
+
+    Acceptance is unchanged: the survivor must improve TOTAL wins against the
+    full field, significantly, on unseen seeds. The focus set makes good
+    candidates findable; it never decides whether one is kept. A counter that
+    wins a matchup and loses the tournament is not a counter.
+    """
+    from .moves import (as_counter, counter_candidates, focus_opponents,
+                        swap, swap_ranks)
+
+    block = _seed_block(rng, screen_seeds)
+    base_full = harness.evaluate([("me", cards, plan)], opponents, block)["me"]
+    focus_ids = focus_opponents(base_full.per_opponent, focus_k)
+    if not focus_ids:
+        return None
+    focus = [o for o in opponents if o.slot_id in focus_ids]
+    log(f"counter: targeting {', '.join(o.name[:18] for o in focus)}")
+
+    mine = as_counter(cards)
+    adds = counter_candidates(mine, [o.cards for o in focus], catalog)
+    if not adds:
+        return None
+
+    order = plan.get("card_order") or []
+    rank_of = {cid: i for i, cid in enumerate(order)}
+    spare = sorted((c for c in mine), key=lambda c: -rank_of.get(c, 9999))
+    ranks = swap_ranks(len(order))
+
+    cands, seen = [], []
+    for add, qty in adds:
+        limit = int(catalog.get(add, {}).get("deck_limit") or 1)
+        for cut in spare[:3]:
+            for r in ranks[:2]:
+                out = swap(cards, plan, cut, add, min(qty, limit), limit, rank=r)
+                if out:
+                    cands.append(out)
+                    seen.append((cut, add, min(qty, limit)))
+            if len(cands) >= samples:
+                break
+        if len(cands) >= samples:
+            break
+    if not cands:
+        return None
+
+    # Screen against the focus decks only -- the whole point of the round.
+    fblock = _seed_block(rng, screen_seeds)
+    batch = [("__base__", cards, plan)]
+    batch += [(f"c{i}", c, p) for i, (c, p) in enumerate(cands)]
+    scored = harness.evaluate(batch, focus, fblock)
+    base = scored.pop("__base__")
+    ahead = [(lbl, sc) for lbl, sc in scored.items() if sc.key > base.key]
+    if not ahead:
+        log(f"counter: none of {len(cands)} candidates beat the focus set")
+        return None
+    ahead.sort(key=lambda kv: kv[1].key, reverse=True)
+    idx = int(ahead[0][0][1:])
+    new_cards, new_plan = cands[idx]
+    cut, add, qty = seen[idx]
+    fgain = ahead[0][1].wins - base.wins
+    nm = lambda c: (catalog.get(c, {}).get("name") or f"#{c}")
+    log(f"counter: -{qty} {nm(cut)} +{qty} {nm(add)} gains {fgain:+.1f} "
+        f"vs the focus set; checking the whole field")
+
+    # Acceptance: total wins, full field, unseen seeds, one pre-specified test.
+    vblock = _seed_block(rng, validate_seeds)
+    chk = harness.evaluate([("keep", cards, plan), ("try", new_cards, new_plan)],
+                           opponents, vblock)
+    gain, t = paired_t(chk["try"], chk["keep"])
+    if gain > 0 and t >= min_t:
+        return (new_cards, new_plan, gain, t)
+    log(f"counter: rejected -- {gain:+.1f}W t={t:.1f} across the full field")
+    return None
