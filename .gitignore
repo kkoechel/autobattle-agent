@@ -1,0 +1,6 @@
+var/*.json
+var/*.log
+var/*.tmp
+bin/validate_*
+__pycache__/
+*.pyc

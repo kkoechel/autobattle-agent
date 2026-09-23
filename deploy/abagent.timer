@@ -1,0 +1,13 @@
+[Unit]
+Description=AutoBattle deck agent cycle, between Standard cohorts
+
+[Timer]
+# Standard closes at :04:58 and finalizes ~43s later. Firing at :06 gets a
+# freshly finalized field to train against and leaves ~9 minutes before the
+# next close. Offset from Reprisal's own */10 crons, which fire on the :00.
+OnCalendar=*:06/10
+AccuracySec=15s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

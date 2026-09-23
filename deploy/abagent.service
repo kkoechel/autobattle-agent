@@ -1,0 +1,36 @@
+[Unit]
+Description=AutoBattle deck agent — one optimisation cycle
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=abagent
+Group=abagent
+WorkingDirectory=/opt/abagent
+EnvironmentFile=/etc/abagent.env
+ExecStart=/usr/bin/python3 -u -m abagent.cli --arena pure cycle --budget 420
+
+# subgames-nyc1 is a 1-vCPU box also serving live Reprisal, Ossuary, Mage Wars
+# and Blind Wizards. CPUWeight (proportional) rather than CPUQuota (a hard cap)
+# so this yields to apache/php-fpm/mysql under contention but still uses the
+# core when it is otherwise idle -- which, at load 0.00, is nearly always.
+Nice=10
+CPUWeight=20
+IOWeight=20
+
+# The droplet has NO SWAP, so an unbounded process is an OOM, not a slowdown.
+# The validator itself peaks around 17MB; the cap is for the Python side.
+MemoryHigh=400M
+MemoryMax=600M
+
+# Only needs its own tree and the network.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/abagent/var
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target
