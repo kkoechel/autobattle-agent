@@ -361,6 +361,96 @@ def _prune_checkpoints(api: Api, keep: int, log=print) -> None:
         log(f"checkpoint: prune skipped ({e})")
 
 
+def cmd_ask(args, api: Api) -> int:
+    """Write the proposal question to a file, or validate answers from one.
+
+    Two halves of the same loop, usable with no Anthropic key at all:
+      abagent ask            -> var/question.txt, hand it to any Claude session
+      abagent ask --answers  -> read proposals back, measure them, apply a winner
+
+    The measurement is identical either way. A proposal is a hypothesis
+    whatever produced it, and the engine is what decides.
+    """
+    from . import propose as P
+    from .moves import as_counter, swap, swap_ranks
+    from .search import sweep_and_confirm
+
+    h, deck, mine, opps, _info = _setup(args, api)
+    catalog = {int(c["id"]): c for c in _load("cards.json")}
+    plan = deck.get("battle_plan") or {}
+    counts = dict(as_counter(mine))
+
+    if not args.answers:
+        seeds = [330000 + i for i in range(args.seeds)]
+        sc = h.evaluate([("me", mine, plan)], opps, seeds)["me"]
+        by = {o.slot_id: o for o in opps}
+        focus = []
+        for sid, (w, l, d) in sc.per_opponent.items():
+            n = max(1, w + l + d)
+            if w / n >= 0.98:
+                continue
+            focus.append({"name": by[sid].name, "win": 100 * w / n,
+                          "draw": 100 * d / n, "loss": 100 * l / n,
+                          "counts": dict(as_counter(by[sid].cards))})
+        focus.sort(key=lambda f: -(f["loss"] + 0.5 * f["draw"]))
+        text = P.build_question(counts, plan, focus[:args.focus], catalog, args.n)
+        path = _p("question.txt")
+        with open(path, "w") as fh:
+            fh.write(text)
+        print(f"wrote {path} ({len(text)} chars, ~{len(text)//4} tokens)")
+        print(f"current: {sc}")
+        print("answer it with any Claude session, save the JSON array, then:")
+        print(f"  python3 -m abagent.cli --deck-id {args.deck_id} ask "
+              f"--answers <file.json>")
+        return 0
+
+    rows = P.extract_json(open(args.answers).read())
+    if not rows:
+        print("no parseable proposals in that file")
+        return 1
+    print(f"{len(rows)} proposals; building candidates")
+
+    ranks = swap_ranks(len(plan.get("card_order") or []))
+    cands, seen = [], []
+    for r in rows:
+        limit = int(catalog.get(r["add"], {}).get("deck_limit") or 1)
+        for rank in ranks[:2]:
+            out = swap(mine, plan, r["cut"], r["add"],
+                       min(r["qty"], limit), limit, rank=rank)
+            if out:
+                cands.append(out)
+                seen.append(r)
+    if not cands:
+        print("none of the proposals were legal swaps in this deck")
+        return 1
+
+    got = sweep_and_confirm(h, mine, plan, cands, opps, random.Random(5),
+                            args.sweep_seeds, 21, args.min_t, 1,
+                            args.validate_seeds)
+    if not got:
+        print("no proposal survived validation")
+        return 0
+    cards, newplan, gain, t = got
+    idx = next(i for i, c in enumerate(cands) if c == (cards, newplan))
+    r = seen[idx]
+    nm = lambda c: catalog.get(c, {}).get("name", c)
+    print(f"ACCEPTED -{r['qty']} {nm(r['cut'])} +{r['qty']} {nm(r['add'])}"
+          f"  {gain:+.1f}W t={t:.1f}")
+    print(f"  model's reason: {r['why']}")
+    if args.apply:
+        checkpoint(api, mine, plan, f"{time.strftime('%m-%d %H:%M')} pre-proposal")
+        c2: dict[int, int] = {}
+        for cid in cards:
+            c2[cid] = c2.get(cid, 0) + 1
+        api.update_deck(args.deck_id,
+                        cards=[{"card_id": c, "quantity": q} for c, q in sorted(c2.items())],
+                        battle_plan=newplan)
+        print(f"applied to deck {args.deck_id}")
+    else:
+        print("(not applied — pass --apply)")
+    return 0
+
+
 def register_when_targetable(api: Api, arena: str, deck_id: int,
                              wait_limit: int = 240, poll: int = 5) -> bool:
     """Register only while `arena` is the cohort register() will actually hit.
@@ -622,6 +712,17 @@ def main(argv=None) -> int:
     c.add_argument("--register", action="store_true")
     c.set_defaults(fn=cmd_climb)
 
+    k = sub.add_parser("ask")
+    k.add_argument("--answers", help="JSON file of proposals to validate")
+    k.add_argument("--n", type=int, default=8)
+    k.add_argument("--focus", type=int, default=6)
+    k.add_argument("--seeds", type=int, default=41)
+    k.add_argument("--sweep-seeds", type=int, default=21)
+    k.add_argument("--validate-seeds", type=int, default=161)
+    k.add_argument("--min-t", type=float, default=2.0)
+    k.add_argument("--apply", action="store_true")
+    k.set_defaults(fn=cmd_ask)
+
     a = sub.add_parser("adopt")
     a.add_argument("--from-rank", type=int, default=1)
     a.add_argument("--seeds", type=int, default=61)
@@ -676,7 +777,7 @@ def main(argv=None) -> int:
     if args.deck_id is None and args.cmd == "cycle":
         raise SystemExit("cycle requires an explicit --deck-id: it edits and "
                          "registers that deck unattended")
-    if args.deck_id is None and args.cmd in ("baseline", "climb", "adopt"):
+    if args.deck_id is None and args.cmd in ("baseline", "climb", "adopt", "ask"):
         args.deck_id = api.me()["active_deck_id"]
         print(f"(using active deck {args.deck_id})")
     return args.fn(args, api)

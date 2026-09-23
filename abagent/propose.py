@@ -110,6 +110,30 @@ def extract_json(text: str) -> list[dict]:
     return out
 
 
+def build_question(counts: dict[int, int], plan: dict, focus: list[dict],
+                   catalog: dict[int, dict], n: int = 8) -> str:
+    """The full prompt, as text -- for answering without an API key.
+
+    The API path and this path pose exactly the same question; only the
+    courier differs. A Claude session the user already pays for can answer
+    the file and hand the proposals back, and they go through the identical
+    screen-then-validate gauntlet. Nothing about the agent's judgement of a
+    proposal depends on where the proposal came from.
+    """
+    pool = _catalogue_block(catalog, set(counts))
+    return (f"{SYSTEM}\n\n"
+            f"=== OUR DECK (play-order rank; lower is cast sooner) ===\n"
+            f"{_deck_block(counts, catalog, plan.get('card_order') or [])}\n\n"
+            f"=== THE ONLY MATCHUPS STILL COSTING US ANYTHING ===\n"
+            f"(we beat 53 of 69 opponents outright)\n{_focus_block(focus, catalog)}\n\n"
+            f"=== CARD POOL (id|name|cost|type|limit|rules) ===\n{pool}\n\n"
+            f"=== TASK ===\n"
+            f"Propose {n} swaps that break those specific matchups without "
+            f"giving up the ones we already win. Prefer cards no listed "
+            f"opponent plays. Respect each card's limit. Keep the deck at 100 "
+            f"cards: qty out must equal qty in.")
+
+
 def propose(counts: dict[int, int], plan: dict, focus: list[dict],
             catalog: dict[int, dict], n: int = 8,
             model: str = MODEL, log=print) -> list[dict]:

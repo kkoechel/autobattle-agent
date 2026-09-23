@@ -1,0 +1,539 @@
+You propose card swaps for AutoBattle, an autobattler where a 100-card deck and its standing instructions play themselves with no human input.
+
+You are one hypothesis generator among several, and the others already mine what the field plays. Your value is proposing cards NOBODY in the arena currently runs, justified from the rules text. A suggestion that merely copies a top deck is worthless here.
+
+Every proposal is measured by the real engine before anything is adopted, so do not hedge toward safety -- a bold wrong suggestion costs one cheap simulation, and a timid one costs the whole exercise. Be specific about the mechanism you expect.
+
+Answer ONLY with a JSON array, no prose around it:
+[{"cut": <card_id>, "add": <card_id>, "qty": <int>, "why": "<one sentence>"}]
+
+=== OUR DECK (play-order rank; lower is cast sooner) ===
+679|x1|Void Flower|cost 0|play-order 0|On enter: +3 Energy
+683|x1|Automox|cost 0|play-order 1|Start of turn: Utilize one of your relics → +1 Energy
+748|x1|Mox Cat|cost 0|play-order 2|Start of turn: Utilize one of your relics → +1 Energy, usable only on [creature] tagged cards (ephemeral — expires end of turn)
+746|x1|Mox Ape|cost 0|play-order 3|Start of turn: Utilize one of your relics → +1 Energy, usable only on [structure] tagged cards (ephemeral — expires end of turn)
+700|x7|Spring Drum|cost 1|play-order 4|Start of turn: Utilize one of your creatures → +1 Temp Energy (this turn only)
+861|x7|Talisman of the Matron|cost 2|play-order 5|Start of turn: +1 Energy, usable only on [creature] tagged cards (ephemeral — expires end of turn)
+887|x10|War Profiteer|cost 1|play-order 6|When you deal damage: Create a token copy of Gold Coin (exiles instead of hand/discard when it leaves play) (loops up to 2× per turn)
+737|x7|Energy Banner|cost 2|play-order 7|When one of your [creature] permanents enters play: +1 Energy, usable only on creature cards (ephemeral — expires end of turn)
+332|x3|Call to Honor|cost 3|play-order 8|Cost Modifier — Your [creature] cards cost 1 less energy to play · Anthem: Armor +2 — your other [creature] permanents in play get +2 armor while this is in play · On enter: +3 Honor
+845|x7|Royal Honey Guard|cost 4|play-order 9|Anthem: Indestructible — your other [royal] permanents in play gain Indestructible while this is in play · Anthem: Lifelink — your other [bee] permanents in play gain Lifelink while this is in play
+789|x15|Warrior Bee|cost 2|play-order 10|Anthem: Melee +1 — your other [bee] permanents in play get +1 melee while this is in play · Anthem: Armor +1 — your other [bee] permanents in play get +1 armor while this is in play · On death: Deal 1 damage to a random enemy creature
+844|x1|Queen Bee|cost 5|play-order 11|Untargetable — cannot be selected by targeted effects. Active only while you control 2 or more [bee] cards in play. · On death: Recycle your entire discard pile into your deck. Only [bee] creatures are recycled. · End of turn: Create a token copy of Bee Egg (exiles instead of hand/discard when it leaves play)
+782|x10|Builder Bee|cost 2|play-order 12|Start of turn: Utilize one of your relics → +2 Energy, usable only on structure cards (persists like normal Energy) · On death: Deal 3 damage to the weakest enemy creature
+848|x5|Bee Keeper|cost 7|play-order 13|When one of your [bee] permanents enters play: +3 Life · Start of turn: Create a token copy of Bee Drone (exiles instead of hand/discard when it leaves play)
+855|x1|The Great Hive|cost 12|play-order 14|Indestructible — can still be targeted, but destroy/damage effects do nothing. Active only while you control 5 or more [bee] cards in play. · Anthem: Melee +1 — your other [creature] permanents in play get +1 melee while this is in play · Anthem: Armor +1 — your other [creature] permanents in play get +1 armor while this is in play · When one of your [bee] permanents enters play: +1 Honor · End of turn: Create 2 token copies of Bee Egg (exiles instead of hand/discard when it leaves play) · On enter: Search your library for up to 1 copy of Queen Bee and put it into play
+790|x7|Bomber Bee|cost 5|play-order 15|Cost Scaling — costs 1 less energy per [bee] cards in your board, to a minimum of 1 energy · On enter: Deal 1 damage to a random enemy creature (scales with your [bee] permanents in play instead of a fixed amount) · On death: Deal damage to the opponent equal to your [bee] permanents in play
+802|x5|Hymn of the Friends|cost 7|play-order 16|Cost Scaling — costs 1 less energy per [creature] cards in your board · Start of turn: +1 Energy
+724|x3|Straw Princelings|cost 1|play-order 17|On enter: +1 Energy
+896|x7|Broken Strawman|cost 1|play-order 18|On enter: Draw 1 card
+30|x1|Ancestor's Memory|cost 1|play-order 19|On enter: Draw 3 cards
+
+=== THE ONLY MATCHUPS STILL COSTING US ANYTHING ===
+(we beat 53 of 69 opponents outright)
+- Necromancy v2: we win 20%, draw 44%, lose 37%. They play: 10x Quick Study, 10x Surge of Will, 10x Siege Titan, 10x Wild Gork, 10x Genius Novice, 10x War Elf, 10x Deathly Bargain, 7x Spring Drum, 5x Deglamour, 3x The Wandering Plague, 2x Call to Honor, 2x Deathbringer Supreme, 1x Ancestor's Memory, 1x Grand Reaper
+- 12: we win 15%, draw 59%, lose 27%. They play: 23x Ancient Power Station, 14x Tristal's Adventuring, 10x Surge of Will, 10x Mana Siphon, 7x Erase Board, 7x Emergency Installation, 3x Phoenix Flame, 3x Death's Touch, 3x Ephemeral Cleansing, 3x Wrath of Wog, 1x Eternity Engine, 1x Venomous Aria, 1x The Endless Library, 1x Oblivion
+- Total Stones: we win 24%, draw 54%, lose 22%. They play: 15x Quick Study, 10x Pester, 10x Iconoclast, 7x Surge of Will, 7x Total Recall, 7x Tristal's Scholar, 7x Treasure Horde, 7x Babbling Stone, 4x Ancient Power Station, 4x Talisman of the Magus, 3x Emergency Installation, 3x Fortunate Survivor, 2x The Wandering Plague, 2x Deglamour
+- 1drop: we win 32%, draw 41%, lose 27%. They play: 15x Bogmire Toad, 15x Energy Nova, 15x Simian Jester, 13x Plague Sigil, 11x Militia Grunt, 10x War Profiteer, 7x Spring Drum, 7x Mageflesh Beetle, 3x Call to Honor, 3x Fortunate Survivor, 1x Ancient Grove
+- v4 Happy Pride: we win 49%, draw 39%, lose 12%. They play: 23x Ancient Power Station, 12x Tristal's Adventuring, 10x Surge of Will, 7x Storm Engine, 7x Emergency Installation, 6x Mana Web, 5x Cycle Engine, 3x Eternal Archives, 3x Phoenix Flame, 3x Death's Touch, 3x Wrath of Wog, 2x Undying Vitality, 2x Station Blast, 1x Eternity Engine
+- RunicShieldbearer's Beginner Deck: we win 51%, draw 39%, lose 10%. They play: 13x Plague Sigil, 10x Bogmire Toad, 10x Mind Splinter, 10x Quick Study, 10x Iconoclast, 7x Total Recall, 7x Spring Drum, 7x Babbling Stone, 7x Broken Strawman, 5x Soul Drinker, 5x Price of Hope, 3x Call to Honor, 1x Ancestor's Memory, 1x Void Flower
+
+=== CARD POOL (id|name|cost|type|limit|rules) ===
+1|Ancient Power Station|cost 3|Structure/Station|limit 100|Indestructible — can still be targeted, but destroy/damage effects do nothing · Start of turn: +1 Temp Energy (this turn only)
+3|Noble Flag|cost 0|Relic/Flag|limit 15|Start of turn: +1 Honor
+4|Apothecary|cost 3|Creature/Cleric|limit 15|Start of turn: +1 Life · Start of turn: Remove 1 Poison stack from yourself
+5|Fire Beam|cost 3|Relic/Weapon|limit 15|Start of turn: Utilize one of your creatures → Deal 2 damage to a random enemy [creature] permanent
+8|Scout|cost 3|Creature/Soldier|limit 15|Anthem: Melee +1 — your other creatures in play get +1 melee while this is in play
+9|Dishonor Bell|cost 1|Relic/Bell|limit 15|Start of turn: Strip 3 Honor from the opponent
+10|Quarantine Barricade|cost 3|Structure/Fort|limit 10|When you gain a shield: Remove 2 Poison stacks from yourself · End of turn: +2 Shield
+11|Tower Scholar|cost 3|Creature/Scholar|limit 7|Start of turn: Utilize one of your structures → +2 Honor · Start of turn: Recycle 2 of your own discarded cards into your library (drawback) → +2 Energy, usable only on [spell] tagged cards (ephemeral — expires end of turn)
+12|Gravedigger|cost 2|Creature/Rogue|limit 15|On enter: Mill 4 cards from the opponent's deck · When removed from play: Recycle 2 cards from your discard into your deck
+13|Repeating Crossbow|cost 1|Relic/Weapon|limit 15|Start of turn: Utilize one of your creatures → Deal 1 damage to the weakest enemy creature
+14|Death Carriers|cost 4|Creature/Zombie Worker|limit 7|On death: Destroy all enemy [creature] permanents
+15|Plague Spore|cost 3|Relic/None|limit 7|End of turn: Utilize one of your creatures → Poison the enemy (+1 stack)
+16|Venom Fang|cost 2|Creature/Snake|limit 15|To Play: Utilize a creature · Start of turn: Poison the enemy (+1 stack)
+18|Pit Trap|cost 3|Relic/None|limit 10|To Play: Utilize a creature · On enter: Utilize one of your creatures → Deal 4 damage to a random enemy creature · When removed from play: Draw 3 cards
+19|Plague Doctor|cost 4|Creature/None|limit 10|Start of turn: Utilize one of your creatures → Poison the enemy (+1 stack) · Start of turn: Utilize one of your creatures → Poison the enemy (+1 stack)
+21|Death Striker|cost 2|Creature/Warrior|limit 10|On death: Poison the enemy (+3 stacks)
+23|Arcane Channeler|cost 4|Relic/None|limit 7|Start of turn: Draw 1 card · Start of turn: +1 Temp Energy (this turn only)
+24|Toxic Behemoth|cost 10|Creature/Beast|limit 7|Start of turn: Poison the enemy (+3 stacks)
+26|Venom Cascade|cost 2|Spell/None|limit 3|On enter: Poison the enemy (+3 stacks)
+27|Eternity Engine|cost 4|Relic/None|limit 1|Start of turn: +2 Energy · Start of turn: Draw 1 card
+28|Fire Djinn|cost 4|Creature/Elemental Demon|limit 3|On death: Deal damage to the opponent equal to your [creature] permanents in play · End of turn: Create a token copy of Ember Imp (exiles instead of hand/discard when it leaves play)
+29|Millstone|cost 2|Relic/None|limit 7|End of turn: Mill 2 cards from the opponent's deck · On enter: Recycle 2 cards from your discard into your deck
+31|Monkey's Rage|cost 4|Spell/None|limit 10|To Play: Utilize a creature → Draw 1 card · On enter: Destroy all enemy relics costing 2 energy or less
+35|Healer|cost 2|Creature/Cleric|limit 15|When you gain life: Remove 1 Poison stack from yourself · Start of turn: +1 Life
+36|Recycler|cost 2|Relic/None|limit 10|Start of turn: Recycle 1 card from your discard into your deck · Start of turn: Recycle 1 card from your discard into your deck
+38|Busy Wizard|cost 5|Creature/Wizard|limit 3|When your deck is milled: Recycle 1 card from your discard into your deck · On enter: Draw 1 card · Start of turn: +1 Energy · Start of turn: Draw 1 card
+41|Forest Sprite|cost 3|Creature/Fairy|limit 15|When you lose life: +1 Shield · Start of turn: +2 Life · Start of turn: Remove 2 Poison stacks from yourself
+42|Bone Archer|cost 2|Creature/Skeleton Soldier|limit 15|Start of turn: Deal 1 damage to the opponent
+44|War Drum|cost 3|Relic/None|limit 10|Anthem: Melee +1 — your other creatures in play get +1 melee while this is in play
+45|Shadow Cloak|cost 1|Relic/None|limit 15|Start of turn: Mill 1 card from the opponent's deck
+46|Void Siphon|cost 5|Relic/None|limit 10|Drawlink ×1 — draw cards equal to 1× this creature's melee (capped by damage dealt) · Start of turn: +1 Energy
+48|Dark Ritual|cost 3|Spell/None|limit 10|To Play: Utilize a creature → Draw 1 card · On enter: +2 Energy
+49|Volcanic Flow|cost 3|Spell/None|limit 7|On enter: Deal 3 damage to all [creature] permanents (yours too)
+50|Ancient Grove|cost 3|Enchantment/None|limit 1|When you play a [creature] card: Draw 1 card · Start of turn: +1 Life · Start of turn: +1 Honor · Start of turn: Recycle 1 card from your discard into your deck
+54|Archmage Tower|cost 7|Relic/None|limit 1|Amplify Recycle +1 — your recycle effects shuffle in 1 extra cards · Amplify Draw +1 — your draw effects draw 1 extra cards · Untargetable — cannot be selected by targeted effects · Start of turn: +2 Energy · Start of turn: Draw 1 card · Start of turn: Recycle 1 card from your discard into your deck
+55|Undead Colossus|cost 9|Creature/Undead|limit 1|On enter: Opponent discards 2 cards · Start of turn: Sacrifice another of your creatures (drawback) → Deal 7 damage to the opponent
+56|The One-Sided Coin of Xyx|cost 99|Spell/None|limit 1|On enter: Deal 99 damage to the opponent
+58|Men of Artifice|cost 0|Creature/Homunculus|limit 10|To Play: Utilize a relic · Start of turn: Utilize one of your relics
+60|Brightclaw Stalker|cost 5|Creature/Beast|limit 1|On death: Strip 10 Honor from the opponent · On death: +5 Shield · Start of turn: +5 Honor
+61|Devious Agent|cost 4|Creature/None|limit 3|When your deck is milled: Draw 1 card · End of turn: Mill 3 cards from the opponent's deck
+62|Super Recycler|cost 6|Structure/None|limit 1|On enter: Draw 4 cards · End of turn: Recycle 1 card from your discard into your deck · End of turn: Recycle 1 card from your discard into your deck · End of turn: Recycle 1 card from your discard into your deck · End of turn: Recycle 1 card from your discard into your deck
+66|Idol of All|cost 7|Relic/None|limit 15|When you utilize a permanent: +1 Life · On enter: +1 Life · On enter: +1 Honor · On enter: +1 Shield · On enter: Draw 1 card · On enter: Mill 1 card from the opponent's deck · On enter: Strip 1 Honor from the opponent · On enter: Deal 1 damage to the opponent · On enter: Destroy a random enemy permanent
+68|Dreadspire Specter|cost 7|Creature/Elemental Dragon|limit 7|Cost Modifier — Your [creature] cards cost 1 less energy to play · Cost Modifier — Your [relic] cards cost 1 less energy to play · When you play a [spell] card: Draw 1 card
+70|Iron Footsoldier|cost 2|Creature/Soldier|limit 15|Indestructible — can still be targeted, but destroy/damage effects do nothing
+71|Halberdier|cost 1|Creature/Soldier|limit 15|Start of turn: Utilize one of your creatures → +2 Shield
+72|Battlefield Engineer|cost 2|Creature/None|limit 10|Cost Modifier — Your [structure] cards cost 1 less energy to play · When you play a [structure] card: +2 Shield
+73|Militia Grunt|cost 1|Creature/Soldier|limit 15|On enter: Deal 2 damage to a random enemy creature
+74|Battle-Hardened Veteran|cost 3|Creature/Soldier Veteran|limit 10|Start of turn: Recycle 1 card from your discard into your deck · Start of turn: +1 Shield
+75|Ironclad Sergeant|cost 3|Creature/Soldier|limit 10|Start of turn: +1 Shield · On death: Draw 2 cards
+76|Ravaging Berserker|cost 4|Creature/None|limit 10|On enter: Deal 3 damage to the opponent · On death: Poison the enemy (+3 stacks)
+78|Blood Knight|cost 5|Creature/None|limit 7|When you gain life: Deal 1 damage to the opponent (loops up to 7× per turn) · Start of turn: +3 Life
+80|Siege Commander|cost 5|Creature/None|limit 3|Start of turn: Deal 5 damage to the opponent · Start of turn: Deal 5 damage to a random enemy [creature] permanent
+93|Warrior's Blessing|cost 4|Enchantment/None|limit 10|Start of turn: Utilize one of your creatures → Deal 4 damage to the opponent
+95|Venom Dart|cost 1|Spell/None|limit 15|On enter: Poison the enemy (+2 stacks) · On enter: Remove 2 Poison stacks from yourself
+96|Bogmire Toad|cost 1|Creature/Toad|limit 15|On enter: Poison the enemy (+1 stack) · On death: Poison the enemy (+1 stack)
+98|Toxin Cloud|cost 3|Spell/None|limit 7|On enter: Poison the enemy (+2 stacks) · On enter: Destroy all creatures costing 2 energy or less (yours too)
+101|Venomous Aria|cost 7|Spell/None|limit 1|On enter: Poison the enemy (+5 stacks) · On enter: Deal 5 damage to all enemy [creature] permanents · On enter: Destroy all enemy relics costing 5 energy or less · On enter: Deal 5 damage to all enemy [structure] permanents · On enter: Destroy all enemy enchantments costing 5 energy or less
+102|Covetous Drake|cost 4|Creature/Dragon|limit 7|On enter: Bounce 1 random enemy creature to their hand · Start of turn: Return 1 of your relic to your hand · On death: Poison the enemy (+4 stacks)
+104|Venom Hydra|cost 7|Creature/None|limit 7|On enter: Poison the enemy (+3 stacks) · On death: Poison the enemy (+7 stacks)
+105|Poison Archon|cost 8|Creature/None|limit 3|Opponent cannot gain shields · On enter: Poison the enemy (+4 stacks)
+106|The Eternal Plague|cost 10|Enchantment/None|limit 1|On enter: Poison the enemy (+5 stacks) · Start of turn: Draw 1 card · Start of turn: Recycle 1 card from your discard into your deck
+107|Iron Shield|cost 1|Relic/None|limit 15|Untargetable — cannot be selected by targeted effects · End of turn: +1 Shield
+108|Stone Sentinel|cost 5|Creature/Demon|limit 15|Start of turn: +1 Shield
+109|Fortify|cost 2|Spell/None|limit 15|On enter: +4 Shield · On enter: +8 Life
+110|Bulwark Crystal|cost 3|Relic/None|limit 15|Start of turn: +2 Shield
+111|For the Greater Good|cost 1|Spell/None|limit 10|On enter: Sacrifice one of your creatures (drawback) → Draw 3 cards · On enter: +6 Life
+112|Shield Dancer|cost 3|Creature/None|limit 10|When you gain a shield: +1 Honor (loops up to 17× per turn) · Start of turn: +1 Shield
+113|Energy Wall|cost 5|Structure/None|limit 7|When you utilize a permanent: +1 Energy · Start of turn: Utilize one of your creatures → +1 Shield
+118|Ink Blotter|cost 2|Relic/None|limit 15|Start of turn: Mill 1 card from the opponent's deck · Start of turn: Deal 1 damage to the opponent · Start of turn: Strip 1 Honor from the opponent
+120|Mind Splinter|cost 2|Spell/None|limit 15|On enter: Mill 9 cards from the opponent's deck
+121|Void Scholar|cost 3|Creature/Void Scholar|limit 10|Start of turn: Mill 2 cards from the opponent's deck · Start of turn: Discard 1 of your own card (drawback) → Draw 2 cards
+127|Fire Bolt|cost 2|Spell/None|limit 15|On enter: Deal 5 damage to a random enemy [creature] permanent · On enter: Create a token copy of Ember Imp (exiles instead of hand/discard when it leaves play)
+128|Inferno Shard|cost 1|Relic/None|limit 15|Start of turn: Utilize one of your creatures → Deal 2 damage to the opponent
+129|Ember Imp|cost 0|Creature/Demon|limit 0|Start of turn: Deal 1 damage to the opponent
+130|Bloodletter|cost 4|Creature/Warrior|limit 15|Start of turn: Deal 2 damage to the weakest enemy creature
+131|Molten Bolt|cost 2|Spell/None|limit 15|On enter: Deal 7 damage to a random enemy [creature] permanent · On enter: Destroy a random enemy [structure] permanent
+132|Infernal Conduit|cost 4|Relic/None|limit 10|Start of turn: Deal 2 damage to the opponent · Start of turn: Deal 2 damage to a random enemy creature
+134|Pyroclast Mage|cost 2|Creature/None|limit 10|End of turn: Sacrifice another of your relics (drawback) → Deal 3 damage to a random enemy creature
+135|Dragon's Breath|cost 5|Spell/None|limit 7|On enter: Deal 6 damage to the opponent · On enter: Deal 5 damage to a random enemy [creature] permanent · On enter: Deal 4 damage to a random enemy [creature] permanent · On enter: Deal 3 damage to a random enemy [creature] permanent
+139|Dustsweeper|cost 3|Relic/None|limit 15|Start of turn: Recycle 2 cards from your discard into your deck · Start of turn: +2 Life
+140|Bone Picker|cost 2|Creature/None|limit 15|Start of turn: Recycle 1 card from your discard into your deck · Start of turn: +1 Honor
+141|Salvage Ritual|cost 2|Enchantment/None|limit 10|When you draw a card: Recycle 1 card from your discard into your deck · End of turn: Recycle 1 card from your discard into your deck · On enter: +5 Life
+142|Restoration Desk|cost 3|Relic/None|limit 15|Start of turn: Recycle 3 cards from your discard into your deck
+143|Cycle Engine|cost 5|Relic/None|limit 10|Start of turn: Recycle 2 cards from your discard into your deck · Start of turn: +2 Temp Energy (this turn only)
+144|Memory Keeper|cost 4|Creature/None|limit 10|Start of turn: Recycle 2 cards from your discard into your deck · Start of turn: +1 Honor
+146|Eternal Returner|cost 5|Relic/None|limit 7|Start of turn: Draw 1 card · Start of turn: Recycle 1 card from your discard into your deck · Start of turn: Recycle 1 card from your discard into your deck · Start of turn: Recycle 1 card from your discard into your deck
+147|Eternal Archives|cost 6|Relic/None|limit 3|End of turn: Recycle 2 cards from your discard into your deck · Start of turn: Draw 2 cards · Start of turn: Recycle 2 cards from your discard into your deck · When removed from play: Recycle 2 cards from your discard into your deck
+148|The Endless Library|cost 7|Structure/None|limit 1|End of turn: Recycle 2 cards from your discard into your deck · End of turn: Draw 2 cards · End of turn: +2 Honor · End of turn: +2 Life · On enter: Bounce 2 random enemy creatures to their hand
+149|Quick Study|cost 1|Spell/None|limit 15|On enter: Draw 2 cards
+150|Crystal Ball|cost 3|Relic/None|limit 15|Start of turn: Draw 1 card
+151|Mana Spring|cost 2|Structure/None|limit 15|To Play: Utilize a creature · Start of turn: +1 Temp Energy (this turn only)
+157|Storm Engine|cost 5|Relic/None|limit 7|Start of turn: +2 Temp Energy (this turn only) · On enter: Draw 2 cards
+159|The Infinite Archive|cost 8|Relic/None|limit 1|Start of turn: Draw 3 cards · Start of turn: +2 Energy · Start of turn: +1 Honor
+161|Milling Shade|cost 3|Creature/None|limit 15|Start of turn: Mill 1 card from the opponent's deck · Start of turn: +1 Shield
+163|Scholar's Guard|cost 4|Creature/None|limit 7|When your deck is milled: +1 Shield · When your deck is milled: Strip 1 Honor from the opponent · Honorbound ×1 — opponent loses honor equal to 1× this creature's melee (capped by damage dealt) · Start of turn: Mill 2 cards from your own deck (drawback)
+164|Plague Shield|cost 5|Relic/None|limit 7|When you gain a shield: Poison the enemy (+1 stack) · When you gain honor: Poison the enemy (+1 stack) · Start of turn: Utilize one of your creatures → Poison the enemy (+1 stack)
+166|Ice Fortress|cost 3|Structure/Fort|limit 7|Untargetable — cannot be selected by targeted effects · When you lose life: +1 Shield
+170|Relic Smash|cost 4|Spell/None|limit 15|On enter: Destroy all [relic] permanents (yours too)
+171|Cull the Weak|cost 2|Spell/None|limit 15|On enter: Destroy all creatures costing 2 energy or less (yours too)
+175|Shattering Echoes|cost 5|Spell/None|limit 7|On enter: Destroy all [relic] permanents (yours too) · On enter: Draw 1 card
+176|Oblivion|cost 8|Spell/None|limit 1|On enter: Destroy all [relic] permanents (yours too) · On enter: Destroy all [creature] permanents (yours too) · On enter: Destroy all [structure] permanents (yours too)
+178|Relic-bound Fire Djinn|cost 3|Relic/Demon|limit 7|To Play: Utilize a creature → Deal 4 damage to yourself (drawback) · Start of turn: Utilize one of your relics → +2 Temp Energy (this turn only) · On death: Deal 4 damage to yourself (drawback)
+179|Quick Slash|cost 1|Spell/None|limit 15|On enter: Deal 4 damage to the opponent · On enter: Draw 1 card
+181|Soul Rat|cost 1|Creature/Rat|limit 15|On enter: Opponent discards 1 card
+183|Honor's Cry|cost 2|Spell/None|limit 15|On enter: +5 Honor · On enter: +5 Shield
+186|Page Tear|cost 2|Spell/None|limit 15|On enter: Mill 4 cards from the opponent's deck · On enter: Draw 1 card
+187|Surge of Will|cost 3|Spell/None|limit 10|On enter: +5 Temp Energy (this turn only)
+190|Blinding Dust|cost 4|Spell/None|limit 15|On enter: +7 Life · On enter: Bounce 2 random enemy creatures to their hand
+191|Drain Life|cost 1|Spell/None|limit 15|On enter: Deal 2 damage to the opponent · On enter: +2 Life · On enter: Recycle 2 cards from your discard into your deck
+192|Dedicated Recall|cost 2|Spell/None|limit 15|On enter: Recycle 2 cards from your discard into your deck · On enter: Draw 2 cards
+194|Creeping Fog|cost 3|Spell/None|limit 15|On enter: Poison the enemy (+4 stacks)
+197|Chain Shatter|cost 3|Spell/None|limit 15|On enter: Destroy a random enemy permanent · On enter: Recycle 1 card from your discard into your deck
+198|Fortune's Favor|cost 4|Spell/None|limit 15|On enter: Draw 3 cards · On enter: +3 Honor
+201|Arcane Surge|cost 3|Spell/None|limit 10|On enter: Draw 4 cards
+202|Deconstruct|cost 1|Spell/None|limit 10|On enter: Destroy a random enemy permanent · On enter: Sacrifice one of your permanents (drawback)
+207|Execution Line|cost 2|Spell/None|limit 10|On enter: Destroy the highest-cost enemy [creature] permanent (random among ties) · On enter: Recycle 1 card from your discard into your deck
+210|Toxic Sacrifice|cost 1|Spell/None|limit 10|To Play: Sacrifice a creature → Poison the enemy (+4 stacks)
+211|Honor Blitz|cost 3|Spell/None|limit 10|On enter: +9 Honor · On enter: Recycle 1 card from your discard into your deck · On enter: Recycle 1 card from your discard into your deck · On enter: Recycle 1 card from your discard into your deck
+213|Bitter Cycle|cost 5|Spell/None|limit 10|On enter: Recycle 3 cards from your discard into your deck · On enter: Opponent discards 3 cards
+215|Virulent Plague|cost 5|Spell/None|limit 7|To Play: Utilize a creature · On enter: Poison the enemy (+5 stacks)
+218|Draining Grasp|cost 3|Spell/None|limit 7|On enter: +10 Life · On enter: Lose 5 Honor (drawback) · On enter: Deal 10 damage to the opponent · On enter: Mill 5 cards from your own deck (drawback)
+219|Total Recall|cost 2|Spell/None|limit 7|On enter: Draw 4 cards · On enter: Opponent draws 7 cards (drawback)
+220|Erase Board|cost 5|Spell/None|limit 7|On enter: Deal 3 damage to all [creature] permanents (yours too) · On enter: Destroy all [relic] permanents (yours too)
+221|Mass Extinction|cost 6|Spell/None|limit 7|On enter: Destroy all creatures costing 3 energy or more (yours too) · On enter: Recycle 3 cards from your discard into your deck
+222|Temporal Rift|cost 5|Spell/None|limit 7|On enter: +5 Shield · On enter: Recycle 5 cards from your discard into your deck · On enter: Draw 5 cards
+223|Last War|cost 7|Spell/None|limit 7|On enter: Deal 10 damage to the opponent · On enter: Kill a random enemy creature · On enter: Destroy a random enemy permanent
+225|Biohazard|cost 5|Spell/None|limit 3|On enter: Destroy all creatures costing 3 energy or less (yours too) · On enter: Destroy all [enchantment] permanents (yours too)
+227|Void Rend|cost 5|Spell/None|limit 3|On enter: Destroy all [enchantment] permanents (yours too) · On enter: Destroy all [structure] permanents (yours too)
+228|Infinite Draw|cost 8|Spell/None|limit 3|On enter: Draw 10 cards · On enter: +5 Energy
+229|Honor Cascade|cost 5|Spell/None|limit 3|On enter: +8 Honor · On enter: Draw 2 cards
+230|Mass Poisoning|cost 5|Spell/None|limit 3|On enter: Poison the enemy (+3 stacks) · On enter: Draw 3 cards
+231|Omega Strike|cost 9|Spell/None|limit 3|On enter: Deal 20 damage to the opponent · On enter: Kill a random enemy creature · On enter: Mill 10 cards from the opponent's deck
+232|The Unmaking|cost 4|Spell/None|limit 1|On enter: Destroy all permanents costing 5 energy or less (yours too) · On enter: Strip 10 Honor from the opponent · On enter: Mill 10 cards from the opponent's deck
+236|Last Stand|cost 2|Spell/None|limit 3|To Play: Sacrifice a creature · On enter: +15 Honor · On enter: +15 Life
+237|Phoenix Flame|cost 7|Spell/None|limit 3|On enter: Deal 7 damage to the opponent · On enter: Recycle your entire discard pile into your deck · On enter: Draw 7 cards · On enter: +7 Life
+238|Absolute Zero|cost 5|Spell/None|limit 1|On enter: Deal 7 damage to the opponent · On enter: Deal 7 damage to all [creature] permanents (yours too) · On enter: Deal 7 damage to all [structure] permanents (yours too)
+241|Vex|cost 1|Spell/None|limit 15|On enter: Strip 5 Honor from the opponent · On enter: Draw 1 card · On enter: Remove 5 Poison stacks from yourself
+244|Ancestral Guard|cost 2|Spell/None|limit 15|On enter: +7 Shield
+253|Energy Nova|cost 2|Spell/None|limit 15|On enter: Bounce 2 random enemy permanents to their hand · On enter: Return 1 of your permanent to your hand
+256|Honor Straw|cost 1|Relic/None|limit 15|Start of turn: +1 Honor · Start of turn: Strip 1 Honor from the opponent
+258|Chain Mill|cost 3|Spell/None|limit 10|On enter: Mill 5 cards from the opponent's deck · On enter: Deal 5 damage to a random enemy creature
+260|Battle Torch|cost 1|Relic/None|limit 15|Start of turn: Deal 1 damage to the opponent · On the enemy's turn: Remove 1 Poison stack from yourself
+265|Honor Stone|cost 4|Relic/None|limit 7|When you gain honor: +1 Shield (loops up to 17× per turn) · On enter: Utilize one of your creatures → Draw 1 card
+273|Burning Brand|cost 3|Relic/None|limit 15|Start of turn: Deal 1 damage to the opponent · Start of turn: +1 Temp Energy (this turn only)
+274|Crystal Vial|cost 2|Relic/None|limit 15|Start of turn: +3 Life · On enter: Draw 1 card
+275|Soulshield Anvil|cost 2|Relic/None|limit 10|When you gain a shield: Draw 1 card (loops up to 7× per turn) · When you gain a shield: Recycle 1 card from your discard into your deck (loops up to 17× per turn) · Start of turn: Sacrifice another of your creatures (drawback) → +4 Shield
+278|Rust Hammer|cost 4|Relic/Weapon|limit 15|Start of turn: Deal 2 damage to the opponent · Start of turn: Deal 1 damage to a random enemy creature
+281|Serpent Scale|cost 4|Relic/None|limit 15|Start of turn: Poison the enemy (+1 stack) · Start of turn: +1 Shield
+283|Time Shard|cost 3|Relic/None|limit 15|Start of turn: +1 Temp Energy (this turn only) · Start of turn: Recycle 1 card from your discard into your deck
+285|Honor Beacon|cost 6|Relic/None|limit 15|Start of turn: +3 Honor · On enter: Deal 3 damage to a random enemy creature
+286|Poison Coil|cost 3|Structure/None|limit 15|On enter: Poison the enemy (+1 stack) · On death: Poison the enemy (+1 stack) · Start of turn: +1 Temp Energy (this turn only)
+291|Cursed Urn|cost 2|Relic/None|limit 10|Amplify Poison +1 — your poison effects inflict 1 extra poison · On death: Poison the enemy (+2 stacks) · On death: Gain 2 Poison stacks (drawback)
+293|Arcane Battery|cost 3|Relic/None|limit 10|Start of turn: +1 Temp Energy (this turn only) · End of turn: +2 Honor
+296|Blood Scarab|cost 4|Relic/None|limit 10|Start of turn: Deal 2 damage to the opponent · Start of turn: +4 Life
+300|Mana Web|cost 5|Relic/None|limit 10|Start of turn: +2 Temp Energy (this turn only) · Start of turn: Draw 1 card
+301|Honor Crucible|cost 5|Relic/None|limit 10|Start of turn: +4 Honor
+304|Reclaimer's Stone|cost 5|Relic/None|limit 10|Start of turn: Recycle 3 cards from your discard into your deck · On enter: +3 Honor · On death: +3 Shield
+307|Famine Bell|cost 6|Relic/Bell|limit 10|Start of turn: Deal 2 damage to a random enemy [creature] permanent · Start of turn: Strip 4 Honor from the opponent
+314|Dark Battery|cost 5|Relic/None|limit 7|Start of turn: +2 Temp Energy (this turn only) · Start of turn: Draw 2 cards · Start of turn: Lose 2 Honor (drawback)
+322|Crystalline Aegis|cost 4|Relic/None|limit 7|When one of your [honor] permanents enters play: Draw 1 card · When one of your [honor] permanents enters play: +1 Shield · When one of your [honor] permanents enters play: +1 Life
+323|Throne of Thorns|cost 4|Structure Relic/None|limit 7|To Play: Utilize a relic · Start of turn: +3 Shield · On enter: Bounce 1 random enemy creature to their hand · When removed from play: Destroy a random enemy permanent
+330|Corruption Engine|cost 8|Relic/None|limit 3|Start of turn: Mill 6 cards from the opponent's deck · Start of turn: Strip 6 Honor from the opponent
+331|Chaos Pot|cost 7|Relic/None|limit 3|Start of turn: Deal 7 damage to a random enemy creature · End of turn: Opponent discards 1 card · End of turn: Recycle 1 card from your discard into your deck · On enter: Lose 7 Honor (drawback)
+334|Nexus of Power|cost 7|Relic/None|limit 3|Start of turn: +3 Energy · Start of turn: Draw 3 cards
+335|Grand Mill Wheel|cost 5|Relic/None|limit 1|When you draw a card: Mill 1 card from the opponent's deck (loops up to 7× per turn) · When you become poisoned: Mill 1 card from the opponent's deck (loops up to 7× per turn) · When you gain honor: Mill 1 card from the opponent's deck (loops up to 7× per turn) · When you gain life: Mill 1 card from the opponent's deck (loops up to 7× per turn)
+336|Devastation Idol|cost 9|Relic/None|limit 3|Start of turn: Deal 8 damage to the opponent · Start of turn: Deal 4 damage to a random enemy creature
+339|Nexus of Endings|cost 12|Relic/None|limit 1|On enter: Bounce 1 random enemy creature to their hand · Start of turn: Mill 6 cards from the opponent's deck · Start of turn: Deal 6 damage to the opponent
+342|Plague Heart|cost 10|Relic/None|limit 1|While this card is in play you cannot be poisoned · On enter: Poison the enemy (+2 stacks) · Start of turn: Poison the enemy (+2 stacks)
+350|Ley Stone|cost 3|Relic/None|limit 15|Start of turn: Utilize one of your enchantments → +2 Temp Energy (this turn only)
+358|Memory Rune Pillar|cost 5|Relic/None|limit 7|Start of turn: Recycle 3 cards from your discard into your deck · Start of turn: +2 Honor
+363|Plague Monolith|cost 7|Relic/None|limit 7|Start of turn: Poison the enemy (+3 stacks)
+366|Marsh Lurker|cost 2|Creature/Beast|limit 7|When you become poisoned: Deal 1 damage to the opponent · On death: Poison the enemy (+3 stacks)
+367|Ember Wisp|cost 1|Creature/None|limit 15|Start of turn: Deal 1 damage to the opponent · On enter: Remove 4 Poison stacks from yourself
+368|Vine Creeper|cost 4|Creature/Beast|limit 15|On enter: Return 1 of your enchantment to your hand · On enter: Return 1 of your relic to your hand
+369|Dustwalker|cost 1|Creature/Demon|limit 15|Start of turn: Mill 1 card from the opponent's deck
+371|Bone Imp|cost 2|Creature/Skeleton Imp|limit 15|Start of turn: Deal 1 damage to the opponent · Start of turn: Deal 1 damage to a random enemy creature
+372|Rot Hound|cost 2|Creature/Beast|limit 1|End of turn: Poison the enemy (+1 stack)
+375|Scavenger|cost 2|Creature/Rogue|limit 15|Start of turn: Mill 1 card from the opponent's deck · Start of turn: Recycle 1 card from your discard into your deck
+379|Acid Drake|cost 3|Creature/Dragon|limit 15|When removed from play: Poison the enemy (+2 stacks) · On enter: Poison the enemy (+2 stacks)
+380|Gravel Golem|cost 3|Creature/Construct|limit 15|Start of turn: +2 Shield
+382|Cursed Thrall|cost 4|Creature/Undead|limit 15|On death: Poison the enemy (+2 stacks) · Start of turn: Poison the enemy (+1 stack)
+383|Ember Elemental|cost 4|Creature/Elemental|limit 15|Start of turn: Deal 2 damage to the opponent
+384|Mire Serpent|cost 4|Creature/Beast|limit 15|Start of turn: Poison the enemy (+1 stack)
+385|Ancient Beholder|cost 3|Creature/None|limit 15|Start of turn: Strip 3 Honor from the opponent
+391|Venomfang Lizard|cost 2|Creature/Beast|limit 10|On enter: Poison the enemy (+2 stacks)
+392|Soul Drinker|cost 2|Creature/Ghost|limit 10|When your opponent gains honor: Poison the enemy (+2 stacks) (loops up to 10× per turn)
+394|Grave Knight|cost 4|Creature/Undead|limit 10|Start of turn: Deal 2 damage to the opponent · Start of turn: Recycle 2 cards from your discard into your deck
+396|Toxin Master|cost 2|Creature/None|limit 10|Start of turn: Utilize one of your structures → Poison the enemy (+2 stacks)
+397|Cursed Warden|cost 4|Creature/Guard|limit 10|Start of turn: Poison the enemy (+1 stack) · Start of turn: +1 Shield
+398|Iron Sentinel|cost 5|Creature/Construct|limit 10|Start of turn: +4 Shield
+401|Bone Colossus|cost 7|Creature/Undead|limit 10|Start of turn: Poison the enemy (+1 stack) · On enter: Deal 2 damage to a random enemy [creature] permanent
+405|Decay Lord|cost 5|Creature/Demon|limit 7|On enter: Poison the enemy (+4 stacks) · Start of turn: Draw 1 card
+406|Blood Colossus|cost 10|Creature/None|limit 10|Lifelink ×1 — gain life equal to 1× this creature's melee (capped by damage dealt)
+407|Death Prophet|cost 5|Creature/Caster|limit 7|Amplify Poison +1 — your poison effects inflict 1 extra poison · When removed from play: Poison the enemy (+2 stacks) · When removed from play: Draw 1 card
+409|Plague Titan|cost 8|Creature/None|limit 7|On enter: Poison the enemy (+3 stacks) · On enter: Draw 1 card
+413|The Wandering Plague|cost 4|Creature/Horror Wolf Giant|limit 7|On enter: Poison the enemy (+2 stacks) · On enter: Sacrifice one of your creatures (drawback) → Destroy all enemy permanents costing 2 energy or less
+415|Honor Guard|cost 4|Creature/Soldier|limit 7|When your deck is milled: +1 Honor (loops up to 7× per turn) · When you lose life: +1 Honor (loops up to 7× per turn) · When you utilize a permanent: +1 Honor (loops up to 7× per turn)
+419|Memory Straw|cost 5|Relic/None|limit 7|Start of turn: Mill 2 cards from the opponent's deck · Start of turn: Draw 2 cards · Start of turn: Recycle 2 cards from your discard into your deck
+420|Plague Sovereign|cost 6|Creature/Queen|limit 3|When one of your [creature] permanents dies: Poison the enemy (+1 stack) · To Play: Discard 3 cards → Poison the enemy (+6 stacks)
+422|The Pestilence|cost 9|Creature/None|limit 3|On enter: Poison the enemy (+3 stacks) · Start of turn: Utilize one of your creatures → Poison the enemy (+1 stack) · Start of turn: Utilize one of your relics → Poison the enemy (+1 stack) · Start of turn: Utilize one of your enchantments → Poison the enemy (+1 stack)
+425|Grand Titan|cost 10|Creature/Construct|limit 3|Amplify Damage +2 — your damage effects deal 2 extra damage (not combat) · Start of turn: +8 Shield · Start of turn: +4 Life
+428|Ancient Horror|cost 12|Creature/None|limit 3|Start of turn: Deal 7 damage to the opponent · Start of turn: Mill 7 cards from the opponent's deck · Start of turn: Poison the enemy (+4 stacks) · On enter: Return a random [relic] permanent costing 5 energy or more from your discard pile to play
+433|Grand Mage|cost 6|Creature/Wizard|limit 1|Untargetable — cannot be selected by targeted effects · When you play a [spell] card: Mill 2 cards from the opponent's deck · Start of turn: Draw 1 card · Start of turn: +1 Energy
+434|The Straw Prince|cost 4|Creature/Scarecrow Knight|limit 1|Anthem: Melee +1 — your other [creature] permanents in play get +1 melee while this is in play · Anthem: Armor +1 — your other [creature] permanents in play get +1 armor while this is in play · On enter: Drain all opponent Energy · On enter: +2 Energy, usable only on [creature] tagged cards (persists like normal Energy)
+437|Honor Incarnate|cost 9|Creature/None|limit 1|Start of turn: +3 Honor · Start of turn: +3 Shield · Start of turn: Strip 3 Honor from the opponent · On death: Opponent discards 3 cards · On death: Recycle 3 cards from your discard into your deck · On death: Draw 3 cards
+438|Grand Reaper|cost 13|Creature/Demon God|limit 1|When you draw a card: Poison the enemy (+3 stacks) · End of turn: Kill a random enemy creature · End of turn: Deal 7 damage to the opponent
+440|Champion of Nothing|cost 10|Creature/None|limit 1|When you gain honor: +3 Life (loops up to 77× per turn) · On death: +10 Honor · On enter: Sacrifice one of your creatures (drawback) → +10 Honor
+442|Flame Sprite|cost 3|Creature/Elemental|limit 15|Start of turn: Create a token copy of Ember Imp (exiles instead of hand/discard when it leaves play)
+443|Mud Golem|cost 4|Creature/Elemental|limit 15|Cost Modifier — Opponent's [enchantment] cards cost 1 more energy to play · Cost Modifier — Opponent's [relic] cards cost 1 more energy to play
+445|Bone Sentinel|cost 3|Creature/Undead|limit 15|To Play: Pay 3 Honor → Draw 1 card
+447|Blood Witch|cost 3|Creature/Demon|limit 15|Start of turn: Deal 2 damage to the opponent · Start of turn: +2 Life
+449|Iron Warden|cost 4|Creature/Guard|limit 10|Start of turn: +3 Shield
+451|Honor Knight|cost 4|Creature/Knight|limit 10|Honorlink ×2 — gain honor equal to 2× this creature's melee (capped by damage dealt)
+455|Blood Sage|cost 3|Creature/Scholar|limit 7|When one of your [creature] permanents dies: +3 Life · Start of turn: +3 Life
+456|Venom Oracle|cost 6|Creature/Shaman|limit 7|On enter: Poison the enemy (+3 stacks)
+457|Soul Shaman|cost 4|Creature/Shaman|limit 3|When you gain honor: Recycle 1 card from your discard into your deck (loops up to 17× per turn) · When you gain honor: Bounce 1 random enemy structure to their hand (loops up to 2× per turn) · End of turn: +1 Honor
+458|Plague Champion|cost 6|Creature/Demon|limit 7|On enter: Poison the enemy (+3 stacks) · When removed from play: Deal 3 damage to the opponent
+459|Void Sage|cost 3|Creature/Void Scholar|limit 7|End of turn: Mill 5 cards from the opponent's deck · Start of turn: Mill 5 cards from your own deck (drawback)
+460|Grand Shaman|cost 9|Creature/Shaman|limit 3|Start of turn: +6 Honor · Start of turn: +4 Life · Start of turn: Poison the enemy (+3 stacks) · Start of turn: Draw 2 cards
+462|Cage Fighter|cost 1|Creature/None|limit 15|When your deck is milled: Deal 1 damage to the opponent
+463|Rusty Axeman|cost 2|Creature/None|limit 15|On enter: Deal 2 damage to a random enemy creature
+465|Cave Monkey|cost 4|Creature/Monkey|limit 7|On enter: Destroy a random enemy [relic] permanent · On enter: Destroy a random enemy [enchantment] permanent · On enter: Destroy a random enemy [structure] permanent
+466|Raider|cost 2|Creature/Warrior|limit 15|Start of turn: Deal 2 damage to the opponent
+469|Bloodied Veteran|cost 3|Creature/Soldier Veteran|limit 15|On enter: +3 Honor
+470|Warmonger|cost 4|Creature/None|limit 15|When you draw a card: Deal 1 damage to the opponent (loops up to 7× per turn)
+471|Stone Crusher|cost 3|Creature/Elemental|limit 10|Cost Modifier — Opponent's [spell] cards cost 1 more energy to play · Cost Modifier — Your [spell] cards cost 2 more energy to play
+474|Siege Breaker|cost 8|Creature/Soldier|limit 15|On enter: Destroy a random enemy permanent
+475|Iron Gladiator|cost 3|Creature/None|limit 15|Start of turn: +2 Shield
+476|Warboss|cost 5|Creature/Soldier|limit 15|Start of turn: Deal 2 damage to the opponent · Start of turn: +1 Honor
+477|Skull Crusher|cost 5|Creature/Warrior|limit 15|On enter: Strip 5 Honor from the opponent
+478|Bloodrage Berserker|cost 6|Creature/Beast|limit 15|Start of turn: Deal 3 damage to the opponent
+479|Death Knight|cost 6|Creature/Undead Knight|limit 10|On enter: Kill a random enemy creature · On death: Create 2 token copies of Death Trooper (exiles instead of hand/discard when it leaves play)
+480|Warden of Blades|cost 4|Creature/Elemental Soldier|limit 10|Start of turn: Deal 2 damage to the opponent
+481|Berserker Commander|cost 3|Creature/None|limit 10|When you gain a shield: Opponent discards 1 card · On enter: +3 Shield
+482|Iron Titan|cost 6|Creature/Construct|limit 10|When you gain a shield: Draw 1 card
+486|Champion's Blade|cost 7|Creature/None|limit 10|Start of turn: Deal 4 damage to the opponent · Start of turn: +2 Life
+487|Thunder Hulk|cost 7|Creature/Elemental|limit 10|Start of turn: Deal 3 damage to the opponent · Start of turn: Deal 3 damage to a random enemy creature
+488|Arena Master|cost 5|Creature/None|limit 10|To Play: Utilize a creature · Start of turn: Sacrifice another of your creatures (drawback) → Deal 4 damage to the weakest enemy creature · Start of turn: +4 Honor
+489|Siege Titan|cost 11|Creature/Demon|limit 10|Anthem: Melee +2 — your other creatures in play get +2 melee while this is in play · On enter: Destroy all [relic] permanents (yours too)
+490|Death Arbiter|cost 8|Creature/Demon|limit 10|On enter: Destroy a random enemy permanent · On death: Destroy all enemy [creature] permanents
+493|Titan of War|cost 9|Creature/Beast Soldier|limit 7|When you play a [spell] card: +3 Shield · When your opponent gains a shield: Draw 1 card (loops up to 77× per turn) · Cost Scaling — costs 1 less energy per [spell] cards in your discard pile
+494|Skeletal Primate|cost 5|Creature/Monkey|limit 7|To Play: Pay 5 Honor → Destroy a random enemy permanent · On enter: Deal 3 damage to each creature costing 5 energy or less (yours too)
+507|Deathbringer Supreme|cost 11|Creature/None|limit 3|On enter: Destroy a random enemy [creature] permanent · Start of turn: Deal damage to the opponent equal to your [creature] permanents in play
+509|The Undying Champion|cost 9|Creature/Undead Giant|limit 3|Anthem: Armor +2 — your other creatures in play get +2 armor while this is in play · Anthem: Melee +2 — your other creatures in play get +2 melee while this is in play · On death: +13 Honor · On death: Strip 13 Honor from the opponent · On death: Recycle 4 cards from your discard into your deck
+514|Spear Grunt|cost 1|Creature/Soldier|limit 10|When removed from play: Opponent gains 1 Energy (drawback)
+518|Siege Grunt|cost 4|Creature/Soldier|limit 10|On enter: Deal 3 damage to a random enemy creature
+520|Shield Wall Knight|cost 5|Creature Structure/Knight|limit 10|Start of turn: +2 Shield
+522|Battle-Scarred Veteran|cost 5|Creature/Soldier Veteran|limit 10|Start of turn: +1 Life · When removed from play: +7 Honor
+527|Titan Slayer|cost 9|Creature/None|limit 7|On enter: Destroy a random enemy [creature] permanent · Start of turn: Deal 5 damage to the opponent
+530|Watchtower|cost 2|Structure/None|limit 15|Start of turn: +1 Honor · Start of turn: +1 Shield
+534|Earthwork|cost 3|Structure/Fort|limit 15|When you draw a card: +1 Shield
+536|Mill Tower|cost 4|Structure/None|limit 15|Start of turn: Utilize one of your creatures → Mill 2 cards from the opponent's deck · Start of turn: Utilize one of your creatures → Recycle 2 cards from your discard into your deck
+537|Plague Pit|cost 7|Structure/None|limit 15|Start of turn: Utilize one of your creatures → Poison the enemy (+1 stack) · Start of turn: Utilize one of your creatures → Poison the enemy (+1 stack)
+539|Shield Pylon|cost 4|Structure/None|limit 15|Start of turn: Utilize one of your creatures → +1 Shield · Start of turn: Utilize one of your creatures → +1 Shield
+541|Runic Menhir|cost 4|Structure/None|limit 15|Start of turn: +2 Honor · Start of turn: +1 Shield
+542|Healer's Pillar|cost 6|Structure/None|limit 10|When you gain life: +1 Energy, usable only on [creature] tagged cards (persists like normal Energy) (loops up to 7× per turn) · On enter: Create 2 token copies of Healer (exiles instead of hand/discard when it leaves play)
+544|Iron Bastion|cost 5|Structure/Fort|limit 10|When one of your [structure] permanents dies: +3 Shield · On enter: +3 Shield
+547|Dark Lord's Tower|cost 4|Structure/Tower|limit 10|To Play: Sacrifice a creature → Draw 1 card · Start of turn: Utilize one of your creatures → Create a token copy of card #788 (exiles instead of hand/discard when it leaves play)
+548|Arcane Pylon|cost 3|Structure/None|limit 10|Start of turn: Utilize one of your creatures → Recycle 2 cards from your discard into your deck · Start of turn: Utilize one of your creatures → +2 Temp Energy (this turn only)
+549|Blood Monument|cost 3|Structure/None|limit 10|Start of turn: Sacrifice one of your creatures (drawback) → +5 Life · Start of turn: Utilize one of your creatures → Return a random [creature] permanent costing 5 energy or less from your discard pile to play · On enter: Create a token copy of Blood Witch (exiles instead of hand/discard when it leaves play)
+551|Rune Fortress|cost 7|Structure/Fort|limit 10|Start of turn: Utilize one of your creatures → +2 Honor · Start of turn: Utilize one of your creatures → +2 Shield · Start of turn: Utilize one of your creatures → +2 Energy
+553|Library Spire|cost 4|Structure/Library|limit 10|When you draw a card: Mill 1 card from the opponent's deck · Start of turn: Utilize one of your creatures → Recycle 2 cards from your discard into your deck · On enter: Create a token copy of Smug Librarian (exiles instead of hand/discard when it leaves play)
+554|Doom Column|cost 8|Structure/None|limit 10|Start of turn: Utilize one of your creatures → Deal 3 damage to the opponent · Start of turn: Utilize one of your creatures → Poison the enemy (+3 stacks)
+555|The Iron Citadel|cost 8|Structure/None|limit 7|Start of turn: +4 Shield · Start of turn: +4 Life
+556|Grand Mill Tower|cost 8|Structure/None|limit 7|Start of turn: Mill 6 cards from the opponent's deck · Start of turn: Strip 6 Honor from the opponent
+557|Bogmire Idol|cost 2|Relic/None|limit 10|Start of turn: Gain 1 Poison stack (drawback) · End of turn: Poison the enemy (+1 stack) · On death: Create 2 token copies of Bogmire Toad (exiles instead of hand/discard when it leaves play)
+560|Blood Spire|cost 7|Structure/None|limit 7|Start of turn: Deal 5 damage to the opponent · Start of turn: +5 Life
+562|Arcane Titan Spire|cost 5|Structure/None|limit 7|Start of turn: Utilize one of your creatures → +1 Energy · Start of turn: Utilize one of your creatures → Draw 1 card · Start of turn: Utilize one of your creatures → Return 1 of your creature to your hand
+565|Eternal Citadel|cost 12|Structure/None|limit 3|When you gain a shield: Mill 1 card from the opponent's deck (loops up to 77× per turn) · When you gain life: Draw 1 card (loops up to 7× per turn) · End of turn: +1 Shield (scales with the number of different card types (Creature, Relic, Structure, Enchantment, Spell) among your own board and discard pile instead of a fixed amount) · End of turn: +1 Life (scales with the number of different card types (Creature, Relic, Structure, Enchantment, Spell) among your own board and discard pile instead of a fixed amount)
+566|Devastation Tower|cost 3|Structure/Tower|limit 3|Start of turn: Utilize one of your creatures → Deal 3 damage to the opponent · Start of turn: Sacrifice one of your creatures (drawback) → Exile up to 1 random enemy [creature] permanent
+567|Grand Monkey Shrine|cost 5|Structure/Shrine|limit 3|To Play: Sacrifice a creature → Destroy a random enemy permanent · Start of turn: Destroy a random enemy [relic] permanent
+568|Soul Spire|cost 3|Structure/None|limit 3|Start of turn: Utilize one of your creatures → Return 1 of your creature to your hand · Start of turn: Utilize one of your creatures → Bounce 2 random enemy permanents to their hand
+573|Poison Aura|cost 2|Enchantment/Aura|limit 7|Start of turn: Utilize one of your structures → Poison the enemy (+1 stack) · When removed from play: Destroy the highest-cost enemy permanent (random among ties)
+575|Honor Mark|cost 2|Enchantment/None|limit 15|Start of turn: +2 Honor
+578|Battle Chant|cost 2|Enchantment/None|limit 15|Start of turn: +1 Honor · Start of turn: Deal 1 damage to the opponent · When removed from play: Draw 1 card
+579|Tome Curse|cost 2|Enchantment/Curse|limit 15|Start of turn: Mill 2 cards from the opponent's deck
+580|Soul Glyph|cost 2|Enchantment/None|limit 15|When you draw a card: +1 Honor (loops up to 77× per turn)
+581|Ember Brand|cost 3|Enchantment/None|limit 15|Start of turn: Deal 1 damage to the opponent · Start of turn: Deal 1 damage to a random enemy creature
+582|Blood Mark|cost 3|Enchantment/None|limit 10|When you deal damage: +2 Life (loops up to 7× per turn) · End of turn: Deal 2 damage to the opponent
+583|Plague Sigil|cost 6|Enchantment/None|limit 15|When you draw a card: Poison the enemy (+1 stack) · Cost Scaling — costs 1 less energy per [poison] cards in your board, to a minimum of 3 energy · Start of turn: Draw 1 card
+585|Hunger Hex|cost 3|Enchantment/Curse|limit 15|Start of turn: Mill 1 card from the opponent's deck · Start of turn: Strip 1 Honor from the opponent · Start of turn: Deal 1 damage to the opponent
+587|War Glyph|cost 3|Enchantment/None|limit 15|Start of turn: Deal 2 damage to the opponent · On enter: Draw 1 card
+588|Venom Rune|cost 5|Enchantment/None|limit 15|When you play a [spell] card: Poison the enemy (+1 stack) · When one of your [creature] permanents leaves play: Poison the enemy (+1 stack) · When one of your [enchantment] permanents enters play: Poison the enemy (+1 stack)
+591|Scribe's Curse|cost 4|Enchantment/Curse|limit 15|Amplify Mill +1 — your mill effects mill 1 extra cards · Start of turn: Utilize one of your creatures → Mill 1 card from the opponent's deck
+592|Brain Power|cost 2|Enchantment/None|limit 10|When you become poisoned: Mill 3 cards from the opponent's deck (loops up to 77× per turn) · When you become poisoned: Draw 1 card (loops up to 7× per turn)
+593|Spirit Binding|cost 4|Enchantment/None|limit 15|Start of turn: +3 Honor
+595|Shielding Ward|cost 4|Enchantment/None|limit 15|Start of turn: +3 Shield
+600|Life Hex|cost 4|Enchantment/None|limit 15|Start of turn: +4 Life
+608|Mana Siphon|cost 5|Enchantment/None|limit 10|Start of turn: +1 Energy · Start of turn: Draw 1 card · Start of turn: +1 Shield · End of turn: Recycle 1 card from your discard into your deck
+609|Vampiric Aura|cost 2|Enchantment/None|limit 10|Start of turn: Deal 1 damage to a random enemy [creature] permanent · Start of turn: +1 Life · Start of turn: Lose 1 Honor (drawback)
+612|Mill Hex|cost 3|Enchantment/Curse|limit 10|Start of turn: Mill 3 cards from the opponent's deck
+614|Shield Aura|cost 5|Enchantment/None|limit 10|Start of turn: +4 Shield
+621|Adder Veil|cost 3|Enchantment/None|limit 10|When your deck is milled: Poison the enemy (+2 stacks) · Start of turn: +2 Shield
+627|Honor Helix|cost 4|Enchantment/Helix|limit 7|When you gain life: +2 Honor (loops up to 77× per turn) · Start of turn: +2 Life
+628|Plague Torrent|cost 11|Enchantment/Curse|limit 7|On enter: Poison the enemy (+3 stacks) · Start of turn: Kill a random enemy creature
+633|Immortal Blessing|cost 9|Enchantment/None|limit 7|While this card is in play you cannot be poisoned · Start of turn: +4 Life · Start of turn: +4 Shield
+640|Corruption Hex|cost 5|Spell/Curse|limit 1|On enter: Gain 5 Poison stacks (drawback) · On enter: Destroy all enemy permanents costing 5 energy or less
+645|Death's Touch|cost 13|Enchantment/None|limit 3|When you draw a card: Destroy a random enemy permanent · On enter: Draw 1 card
+647|Ephemeral Cleansing|cost 2|Enchantment/None|limit 3|On enter: Draw 1 card · End of turn: Destroy a random enemy [enchantment] permanent
+651|Undying Vitality|cost 10|Enchantment/None|limit 3|While this card is in play you cannot be poisoned · While this card is in play you cannot be milled · Start of turn: +5 Life · Start of turn: +5 Shield
+653|Basilisk Mist|cost 2|Enchantment/Curse|limit 3|To Play: Pay 3 Life → Destroy a random enemy [creature] permanent · Start of turn: Return 1 of your creature to your hand
+656|The World's Curse|cost 10|Enchantment/Curse|limit 1|On enter: Mill 8 cards from the opponent's deck · Start of turn: Mill 4 cards from the opponent's deck
+661|Heaven's Wrath|cost 10|Enchantment/None|limit 1|Start of turn: Deal 5 damage to a random enemy creature · On enter: Destroy all [structure] permanents (yours too) · On enter: Destroy all [relic] permanents (yours too) · On enter: Deal 5 damage to each creature costing 5 energy or more (yours too)
+663|Precision Blast|cost 1|Spell/None|limit 7|On enter: Destroy all permanents costing 1 energy or less (yours too)
+665|Arcane Mark|cost 3|Enchantment/None|limit 15|Start of turn: +1 Temp Energy (this turn only) · Start of turn: Remove 2 Poison stacks from yourself
+669|Blood Rune|cost 5|Enchantment/None|limit 10|Start of turn: Deal 3 damage to the opponent · Start of turn: +3 Life
+670|Storm Rune|cost 5|Enchantment/None|limit 10|Start of turn: Deal 3 damage to the opponent · Start of turn: Deal 2 damage to a random enemy creature
+673|Honor Web|cost 6|Enchantment/None|limit 10|Start of turn: +2 Honor · On enter: Destroy a random enemy permanent
+674|Doom Mark|cost 7|Enchantment/None|limit 8|On enter: Destroy a random enemy [creature] permanent · On enter: Poison the enemy (+2 stacks) · Start of turn: Poison the enemy (+1 stack)
+675|Power Mark|cost 7|Enchantment/None|limit 7|Start of turn: +3 Energy · Start of turn: Draw 2 cards
+680|Grassland Leopard|cost 1|Creature/Cat|limit 15|On enter: +2 Life
+681|Death Trooper|cost 2|Creature/Soldier|limit 15|On death: Deal 4 damage to a random enemy creature
+684|Upgraded Power Station|cost 3|Structure/Station|limit 15|Untargetable — cannot be selected by targeted effects · Start of turn: +1 Energy
+685|Burning Vengeance|cost 1|Enchantment/None|limit 1|End of turn: Deal 5 damage to the opponent · Start of turn: Deal 5 damage to yourself (drawback)
+686|Travel-sized Recycler|cost 1|Relic/None|limit 15|Start of turn: Recycle 1 card from your discard into your deck
+687|Lifeliner|cost 4|Creature/Cleric|limit 3|Start of turn: +1 Energy · Start of turn: +1 Life · Start of turn: Remove 1 Poison stack from yourself · Start of turn: Recycle 1 card from your discard into your deck
+689|Saboteurs|cost 2|Creature/None|limit 15|On death: Destroy the highest-cost enemy permanent (random among ties) · On enter: Recycle 1 card from your discard into your deck
+691|Death Titan|cost 11|Creature/None|limit 3|On enter: Destroy all creatures costing 10 energy or less (yours too)
+693|Energy Elf|cost 2|Creature/Elf|limit 10|Start of turn: Utilize one of your creatures → +1 Temp Energy (this turn only)
+694|Honorable Knowledge|cost 1|Spell/None|limit 15|On enter: +4 Honor · On enter: Draw 1 card
+695|Dishonorer|cost 3|Creature/Cleric|limit 10|End of turn: Strip 6 Honor from the opponent · Start of turn: Lose 6 Honor (drawback)
+696|Smug Librarian|cost 3|Creature/Scholar|limit 15|On enter: Draw 1 card · End of turn: Strip 2 Honor from the opponent
+698|Return Home|cost 1|Spell/None|limit 15|On enter: Bounce 1 random enemy creature to their hand · On enter: Return 1 of your creature to your hand
+699|Reap the Mighty|cost 4|Spell/None|limit 7|On enter: Destroy all permanents costing 4 energy or more (yours too)
+701|Sandstorm Caller|cost 2|Creature/None|limit 3|On enter: Deal 3 damage to each creature costing 1 energy or less (yours too) · On enter: Destroy all relics costing 2 energy or less (yours too)
+702|Sandstorm|cost 2|Spell/None|limit 15|On enter: Deal 3 damage to each permanent costing 1 energy or less (yours too) · On enter: Destroy all relics costing 2 energy or less (yours too)
+704|Destroy Relics|cost 2|Spell/None|limit 15|On enter: Destroy a random enemy [relic] permanent · On enter: Destroy a random enemy [relic] permanent
+705|Topple the Kings|cost 3|Spell/None|limit 3|On enter: Deal 7 damage to each creature costing 3 energy or more (yours too)
+706|Autoclasm|cost 4|Spell/None|limit 7|On enter: Deal 3 damage to all [creature] permanents (yours too) · On enter: Deal 5 damage to all [structure] permanents (yours too) · On enter: Destroy all relics costing 2 energy or less (yours too)
+707|Flaming Chasm|cost 1|Spell/None|limit 15|On enter: Deal 10 damage to the opponent · On enter: Deal 10 damage to yourself (drawback)
+708|Goblin Sweeper|cost 5|Spell/None|limit 3|On enter: Deal 4 damage to each creature costing 1 energy or less (yours too) · On enter: Draw 2 cards · On enter: +3 Shield
+709|Wrath of Wog|cost 4|Spell/None|limit 3|On enter: Destroy all [creature] permanents (yours too)
+710|Stormsky Maniac|cost 2|Creature/Cleric|limit 7|Start of turn: +1 Energy · Start of turn: Utilize one of your creatures → Mill 1 card from your own deck (drawback)
+711|Grim Veteran|cost 3|Creature/Soldier Veteran|limit 7|Cost Modifier — Your [veteran] cards cost 1 less energy to play · To Play: Pay 7 Honor → +7 Shield · On enter: Deal 2 damage to all enemy [creature] permanents
+713|Wild Gork|cost 1|Creature/Beast|limit 10|To Play: Discard 1 card
+714|Implacable Foe|cost 4|Creature/Rogue|limit 7|Indestructible — can still be targeted, but destroy/damage effects do nothing
+715|Elvish Poetry|cost 1|Spell/None|limit 15|On enter: +5 Life · On enter: Draw 1 card
+716|Natural Ape|cost 2|Creature/Monkey|limit 7|Cost Modifier — Opponent's structures cost 1 more energy to play
+717|Charismatic Leader|cost 2|Creature/Soldier|limit 7|Cost Modifier — Your [soldier] cards cost 1 less energy to play, to a minimum of 1 energy
+718|Enjoying Pain|cost 5|Spell/None|limit 1|To Play: Pay 25 Life → Draw 3 cards · On enter: Opponent discards 3 cards · On enter: Deal 20 damage to the opponent
+719|Inventive Wizard|cost 6|Creature/Wizard|limit 3|To Play: Pay 6 Shields · On enter: Destroy all enemy [relics] permanents · Start of turn: +1 Energy · Start of turn: Draw 1 card
+721|Simian Iconoclast|cost 3|Creature/Monkey|limit 10|On enter: Destroy all relics costing 4 energy or more (yours too)
+722|Fairy Cleaner|cost 2|Creature/Fairy|limit 10|On enter: Destroy all [enchantment] permanents (yours too)
+723|Fire Goat|cost 3|Creature/Goat Elemental|limit 7|On enter: Deal 1 damage to all [scarecrow] permanents (yours too) · On enter: Deal 1 damage to all [creature] permanents (yours too)
+725|Mechanic|cost 2|Creature/Mechanic Rabbit|limit 10|Cost Modifier — Your relics cost 1 less energy to play
+726|Deglamour|cost 1|Spell/None|limit 10|On enter: Destroy a random enemy [enchantment] permanent · On enter: Draw 1 card
+727|Assassin From Afar|cost 3|Creature/Scarecrow Assassin|limit 3|Honorbound ×3 — opponent loses honor equal to 3× this creature's melee (capped by damage dealt) · On enter: Gain Honor equal to your [scarecrow] permanents in play
+728|The Cursed Skull|cost 0|Relic/Divine Mox|limit 1|Start of turn: Utilize one of your relics → +2 Energy · Start of turn: Gain 2 Poison stacks (drawback)
+729|The Golden General|cost 4|Creature/Scarecrow Soldier|limit 1|Anthem: Melee +1 — your other [creature] permanents in play get +1 melee while this is in play · Anthem: Armor +1 — your other [scarecrow] permanents in play get +1 armor while this is in play · Cost Modifier — Your [scarecrow] cards cost 1 less energy to play
+730|Genius Novice|cost 1|Creature/Wizard|limit 10|Start of turn: Utilize one of your creatures → +1 Energy, usable only on [spell] tagged cards (ephemeral — expires end of turn)
+731|Yugyrf, Patient Teacher|cost 2|Creature/Wizard|limit 1|Cost Modifier — Your [spell] cards cost 1 less energy to play, to a minimum of 1 energy · Start of turn: Utilize one of your relics → Draw 1 card
+732|Contemplation Stone|cost 2|Relic/None|limit 7|Cost Modifier — Opponent's [spell] cards cost 1 more energy to play · Cost Modifier — Your [spell] cards cost 1 more energy to play · On enter: Draw 1 card
+733|Beppo the Wise|cost 2|Creature/Monkey King|limit 1|Cost Modifier — Opponent's relics cost 1 more energy to play · Cost Modifier — Opponent's structures cost 1 more energy to play
+734|Tristal's Bauble|cost 0|Relic/None|limit 1|On enter: Draw 1 card · When removed from play: Recycle 1 card from your discard into your deck
+735|Neerrm's Helm|cost 1|Relic/Helm|limit 1|Anthem: Melee +1 — your other [soldier] permanents in play get +1 melee while this is in play · Anthem: Melee +1 — your other [warrior] permanents in play get +1 melee while this is in play
+736|Ki-Zor Stone|cost 2|Relic/None|limit 1|End of turn: Create a token copy of Straw Man-at-Arms (exiles instead of hand/discard when it leaves play) · On death: Opponent gains 2 Energy (drawback)
+738|War Elf|cost 2|Creature/Elf Warrior|limit 10|To Play: Discard 1 card · Start of turn: +1 Temp Energy (this turn only)
+739|Shield Stone|cost 1|Relic/None|limit 3|To Play: Pay 3 Shields · Start of turn: Utilize one of your relics → +1 Temp Energy (this turn only)
+743|Ghost Stone|cost 1|Relic/None|limit 3|To Play: Sacrifice a creature · Start of turn: Utilize one of your relics → +1 Temp Energy (this turn only)
+744|Laurel Stone|cost 1|Relic/None|limit 3|To Play: Pay 3 Honor · Start of turn: Utilize one of your relics → +1 Temp Energy (this turn only)
+745|Mox Toad|cost 0|Relic/Divine Mox|limit 1|Start of turn: Utilize one of your relics → +1 Energy, usable only on [enchantment] tagged cards (ephemeral — expires end of turn)
+747|Mox Crow|cost 0|Relic/Divine Mox|limit 1|Start of turn: Utilize one of your relics → +1 Energy, usable only on [spell] tagged cards (ephemeral — expires end of turn)
+749|Mox Hare|cost 0|Relic/Divine Mox|limit 1|Start of turn: Utilize one of your relics → +1 Energy, usable only on [relic] tagged cards (ephemeral — expires end of turn)
+750|Woodland Power Station|cost 3|Structure/Station|limit 7|Start of turn: +2 Energy · End of turn: Opponent gains 1 Energy (drawback)
+751|Tristal's Adventuring|cost 5|Spell/Adventure|limit 15|On enter: Search your library for up to 2 copies of Ancient Power Station and put them into play
+752|Rubbish Collector|cost 3|Creature/Goblin|limit 7|Amplify Recycle +1 — your recycle effects shuffle in 1 extra cards · To Play: Recycle 4 cards · On enter: Recycle 2 cards from your discard into your deck · Start of turn: Mill 1 card from your own deck (drawback)
+753|Deathly Bargain|cost 5|Spell/None|limit 10|On enter: Return a random [creature] permanent costing 5 energy or more from your discard pile to play · On enter: Opponent discards 1 card
+754|Night of the Creeps|cost 7|Spell/None|limit 7|On enter: Return all [creature] permanents costing 3 energy or less from your discard pile to play
+755|Pester|cost 0|Spell/None|limit 10|On enter: Mill 1 card from the opponent's deck · On enter: Deal 1 damage to a random enemy creature · On enter: Strip 1 Honor from the opponent · On enter: +1 Life · On enter: Recycle 1 card from your discard into your deck
+756|Graveyard Chef|cost 2|Creature/None|limit 10|End of turn: Exile 2 cards from the opponent's discard pile · Start of turn: Exile 1 card from your own discard pile (drawback)
+757|Station Blast|cost 5|Spell/None|limit 7|On enter: Search your library for up to 1 copy of Ancient Power Station and put it into play · On enter: Deal damage to the opponent equal to your [station] permanents in play
+758|Guerrilla Frogmen|cost 3|Creature/Frog Soldier|limit 7|On enter: Deal damage to the opponent equal to the opponent's [station] permanents in play
+759|Relic Smasher|cost 2|Creature/Monkey|limit 15|On enter: Destroy a random enemy [relic] permanent
+760|Grand Finale|cost 20|Spell/None|limit 1|On enter: Discard 10 cards from your own hand (drawback) · On enter: +50 Temp Energy (this turn only) · On enter: Draw 1 card · On enter: Mill 99 cards from your own deck (drawback) · On enter: Sacrifice another of your permanents (drawback) → Deal 50 damage to the opponent
+761|Turingue, the Crypt Lord|cost 17|Creature/Demon Lord|limit 1|Cost Modifier — Opponent's [spell] cards cost 7 more energy to play · When you utilize a permanent: Mill 7 cards from the opponent's deck (loops up to 7× per turn) · When you draw a card: +7 Honor (loops up to 7× per turn) · On enter: Utilize one of your creatures → Draw 7 cards
+762|The Mind Warped|cost 14|Creature/Beast Demon|limit 1|Untargetable — cannot be selected by targeted effects · When you lose life: Poison the enemy (+1 stack) (loops up to 99× per turn) · When you deal damage: +1 Life (loops up to 99× per turn) · When your deck is milled: Mill 3 cards from the opponent's deck (loops up to 99× per turn) · Start of turn: +1 Energy (scales with your [structure] permanents in play instead of a fixed amount)
+763|The Tin Butcher|cost 6|Creature/Construct|limit 1|When you gain life: Deal 2 damage to yourself (drawback) (loops up to 99× per turn) · Indestructible — can still be targeted, but destroy/damage effects do nothing · To Play: Sacrifice a relic · On enter: Deal 6 damage to the weakest enemy creature · Start of turn: Discard 1 card from your own hand (drawback) · Start of turn: Deal 6 damage to the weakest enemy creature
+764|Harsh Invective|cost 11|Spell/Curse|limit 1|On enter: Opponent discards their entire hand · On enter: Exile the top 15 cards from the opponent's library · On enter: Exile 5 cards from the opponent's discard pile · On enter: Recycle 2 cards from your discard into your deck · On enter: Destroy a random enemy permanent · On enter: +7 Shield
+765|The Assembled Titan|cost 10|Creature/Giant Soldier Beast|limit 1|When you lose life: +3 Life (loops up to 99× per turn) · When you draw a card: Return a random [beast] permanent from your discard pile to play (loops up to 99× per turn) · Honorbound ×3 — opponent loses honor equal to 3× this creature's melee (capped by damage dealt) · On death: Return a random [creature] permanent costing 11 energy or more from your discard pile to play · On death: Return all [creature] permanents costing 2 energy or less from your discard pile to play
+766|The Really Big Head|cost 11|Relic/Idol|limit 1|On enter: Search your library for up to 1 random [relic] permanent and put it into play (scales with your [relic] permanents in play instead of a fixed amount) · Start of turn: Search your library for up to 1 random [creature] permanent and put it into play · When removed from play: Draw cards equal to your [relic] permanents in play
+767|Energy Theft|cost 3|Spell/None|limit 10|On enter: Drain 2 opponent Energy · On enter: +2 Energy
+768|The Golden Princess|cost 3|Creature/Scarecrow|limit 1|When one of your [creature] permanents enters play: +3 Life · End of turn: Search your library for up to 1 copy of Straw Man-at-Arms and put it into play · On death: Search your library for up to 1 copy of Straw Man-at-Arms and put it into play (scales with your [scarecrow] permanents in play instead of a fixed amount)
+769|Energy Tap|cost 4|Relic/None|limit 10|Start of turn: Drain 1 opponent Energy · Start of turn: +1 Energy
+770|Toad Breeder|cost 2|Creature/Scholar|limit 7|When one of your [creature] permanents dies: +1 Honor · Start of turn: Pay 1 Honor (drawback) → Create a token copy of card #96 (exiles instead of hand/discard when it leaves play)
+771|Young Fire Djinn|cost 2|Creature/Elemental Demon|limit 3|On death: Create a token copy of Fire Djinn (exiles instead of hand/discard when it leaves play)
+772|Seek Power|cost 2|Spell/None|limit 7|To Play: Pay 3 Life · On enter: Search your library for up to 1 random [legendary] card and put it into your hand · On enter: Lose 3 Honor (drawback)
+773|Burning Mage of Ki-Zor|cost 3|Creature/Scarecrow Wizard|limit 1|On enter: +1 Energy (scales with your [scarecrow] permanents in play instead of a fixed amount) · Start of turn: Sacrifice another of your creatures (drawback) → +2 Energy
+774|Trained Gork|cost 2|Creature/Beast|limit 7|To Play: Discard 1 card → Recycle 1 card from your discard into your deck · Start of turn: Mill 3 cards from your own deck (drawback) · End of turn: Recycle 1 card from your discard into your deck
+775|Dhu-dhu Bug|cost 0|Creature/Insect|limit 0|Cost Modifier — Opponent's [spell] cards cost 1 more energy to play · Cost Modifier — Your [spell] cards cost 1 more energy to play
+776|Eastern Bug Collector|cost 2|Creature/Frog Scholar|limit 7|When your opponent plays a [spell] card: Create a token copy of Dhu-dhu Bug (exiles instead of hand/discard when it leaves play) · On death: Gain Honor equal to your [insect] permanents in play
+777|Sappermite|cost 1|Creature/Insect|limit 15|Start of turn: Deal 1 damage to a random enemy [structure] permanent
+778|Northern Bug Collector|cost 3|Creature/Cat Scholar|limit 7|When your opponent plays a [structure] card: Search your library for up to 1 copy of Sappermite and put it into play · On death: Deal damage to the opponent equal to your [insect] permanents in play
+779|Mageflesh Beetle|cost 1|Creature/Insect|limit 7|When your opponent plays a [spell] card: Poison the enemy (+1 stack) · When you play a [spell] card: Gain 1 Poison stack (drawback)
+780|Elvish Experiment|cost 3|Creature/Elf Shaman|limit 7|Start of turn: Discard 1 of your own card (drawback) → Create a token copy of card #693 (exiles instead of hand/discard when it leaves play)
+781|Power of Nature|cost 2|Spell/None|limit 3|On enter: +1 Energy, usable only on [creature] tagged cards (persists like normal Energy) · On enter: +1 Energy, usable only on [relic] tagged cards (persists like normal Energy) · On enter: +1 Energy, usable only on [structure] tagged cards (persists like normal Energy) · On enter: +1 Energy, usable only on [enchantment] tagged cards (persists like normal Energy) · On enter: +1 Energy, usable only on [spell] tagged cards (persists like normal Energy)
+783|Emergency Installation|cost 2|Spell/None|limit 7|To Play: Discard 1 card → Recycle 2 cards from your discard into your deck · On enter: Search your library for up to 1 copy of Ancient Power Station and put it into play
+784|Zoo Observation Platform|cost 5|Structure/Station|limit 15|Cost Scaling — costs 1 less energy per [creature] cards in the opponent's board · Start of turn: +1 Temp Energy (this turn only)
+785|The Great Straw Armada|cost 15|Relic/None|limit 1|Cost Scaling — costs 1 less energy per [scarecrow] cards in your board · On enter: Create a token copy of The Straw Prince (exiles instead of hand/discard when it leaves play) · On enter: Create a token copy of The Golden General (exiles instead of hand/discard when it leaves play) · On enter: Create a token copy of The Golden Princess (exiles instead of hand/discard when it leaves play) · Start of turn: Create a token copy of Straw Man-at-Arms (exiles instead of hand/discard when it leaves play)
+791|Death Is Not The End|cost 9|Spell/None|limit 3|On enter: Return a random [creature] permanent costing 6 energy or more from your discard pile to play · On enter: Return a random [creature] permanent costing 5 energy or less from your discard pile to play · On enter: Recycle 2 cards from your discard into your deck
+792|King For A Day|cost 777|Spell/Divine|limit 1|Cost Scaling — costs 7 less energy per [creature] cards in your board + [relic] cards in your board + [structure] cards in your board + [enchantment] cards in your board + [spell] cards in your discard pile, to a minimum of 77 energy · On enter: +777 Honor
+793|Child of the Fields|cost 1|Creature/Void Scarecrow|limit 1|End of turn: +2 Energy · Start of turn: Sacrifice one of your creatures (drawback)
+794|The Yellow Kid|cost 1|Creature/Scarecrow|limit 1|When your opponent gains honor: Create a token copy of Straw Princelings (exiles instead of hand/discard when it leaves play) (loops up to 3× per turn) · When one of your [creature] permanents enters play: +1 Shield
+795|Envisage the Void|cost 4|Spell/None|limit 3|Cost Scaling — costs 1 less energy per [scarecrow] cards in your board · On enter: Search your library for up to 1 copy of The Yellow Kid and put it into play · On enter: Sacrifice one of your creatures (drawback) → Exile 4 cards from the opponent's hand · On enter: +4 Energy
+796|Hurricane Elemental|cost 20|Creature/Elemental|limit 3|Untargetable — cannot be selected by targeted effects · Cost Scaling — costs 1 less energy per cards in the opponent's hand, to a minimum of 1 energy · Start of turn: Deal 10 damage to yourself (drawback) · End of turn: Deal 10 damage to the opponent
+797|Flammable Captain|cost 5|Creature/Scarecrow Soldier|limit 7|Anthem: Melee +1 — your other [scarecrow] permanents in play get +1 melee while this is in play · Anthem: Armor +1 — your other [soldier] permanents in play get +1 armor while this is in play
+798|Storm of Storms|cost 17|Spell/Divine|limit 1|Cost Scaling — costs 1 less energy per [spell] cards in your discard pile · On enter: +17 Energy
+799|A fun, predictable adventure|cost 4|Spell/Adventure|limit 1|On enter: Search your library for up to 1 copy of Yugyrf, Patient Teacher and put it into your hand · On enter: Create a token copy of Genius Novice (exiles instead of hand/discard when it leaves play) · On enter: Create a token copy of Tower Scholar (exiles instead of hand/discard when it leaves play)
+800|Humming Stone|cost 2|Relic/None|limit 7|Amplify Poison +1 — your poison effects inflict 1 extra poison · Amplify Mill +1 — your mill effects mill 1 extra cards · Amplify Recycle +1 — your recycle effects shuffle in 1 extra cards · Amplify Shield +1 — your shield effects grant 1 extra shields · Amplify Honor +1 — your honor effects grant 1 extra honor
+801|Station Moth|cost 3|Creature/Insect|limit 7|Start of turn: Opponent gains 1 Energy (drawback) (scales with the opponent's [station] permanents in play instead of a fixed amount) · On enter: Draw 3 cards
+803|Wogian Zealot|cost 3|Creature/Shaman|limit 7|When removed from play: Create a token copy of Bogmire Idol (exiles instead of hand/discard when it leaves play) (scales with your [poison] permanents in play instead of a fixed amount) · On enter: Sacrifice one of your creatures (drawback) → Destroy a random enemy [creature] permanent
+804|Reckless Adventurer|cost 2|Creature/Wizard Rogue|limit 7|Amplify Poison +1 — your poison effects inflict 1 extra poison · On enter: Create a token copy of The Cursed Skull (exiles instead of hand/discard when it leaves play)
+805|Beacon of Generation|cost 5|Structure/None|limit 7|Start of turn: +1 Energy, usable only on creature cards (ephemeral — expires end of turn) · Start of turn: +1 Energy, usable only on relic cards (ephemeral — expires end of turn) · Start of turn: +1 Energy, usable only on structure cards (ephemeral — expires end of turn) · Start of turn: +1 Energy, usable only on enchantment cards (ephemeral — expires end of turn) · Start of turn: +1 Energy, usable only on [spell] tagged cards (ephemeral — expires end of turn)
+806|Scholars of Mysteries|cost 3|Creature/Frog Rabbit Wizard|limit 10|To Play: Utilize a structure → +2 Shield · Start of turn: +1 Energy, usable only on [relic] tagged cards (ephemeral — expires end of turn) · Start of turn: +1 Energy, usable only on [enchantment] tagged cards (ephemeral — expires end of turn)
+807|Tristal's Scholar|cost 2|Creature/Wizard Scholar|limit 7|Start of turn: Sacrifice one of your relics (drawback) → +1 Energy · On enter: Create a token copy of Tristal's Bauble (exiles instead of hand/discard when it leaves play)
+808|Neerrm's Puzzlebox|cost 2|Relic/None|limit 10|On enter: Draw 1 card · When removed from play: Search your library for up to 1 copy of Ancient Power Station and put it into play
+809|Neerrm's Fanatic|cost 2|Creature/Scarecrow Warrior|limit 10|When you play a [scarecrow] card: Deal 2 damage to the opponent · On enter: Search your library for up to 1 copy of Neerrm's Helm and put it into play
+810|Price of Hope|cost 2|Enchantment/None|limit 10|When your opponent gains life: Poison the enemy (+1 stack) (loops up to 77× per turn) · On enter: Draw 1 card
+812|Gold Coin|cost 0|Relic/Treasure|limit 0|Start of turn: Sacrifice one of your relics (drawback), only one tagged [treasure] → +1 Temp Energy (this turn only)
+813|Toll Booth|cost 2|Structure/None|limit 10|When your opponent plays a [creature] card: Create a token copy of Gold Coin (exiles instead of hand/discard when it leaves play)
+814|Ordinary Adventurer|cost 1|Creature/Rogue|limit 15|When removed from play: Create 2 token copies of Gold Coin (exiles instead of hand/discard when it leaves play)
+815|Treasure Horde|cost 5|Creature Relic/Treasure Elemental|limit 7|When one of your [relic] permanents enters play: +1 Shield · Start of turn: Create a token copy of Gold Coin (exiles instead of hand/discard when it leaves play) · On enter: Create a token copy of Neerrm's Puzzlebox (exiles instead of hand/discard when it leaves play) · On death: Create a token copy of Automox (exiles instead of hand/discard when it leaves play) · On death: Create a token copy of Tristal's Bauble (exiles instead of hand/discard when it leaves play)
+816|Golden Bomb|cost 2|Spell/None|limit 1|On enter: Create 3 token copies of Gold Coin (exiles instead of hand/discard when it leaves play) · On enter: Deal damage to the opponent equal to your [relic] permanents in play
+817|Vengeful Ancestor|cost 3|Creature/Spirit|limit 7|On enter: Mill the opponent's deck equal to [creature] cards in your discard pile · Start of turn: Recycle 1 of your own discarded card into your library (drawback) → +1 Honor · Start of turn: Exile 1 card from the opponent's discard pile
+818|Iconoclast|cost 2|Creature/Cleric|limit 10|When your opponent draws a card: Mill 2 cards from the opponent's deck (loops up to 77× per turn)
+819|Acolyte of Flame|cost 1|Creature/Elemental Wizard|limit 15|When your opponent gains life: Deal 2 damage to the opponent (loops up to 77× per turn)
+820|Tome Seller|cost 2|Creature/Librarian|limit 7|When your deck is milled: Create a token copy of Gold Coin (exiles instead of hand/discard when it leaves play) (loops up to 77× per turn) · Start of turn: Exile 1 of your own discarded card (drawback) → Create a token copy of card #865 (exiles instead of hand/discard when it leaves play)
+821|Odious Advisor|cost 2|Creature/Advisor|limit 7|When your opponent gains honor: Poison the enemy (+1 stack) (loops up to 77× per turn) · Poisonlink ×1 — opponent gains poison equal to 1× this creature's melee (capped by damage dealt)
+822|Money Station|cost 4|Structure/Station|limit 7|Cost Scaling — costs 1 less energy per [relic] cards in your board · Start of turn: Create a token copy of Gold Coin (exiles instead of hand/discard when it leaves play)
+823|Relic Hunter|cost 2|Creature/Rogue|limit 10|When one of your [relic] permanents leaves play: Deal 3 damage to the opponent
+824|The Golden Guard|cost 7|Spell/None|limit 10|Cost Scaling — costs 1 less energy per your Honor, to a minimum of 1 energy · On enter: Create a token copy of Straw Man-at-Arms (exiles instead of hand/discard when it leaves play) (scales with the number of different card types (Creature, Relic, Structure, Enchantment, Spell) among your own board and discard pile instead of a fixed amount)
+825|Greedy Dragon|cost 7|Creature/Dragon|limit 3|When you deal damage: Opponent discards 1 card (loops up to 3× per turn) · When one of your [treasure] permanents leaves play: Deal 3 damage to the opponent · End of turn: Create a token copy of Gold Coin (exiles instead of hand/discard when it leaves play)
+826|Outland Recruiter|cost 3|Creature/Soldier|limit 10|Start of turn: Pay 1 Honor (drawback) → Create a token copy of card #461 (exiles instead of hand/discard when it leaves play)
+827|Evil Roots|cost 2|Enchantment/None|limit 10|When a [treasure] permanent leaves your opponent's board: Poison the enemy (+1 stack) · On enter: Draw cards equal to your [enchantment] permanents in play
+829|Dwarven Forge|cost 2|Relic/None|limit 7|Start of turn: Pay 2 Shields (drawback) → Draw 2 cards · On enter: +1 Shield (scales with the number of different card types (Creature, Relic, Structure, Enchantment, Spell) among your own board and discard pile instead of a fixed amount)
+831|The Golden Bear|cost 2|Creature Relic/Bear|limit 1|Start of turn: Create a token copy of Gold Coin (exiles instead of hand/discard when it leaves play)
+832|Toxic Genesis|cost 1|Spell/None|limit 3|On enter: Gain 5 Poison stacks (drawback) · On enter: Search your library for up to 1 copy of Wogian Zealot and put it into play
+833|Internal Burner|cost 2|Creature Relic/Soldier|limit 10|On death: Mill 10 cards from the opponent's deck
+834|Balancing Stone of Ay|cost 3|Relic/None|limit 1|When you play a [mill] card: Opponent draws 3 cards (drawback) · When your opponent plays a [mill] card: Opponent draws 3 cards (drawback) · When you play a [mill] card: Draw 3 cards · When your opponent plays a [mill] card: Draw 3 cards
+835|Babbling Stone|cost 0|Relic/None|limit 7|Start of turn: Draw 1 card · Start of turn: Opponent draws 1 card (drawback)
+836|Fortunate Survivor|cost 1|Creature/Soldier|limit 7|On enter: Recycle your entire discard pile into your deck
+837|Clout Chaser|cost 3|Creature/Rogue|limit 7|On enter: Destroy all [legendary] permanents (yours too)
+838|Void Mage|cost 3|Creature/Wizard|limit 7|When your opponent utilizes a permanent: Exile 1 card from the opponent's discard pile (loops up to 77× per turn) · Start of turn: Exile 1 of your own discarded card (drawback) → Exile the top 3 cards from the opponent's library
+839|Void Station|cost 3|Structure/Station|limit 10|Start of turn: +1 Temp Energy (this turn only) · Start of turn: Exile 1 card from the opponent's discard pile
+840|Berserker's Banner|cost 6|Relic/None|limit 10|Anthem: Melee +3 — your other creatures in play get +3 melee while this is in play · When you gain a shield: Lose 2 Shields (drawback) · Cost Scaling — costs 1 less energy per [creature] cards in your discard pile, to a minimum of 3 energy · To Play: Utilize a creature → Lose 5 Honor (drawback)
+841|Shadow Stalker|cost 6|Creature/Assassin|limit 15|Untargetable — cannot be selected by targeted effects
+842|Bee Drone|cost 0|Creature/Bee Drone|limit 0|On death: +1 Energy · On death: Deal 1 damage to a random enemy [creature] permanent
+843|Bee Egg|cost 0|Creature Structure/Bee Egg|limit 0|Melee Locked — this permanent’s melee is fixed at its printed value · Start of turn: Sacrifice one of your creatures (drawback), only one tagged [egg] → Create a token copy of card #842 (exiles instead of hand/discard when it leaves play)
+846|Living Idol|cost 7|Creature Relic/Frog Beast Golem|limit 10|Start of turn: +1 Life · Start of turn: +1 Honor · Start of turn: +1 Shield · Start of turn: Draw 1 card · Start of turn: Mill 1 card from the opponent's deck · Start of turn: Strip 1 Honor from the opponent · Start of turn: Deal 1 damage to the opponent
+847|Killing Bridge|cost 2|Structure/Bridge|limit 7|When one of your [creature] permanents leaves play: Deal 1 damage to the opponent · To Play: Sacrifice a creature → Draw 1 card · Start of turn: Sacrifice one of your creatures (drawback) → Deal 6 damage to a random enemy [creature] permanent
+849|Abomination Station|cost 2|Structure/Station|limit 7|Start of turn: +1 Temp Energy (this turn only) · Start of turn: Lose 1 Honor (drawback) · Start of turn: Mill 1 card from your own deck (drawback) · Start of turn: Deal 1 damage to yourself (drawback)
+850|Stiletto Wind|cost 2|Spell/Curse|limit 15|On enter: Destroy a random enemy [creature] creature costing 4 energy or more · On enter: Draw 1 card
+851|Horror Hunter|cost 4|Creature/Assassin|limit 10|On enter: Destroy a random enemy [creature] creature costing 6 energy or more
+852|Beanstalk Breaker|cost 2|Creature/Soldier|limit 15|On enter: Destroy a random enemy permanent costing 8 energy or more
+853|Hungry Giant|cost 8|Creature/Giant Warrior|limit 7|When one of your [creature] permanents dies: +2 Life · Start of turn: Destroy a random enemy creature costing 2 energy or less
+854|Living Zoo|cost 9|Creature Structure/Elemental|limit 1|When one of your [creature] permanents leaves play: Draw 1 card · On enter: Return all [beast] permanents costing 10 energy or less from your discard pile to play · Start of turn: Create a token copy of Charging Boar (exiles instead of hand/discard when it leaves play) · Start of turn: Create a token copy of Bee Drone (exiles instead of hand/discard when it leaves play)
+856|Goblin Search Party|cost 2|Creature/Goblin Soldier|limit 15|On enter: Create a token copy of Goblin (exiles instead of hand/discard when it leaves play) · On death: Create a token copy of Goblin (exiles instead of hand/discard when it leaves play)
+857|Goblin Invasion|cost 4|Spell/None|limit 10|On enter: Create a token copy of Goblin (exiles instead of hand/discard when it leaves play) (scales with the number of different card types (Creature, Relic, Structure, Enchantment, Spell) among your own board and discard pile instead of a fixed amount) · On enter: Deal damage to the opponent equal to your [goblin] permanents in play
+858|Barrow Wraith|cost 3|Creature Enchantment/Undead Spirit|limit 7|When you become poisoned: Create a token copy of Goblin (exiles instead of hand/discard when it leaves play) (loops up to 3× per turn) · Start of turn: Gain 1 Poison stack (drawback)
+859|Goblin Summer|cost 3|Enchantment/None|limit 7|Start of turn: Create a token copy of Goblin (exiles instead of hand/discard when it leaves play)
+860|Talisman of the Mason|cost 2|Relic/None|limit 10|Start of turn: +1 Energy, usable only on [structure] tagged cards (ephemeral — expires end of turn)
+862|Talisman of the Mendicant|cost 2|Relic/None|limit 10|Start of turn: +1 Energy, usable only on [relic] tagged cards (ephemeral — expires end of turn)
+863|Talisman of the Mystic|cost 2|Relic/None|limit 10|Start of turn: +1 Energy, usable only on [enchantment] tagged cards (ephemeral — expires end of turn)
+864|Talisman of the Magus|cost 2|Relic/None|limit 10|Start of turn: +1 Energy, usable only on [spell] tagged cards (ephemeral — expires end of turn)
+865|Book|cost 0|Relic/Book|limit 0|Start of turn: Sacrifice one of your relics (drawback), only one tagged [book] → Draw 1 card
+866|Artificial Intelligence|cost 13|Creature Relic/Elemental|limit 3|When you draw a card: Recycle 1 card from your discard into your deck (loops up to 7× per turn) · Cost Scaling — costs 1 less energy per [relic] cards in your board · End of turn: Create a token copy of Book (exiles instead of hand/discard when it leaves play) · On death: Destroy all [creature] permanents (yours too)
+867|Start Over|cost 7|Spell/None|limit 7|On enter: Destroy all permanents costing 1 energy or more (yours too)
+868|Mechanical Rat|cost 5|Creature Relic/Rat Construct|limit 10|Cost Scaling — costs 1 less energy per [relic] cards in your board, to a minimum of 1 energy · On enter: Exile 2 cards from the opponent's hand
+869|Corpse Spider|cost 6|Creature/Spider|limit 3|When one of your [creature] permanents dies: Poison the enemy (+1 stack) · When a [creature] permanent dies on your opponent's side: Poison the enemy (+1 stack) · On enter: Destroy the highest-cost enemy [creature] creature (random among ties)
+870|Queen's Summons|cost 2|Spell/None|limit 10|On enter: Search your library for up to 1 random [rare] card and put it into your hand · On enter: Search your library for up to 1 random [common] card and put it into your hand
+871|Library Sphinx|cost 6|Creature/Sphinx|limit 10|When one of your [relic] permanents leaves play: Draw 1 card · Start of turn: Create a token copy of Book (exiles instead of hand/discard when it leaves play)
+872|Sphinx's Library|cost 5|Structure/Library|limit 10|When one of your [relic] permanents enters play: +1 Honor · On enter: Create a token copy of Book (exiles instead of hand/discard when it leaves play) (scales with the number of different card types (Creature, Relic, Structure, Enchantment, Spell) among your own board and discard pile instead of a fixed amount)
+873|Escape the Library|cost 4|Spell/None|limit 7|On enter: Create a token copy of Book (exiles instead of hand/discard when it leaves play) (scales with the number of different card types (Creature, Relic, Structure, Enchantment, Spell) among your own board and discard pile instead of a fixed amount) · On enter: Mill the opponent's deck equal to your [relic] permanents in play
+874|Swamp Monkey|cost 3|Creature/Ape|limit 10|When a [relic] permanent enters your opponent's board: Exile 1 card from the opponent's hand · When a [relic] permanent dies on your opponent's side: Poison the enemy (+2 stacks)
+875|Leech Lord|cost 10|Creature/Royal|limit 3|When you become poisoned: Remove 1 Poison stack from yourself (loops up to 17× per turn) · Cost Scaling — costs 1 less energy per your Poison, to a minimum of 3 energy
+876|Plucky Recruit|cost 1|Creature/Soldier|limit 15|When you become poisoned: +1 Life (loops up to 77× per turn) · When your deck is milled: +1 Life (loops up to 77× per turn)
+877|Void Acolyte|cost 1|Creature/Scholar|limit 15|End of turn: Exile 2 cards from the opponent's discard pile
+878|Loyal Battlehound|cost 2|Creature/Dog|limit 7|On death: Return a random [soldier] permanent costing 5 energy or less from your discard pile to play · Start of turn: +1 Shield
+879|The Silent Queen|cost 4|Creature/Royal Gorgon|limit 1|When your opponent draws a card: Poison the enemy (+2 stacks) (loops up to 77× per turn) · When your opponent becomes poisoned: +2 Shield (loops up to 77× per turn)
+880|Common Knowledge|cost 2|Enchantment/None|limit 7|Start of turn: Search your library for up to 1 random [common] card and put it into your hand
+881|Fated Recruit|cost 1|Creature/Soldier Student|limit 7|On death: Search your library for up to 1 copy of Warboss and put it into play
+882|Battle Shaman|cost 4|Creature/Soldier Shaman|limit 3|Anthem: Melee +1 — your other [soldier] permanents in play get +1 melee while this is in play · Anthem: Armor +1 — your other [soldier] permanents in play get +1 armor while this is in play · Anthem: Untargetable — your other [soldier] permanents in play gain Untargetable while this is in play. Active only while you control 3 or more [shaman] cards in play.
+883|Starry-Eyed Horror of Ay|cost 13|Creature/Alien Horror|limit 1|Untargetable — cannot be selected by targeted effects. Active only while you control 7 or more [spell] cards in your discard. · Indestructible — can still be targeted, but destroy/damage effects do nothing. Active only while you control 7 or more [relic] cards in play. · Anthem: Indestructible — your other [creature] permanents in play gain Indestructible while this is in play. Active only while you control 13 or more [creature] cards in play. · End of turn: Exile the top 13 cards from the opponent's library
+885|Rabbit Queen|cost 2|Creature/Royal Rabbit|limit 1|When one of your [creature] permanents enters play: +1 Life · End of turn: Create a token copy of Rabbit (exiles instead of hand/discard when it leaves play) (scales with your [rabbit] permanents in play instead of a fixed amount)
+886|Leyline Oculus|cost 1|Relic/Divine|limit 1|Start of turn: +1 Energy, usable only on [enchantment] tagged cards (ephemeral — expires end of turn) (scales with the number of different card types (Creature, Relic, Structure, Enchantment, Spell) among your own board and discard pile instead of a fixed amount)
+889|Rabbit King|cost 7|Creature/Royal Rabbit|limit 1|When one of your [rabbit] permanents enters play: Search your library for up to 1 random [relic] card and put it into your hand · Anthem: Melee +2 — your other [rabbit] permanents in play get +2 melee while this is in play · On enter: Create a token copy of Rabbit (exiles instead of hand/discard when it leaves play) (scales with the number of different card types (Creature, Relic, Structure, Enchantment, Spell) among your own board and discard pile instead of a fixed amount)
+890|Mechanized Combinoid|cost 15|Creature Relic/Soldier Titan|limit 7|Cost Scaling — costs 1 less energy per [soldier] cards in your board + [relic] cards in your board, to a minimum of 5 energy · On death: Create 5 token copies of Mechanical Infantry (exiles instead of hand/discard when it leaves play)
+891|Raindrop Shaman|cost 3|Creature/Ape Shaman|limit 7|When a [relic] permanent enters your opponent's board: +1 Shield · End of turn: Exile up to 1 random [relic] permanent (yours too)
+892|Simian Jester|cost 1|Creature/Ape Rogue|limit 15|On enter: Bounce 1 random enemy [structure] permanent to their hand
+893|Lagomorph Combinoid|cost 2|Creature/Rabbit Titan|limit 7|On death: Create 5 token copies of Rabbit (exiles instead of hand/discard when it leaves play)
+894|Magic Hat|cost 3|Relic/Hat|limit 7|When one of your [relic] permanents leaves play: Create a token copy of Rabbit (exiles instead of hand/discard when it leaves play) · Start of turn: +1 Energy, usable only on [spell] tagged cards (ephemeral — expires end of turn)
+895|Lizard Wizard|cost 3|Creature/Lizard Wizard|limit 10|Start of turn: Bounce 1 random enemy [relic] permanent to their hand · Start of turn: Return 1 of your [relic] permanent to your hand
+897|Scheming Librarian|cost 2|Creature/Scholar Rogue|limit 10|When a [creature] permanent enters your opponent's board: Mill 2 cards from the opponent's deck · Start of turn: Pay 3 Honor (drawback) → Draw 1 card
+898|Accept the Void|cost 2|Spell/None|limit 15|On enter: Exile your entire discard pile (drawback) → Exile the opponent's entire discard pile · On enter: Draw 1 card
+899|Pit Keeper|cost 2|Creature/Rogue|limit 10|When one of your [poison] permanents dies: Poison the enemy (+1 stack) · Start of turn: Sacrifice another of your creatures (drawback) → Poison the enemy (+1 stack)
+900|Travelling Healer|cost 1|Creature/Cleric|limit 15|On enter: Cure all your Poison
+
+=== TASK ===
+Propose 8 swaps that break those specific matchups without giving up the ones we already win. Prefer cards no listed opponent plays. Respect each card's limit. Keep the deck at 100 cards: qty out must equal qty in.
