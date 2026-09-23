@@ -451,6 +451,51 @@ def cmd_ask(args, api: Api) -> int:
     return 0
 
 
+def enter_tournaments(api: Api, deck_id: int, log=print) -> int:
+    """Enter every open tournament this deck is legal for.
+
+    Tournaments do not carry a standing registration -- route_cohort_register
+    sets $standing = empty($arena['is_tournament']), so user_arena_decks is
+    never written and each daily instance must be entered on its own. Nothing
+    warns you about this: a deck registered once simply stops appearing, and a
+    deck registered long ago keeps appearing in instances nobody chose it for.
+    Found exactly that: a month-old deck sitting in tonight's nightly
+    tournament while the tuned one played only the 10-minute cohorts.
+
+    Legality is left to the server. deck_meets_rules runs on registration with
+    an explicit arena, so a Standard deck gets a clean 400 from the Pauper and
+    Champion tournaments rather than silently entering a format it cannot win.
+
+    Tournaments are also the format this whole approach suits best: ~77 matches
+    per pairing instead of one, so the seed variance that dominates a single
+    cohort is averaged away, and a deck that is genuinely better wins.
+    """
+    entered = 0
+    try:
+        cohorts = api.cohort().get("open_cohorts") or []
+    except ApiError as e:
+        log(f"tournaments: could not list cohorts ({e})")
+        return 0
+
+    for c in cohorts:
+        slug = c.get("arena_slug") or ""
+        if "tournament" not in slug:
+            continue
+        mine = c.get("my_deck") or {}
+        if mine.get("deck_id") == deck_id:
+            continue
+        try:
+            res = api.register(deck_id, arena=slug)
+            log(f"tournaments: entered {slug} (closes {c['closes_at'][:16]})"
+                + (f", replacing '{mine.get('name')}'" if mine else ""))
+            entered += 1
+        except ApiError as e:
+            if e.status in (400, 403):      # illegal deck or gated arena
+                continue
+            log(f"tournaments: {slug} failed ({e})")
+    return entered
+
+
 def register_when_targetable(api: Api, arena: str, deck_id: int,
                              wait_limit: int = 240, poll: int = 5) -> bool:
     """Register only while `arena` is the cohort register() will actually hit.
@@ -573,6 +618,9 @@ def cmd_cycle(args, api: Api) -> int:
                                   validate_seeds=args.validate_seeds,
                                   min_gain=args.min_gain,
                                   rounds=args.rounds, rng=rng, deadline=deadline)
+    if args.tournaments:
+        enter_tournaments(api, args.deck_id)
+
     confirmed = list(swaps)
 
     # Then the standing instructions, with whatever budget is left -- they
@@ -761,6 +809,9 @@ def main(argv=None) -> int:
     y.add_argument("--rebase-seeds", type=int, default=31)
     y.add_argument("--rebase-top", type=int, default=12,
                    help="how far down the windowed ranking to consider")
+    y.add_argument("--tournaments", action="store_true", default=True,
+                   help="enter open tournaments this deck is legal for")
+    y.add_argument("--no-tournaments", dest="tournaments", action="store_false")
     y.add_argument("--focus", type=int, default=6,
                    help="how many costly matchups the counter round targets")
     y.add_argument("--history-cohorts", type=int, default=60,
