@@ -171,15 +171,22 @@ class Api:
             body["arena"] = arena
         return self._call("POST", "/cohort/register", body=body)
 
-    def api_version(self) -> str:
-        """The served OpenAPI version. Unauthenticated, and not under /v1."""
-        req = urllib.request.Request(SPEC, method="GET")
-        req.add_header("User-Agent", UA)
-        with urllib.request.urlopen(req, timeout=self.timeout) as r:
-            return str(json.loads(r.read().decode())["info"]["version"])
+    def spec(self, etag: str | None = None) -> tuple[dict | None, str | None]:
+        """The OpenAPI document, or (None, etag) when it has not changed.
 
-    def api_paths(self) -> set[str]:
+        Checked every cycle, so it is a conditional GET: the spec is ~170KB
+        and refetching it 144 times a day to learn nothing is rude to a box
+        that is also serving four live games. With If-None-Match the usual
+        answer is a 304 and no body.
+        """
         req = urllib.request.Request(SPEC, method="GET")
         req.add_header("User-Agent", UA)
-        with urllib.request.urlopen(req, timeout=self.timeout) as r:
-            return set(json.loads(r.read().decode())["paths"])
+        if etag:
+            req.add_header("If-None-Match", etag)
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as r:
+                return json.loads(r.read().decode()), r.headers.get("ETag")
+        except urllib.error.HTTPError as e:
+            if e.code == 304:
+                return None, etag
+            raise

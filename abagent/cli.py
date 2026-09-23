@@ -64,17 +64,15 @@ def check_api(api: Api) -> None:
     this client, and nothing would have told us. New paths are reported by
     name so a capability we should be using does not sit unnoticed.
     """
+    prev = _load_or("api_seen.json")
     try:
-        version, paths = api.api_version(), api.api_paths()
+        doc, etag = api.spec(prev.get("etag"))
     except Exception as e:                      # never block a cycle on this
         print(f"api: version check failed ({e.__class__.__name__}), continuing")
         return
-
-    prev = {}
-    try:
-        prev = _load("api_seen.json")
-    except (FileNotFoundError, ValueError):
-        pass
+    if doc is None:                             # 304, nothing changed
+        return
+    version, paths = str(doc["info"]["version"]), set(doc["paths"])
 
     if prev.get("version") != version:
         print(f"api: version {prev.get('version', '(first run)')} -> {version}")
@@ -84,7 +82,8 @@ def check_api(api: Api) -> None:
         print(f"api: NEW endpoints: {', '.join(sorted(added))}")
     if prev and removed:
         print(f"api: REMOVED endpoints: {', '.join(sorted(removed))}")
-    _save("api_seen.json", {"version": version, "paths": sorted(paths)})
+    _save("api_seen.json", {"version": version, "paths": sorted(paths),
+                            "etag": etag})
 
 
 def cmd_fetch(args, api: Api) -> int:
@@ -187,21 +186,28 @@ def cmd_climb(args, api: Api) -> int:
     return 0
 
 
-def best_rebase(h, api, mine, plan, store, opps, seeds, top_n=4, window=24, log=print):
-    """The strongest recent deck that also beats ours on shared seeds.
+def best_rebase(h, api, mine, plan, store, opps, seeds, top_n=12, window=24, log=print):
+    """The strongest recent deck that also beats ours, measured head to head.
 
-    Candidates are chosen on a WINDOWED record, not on one cohort's rank and
-    not on all-time. One cohort is a coin flip -- we adopted a deck on the
-    strength of a single #1 finish whose all-time mean rank was 14. All-time
-    is no better, because deck_id survives a rewrite: that same deck stepped
-    from ~33 wins to ~61 within one cohort when its owner rebuilt it, so its
-    lifetime average described a deck that no longer existed.
+    Candidates come from a WINDOWED record, not one cohort's rank and not
+    all-time. One cohort is a coin flip -- we adopted a deck on a single #1
+    finish whose all-time mean rank was 14. All-time is no better, because
+    deck_id survives a rewrite: that same deck stepped from ~33 wins to ~61
+    inside one cohort when its owner rebuilt it.
 
-    Each candidate is then scored against a field with itself removed, so it
-    is never credited for beating a copy of itself.
+    The net is deliberately wide (12, not 4). The top decks sit within about
+    two wins of each other, which is well inside a single cohort's noise, so a
+    deck sitting 8th on mean rank is not meaningfully worse than one sitting
+    3rd -- and it is far more likely to be a DIFFERENT archetype, which is the
+    entire point of re-basing. A narrow net just fetches another copy of the
+    basin we are already in.
+
+    Every candidate is scored in ONE batch against a common field with all
+    candidates and ourselves removed, so nobody is credited for beating a copy
+    of itself and every comparison sees identical opposition.
     """
     recs = history.deck_records(store, min_appearances=3, window=window)[:top_n]
-    ranked = []
+    cands = []
     for rec in recs:
         try:
             pub = api.public_deck(rec.deck_id)
@@ -212,19 +218,31 @@ def best_rebase(h, api, mine, plan, store, opps, seeds, top_n=4, window=24, log=
             for c in pub.get("cards") or []:
                 ids.extend([int(c["card_id"])] * int(c["quantity"]))
         if len(ids) >= 90:
-            ranked.append({"deck_id": rec.deck_id, "deck_name": rec.name,
-                           "rank": round(rec.mean_rank), "cards": ids,
-                           "battle_plan": pub.get("battle_plan") or {}})
-    log(f"rebase: {len(ranked)} candidates from the last {window} cohorts")
+            cands.append((rec, ids, pub.get("battle_plan") or {}))
+    if not cands:
+        return None
+
+    drop = {r.deck_id for r, _, _ in cands}
+    field = [o for o in opps if o.deck_id not in drop]
+    log(f"rebase: {len(cands)} candidates from the last {window} cohorts, "
+        f"{len(field)} common opponents")
+
+    batch = [("ours", mine, plan)]
+    batch += [(f"c{i}", ids, bp) for i, (_, ids, bp) in enumerate(cands)]
+    res = h.evaluate(batch, field, seeds)
+    ours = res["ours"]
+
     best = None
-    for d in ranked:
-        field = [o for o in opps if o.deck_id != d.get("deck_id")]
-        res = h.evaluate([("ours", mine, plan),
-                          ("theirs", d["cards"], d.get("battle_plan") or {})],
-                         field, seeds)
-        gain = res["theirs"].wins - res["ours"].wins
-        if res["theirs"].key > res["ours"].key and (best is None or gain > best[1]):
-            best = (d, gain)
+    for i, (rec, ids, bp) in enumerate(cands):
+        sc = res[f"c{i}"]
+        gain = sc.wins - ours.wins
+        if sc.key > ours.key and (best is None or gain > best[1]):
+            best = ({"deck_id": rec.deck_id, "deck_name": rec.name,
+                     "rank": round(rec.mean_rank), "cards": ids,
+                     "battle_plan": bp}, gain)
+    if best:
+        log(f"rebase: best is {best[0]['deck_name'][:24]} "
+            f"(mean rank {best[0]['rank']}) at {best[1]:+.1f}W")
     return best
 
 
@@ -299,6 +317,12 @@ def checkpoint(api: Api, cards: list[int], plan: dict, label: str,
     checkpoints are pruned rather than accumulated. Only decks this agent
     named are ever deleted.
     """
+    # Prune first. The v1 API does not enforce the 17-slot limit today
+    # (route_decks_post validates the name and inserts, with no slot check),
+    # but it is being added -- and once it is, creating at the cap fails and
+    # a prune that runs afterwards never runs at all.
+    _prune_checkpoints(api, keep - 1, log)
+
     try:
         counts: dict[int, int] = {}
         for cid in cards:
@@ -313,15 +337,28 @@ def checkpoint(api: Api, cards: list[int], plan: dict, label: str,
         log(f"checkpoint: could not save ({e}) — continuing unsaved")
         return None
 
+    return did
+
+
+def _prune_checkpoints(api: Api, keep: int, log=print) -> None:
+    """Keep the newest `keep` agent checkpoints, delete the rest.
+
+    Self-imposed rather than required: the website's user_deck_limit (17 plus
+    purchased slots) lives in api/decks.php and the v1 path never consults it.
+    But an account past that limit is awkward in the web UI -- api/decks.php
+    carries a comment about the API and the UI having disagreed before, and
+    "a 100th deck the UI insisted was over the limit" is exactly the mess this
+    would recreate. Only decks this agent named are ever deleted.
+    """
     try:
-        mine = [d for d in api.decks() if str(d.get("name", "")).startswith(CKPT_PREFIX)]
+        mine = [d for d in api.decks()
+                if str(d.get("name", "")).startswith(CKPT_PREFIX)]
         mine.sort(key=lambda d: d.get("updated_at") or "", reverse=True)
-        for old in mine[keep:]:
+        for old in mine[max(0, keep):]:
             api.delete_deck(int(old["id"]))
             log(f"checkpoint: pruned {old['id']} '{old['name']}'")
     except ApiError as e:
         log(f"checkpoint: prune skipped ({e})")
-    return did
 
 
 def register_when_targetable(api: Api, arena: str, deck_id: int,
@@ -493,7 +530,8 @@ def cmd_cycle(args, api: Api) -> int:
                 print(f"cycle: history unavailable ({e.__class__.__name__})")
                 store = {}
             cand = best_rebase(h, api, cards, plan, store, opps,
-                               [t0_seed + i for i in range(args.rebase_seeds)]) if store else None
+                               [t0_seed + i for i in range(args.rebase_seeds)],
+                               top_n=args.rebase_top) if store else None
             if cand and cand[1] >= args.rebase_min:
                 d, gain = cand
                 checkpoint(api, cards, plan,
@@ -612,7 +650,9 @@ def main(argv=None) -> int:
     y.add_argument("--rebase", action="store_true", default=True,
                    help="on a stall, adopt a field deck that measurably beats ours")
     y.add_argument("--no-rebase", dest="rebase", action="store_false")
-    y.add_argument("--rebase-seeds", type=int, default=41)
+    y.add_argument("--rebase-seeds", type=int, default=31)
+    y.add_argument("--rebase-top", type=int, default=12,
+                   help="how far down the windowed ranking to consider")
     y.add_argument("--focus", type=int, default=6,
                    help="how many costly matchups the counter round targets")
     y.add_argument("--history-cohorts", type=int, default=60,
