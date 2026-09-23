@@ -1,0 +1,41 @@
+[Unit]
+Description=AutoBattle deck agent — archetype exploration (second account)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=abagent
+Group=abagent
+WorkingDirectory=/opt/abagent
+EnvironmentFile=/etc/abagent-explore.env
+
+# Its own cache directory. The two agents share code but not state: different
+# accounts, different decks, different histories and pass expiries, and one
+# var/ would have each silently overwriting the other's.
+Environment=ABAGENT_VAR=/opt/abagent/var-explore
+
+# Only ever writes the rental slot. The account's primary deck belongs to a
+# person and holds the placement -- and the placement is exactly what makes a
+# failed experiment free, since only the better-placing entry is paid.
+ExecStart=/usr/bin/python3 -u -m abagent.cli --arena pure --deck-id ${ABAGENT_DECK_ID} explore --second-deck-id ${ABAGENT_SECOND_DECK_ID} --slice 40
+
+# Lower priority than the competing agent on both knobs. One core, shared with
+# four live games, and that agent was already measured at ~80% duty; this one
+# yields to it as well as to apache/php-fpm/mysql.
+Nice=15
+CPUWeight=10
+IOWeight=10
+
+MemoryHigh=400M
+MemoryMax=600M
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/abagent/var-explore /opt/abagent/bin
+TimeoutStartSec=1500
+
+[Install]
+WantedBy=multi-user.target

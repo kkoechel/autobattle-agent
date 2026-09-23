@@ -17,7 +17,10 @@ from .plans import card_order_from_deck, describe
 from .search import climb, counter_round, optimise
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-VAR = os.path.join(ROOT, "var")
+# Each agent instance gets its own var/: the two accounts have different
+# decks, histories and pass expiries, and sharing a cache directory would
+# have one silently overwriting the other's state.
+VAR = os.environ.get("ABAGENT_VAR") or os.path.join(ROOT, "var")
 BIN = os.path.join(ROOT, "bin")
 VALIDATOR = os.path.join(BIN, "validate_linux_amd64")
 
@@ -317,11 +320,19 @@ def checkpoint(api: Api, cards: list[int], plan: dict, label: str,
     checkpoints are pruned rather than accumulated. Only decks this agent
     named are ever deleted.
     """
-    # Prune first. The v1 API does not enforce the 17-slot limit today
-    # (route_decks_post validates the name and inserts, with no slot check),
-    # but it is being added -- and once it is, creating at the cap fails and
-    # a prune that runs afterwards never runs at all.
+    # Prune first: at the cap a create fails, and a prune that runs afterwards
+    # never runs at all. The limit is enforced now, and since API 1.13.0
+    # GET /decks reports slots.available directly, so this can be checked
+    # rather than discovered as a 400.
     _prune_checkpoints(api, keep - 1, log)
+    try:
+        sl = api.slots()
+        if sl.get("available") == 0 and not sl.get("admin_exempt"):
+            log(f"checkpoint: no slots free ({sl.get('used')}/{sl.get('limit')}), "
+                f"skipping the snapshot rather than failing the cycle")
+            return None
+    except ApiError:
+        pass
 
     try:
         counts: dict[int, int] = {}
@@ -794,6 +805,95 @@ def cmd_cycle(args, api: Api) -> int:
     return 0
 
 
+def cmd_explore(args, api: Api) -> int:
+    """Generate archetypes and rotate the best into the Double Entry slot.
+
+    This agent never touches the account's primary deck. That deck belongs to
+    a person, it holds the placement, and the whole reason the rental slot is
+    usable for experiments is that only the better-placing entry is paid -- a
+    failed experiment costs nothing precisely because the primary is still
+    there. Writing to it would spend the thing that makes exploring free.
+
+    Seeds are taken a slice at a time and the offset advances each run, so a
+    cycle stays inside its budget and successive cycles cover the space.
+    """
+    from .archetype import generate, name_for
+    from .search import paired_t
+    import collections
+
+    cmd_fetch(args, api)
+    cat_list = _load("cards.json")
+    catalog = {int(c["id"]): c for c in cat_list}
+    meta = _load(f"meta_{args.arena}.json")
+    h = Harness(VALIDATOR, cat_list, workdir=VAR)
+
+    played = set()
+    for d in meta["decks"]:
+        played |= set(d["cards"])
+    seeds_all = sorted(i for i, c in catalog.items()
+                       if i not in played and not c.get("is_retired")
+                       and not c.get("is_vip") and c.get("rarity") != "token"
+                       and int(c.get("deck_limit") or 0) > 0
+                       and (c.get("rules_text") or "").strip())
+    state = _load_or("explore.json")
+    off = int(state.get("offset") or 0) % max(1, len(seeds_all))
+    slice_ = seeds_all[off:off + args.slice] or seeds_all[:args.slice]
+    state["offset"] = (off + args.slice) % max(1, len(seeds_all))
+    print(f"explore: seeds {off}..{off+len(slice_)} of {len(seeds_all)}")
+
+    archs, seen = [], set()
+    for a in generate(slice_, catalog, meta["decks"]):
+        key = tuple(sorted(collections.Counter(a.cards).items()))
+        if key not in seen:
+            seen.add(key)
+            archs.append(a)
+    if not archs:
+        print("explore: no archetypes from this slice")
+        _save("explore.json", state)
+        return 0
+
+    incumbent = api.deck(args.second_deck_id)
+    inc_cards, inc_plan = expand(incumbent), (incumbent.get("battle_plan") or {})
+    allopp = opponents_from_meta(meta, exclude_deck_ids={args.deck_id, args.second_deck_id})
+    screen = allopp[::max(1, len(allopp) // 24)][:24]
+
+    batch = [("__inc__", inc_cards, inc_plan)]
+    batch += [(f"a{i}", a.cards, a.plan) for i, a in enumerate(archs)]
+    sc = h.evaluate(batch, screen, [args.rng_base + i for i in range(21)])
+    inc = sc.pop("__inc__")
+    ahead = sorted(((sc[f"a{i}"].wins, i) for i in range(len(archs))), reverse=True)
+    print(f"explore: {len(archs)} archetypes, best {ahead[0][0]:.1f}W "
+          f"vs incumbent {inc.wins:.1f}W")
+    if ahead[0][0] <= inc.wins:
+        print("explore: nothing beat the incumbent on the screen")
+        _save("explore.json", state)
+        return 0
+
+    # One pre-specified test of the single leader, full field, unseen seeds.
+    best = archs[ahead[0][1]]
+    v = h.evaluate([("keep", inc_cards, inc_plan), ("try", best.cards, best.plan)],
+                   allopp, [args.rng_base + 5000 + i for i in range(args.validate_seeds)])
+    gain, t = paired_t(v["try"], v["keep"])
+    if not (gain >= args.min_gain and t >= args.min_t):
+        print(f"explore: {best.seed_name} failed validation ({gain:+.1f}W t={t:.1f})")
+        _save("explore.json", state)
+        return 0
+
+    name = name_for(best.theme, best.seed_name)
+    counts: dict[int, int] = {}
+    for cid in best.cards:
+        counts[cid] = counts.get(cid, 0) + 1
+    api.update_deck(args.second_deck_id, name=name[:80],
+                    cards=[{"card_id": c, "quantity": q} for c, q in sorted(counts.items())],
+                    battle_plan=best.plan)
+    print(f"explore: slot now holds '{name}' from seed {best.seed_name} "
+          f"({gain:+.1f}W t={t:.1f}) — {best.summary(catalog, 4)}")
+    state["current"] = name
+    state.setdefault("history", []).append({"name": name, "gain": round(gain, 2)})
+    _save("explore.json", state)
+    return 0
+
+
 def cmd_results(args, api: Api) -> int:
     rows = api.results(arena=args.arena, deck_id=args.deck_id, limit=args.limit)
     print(f"{'closed':20} {'arena':10} {'place':>8} {'W-L-D':>12} {'win%':>6}")
@@ -904,6 +1004,16 @@ def main(argv=None) -> int:
                    help="seconds to leave between finishing and the cohort close")
     y.set_defaults(fn=cmd_cycle)
 
+    e = sub.add_parser("explore")
+    e.add_argument("--second-deck-id", type=int,
+                   default=int(os.environ.get("ABAGENT_SECOND_DECK_ID") or 0) or None)
+    e.add_argument("--slice", type=int, default=40)
+    e.add_argument("--validate-seeds", type=int, default=161)
+    e.add_argument("--min-gain", type=float, default=0.4)
+    e.add_argument("--min-t", type=float, default=2.0)
+    e.add_argument("--rng-base", type=int, default=9100)
+    e.set_defaults(fn=cmd_explore)
+
     r = sub.add_parser("results")
     r.add_argument("--limit", type=int, default=15)
     r.set_defaults(fn=cmd_results)
@@ -913,7 +1023,8 @@ def main(argv=None) -> int:
     if args.deck_id is None and args.cmd == "cycle":
         raise SystemExit("cycle requires an explicit --deck-id: it edits and "
                          "registers that deck unattended")
-    if args.deck_id is None and args.cmd in ("baseline", "climb", "adopt", "ask"):
+    if args.deck_id is None and args.cmd in ("baseline", "climb", "adopt", "ask",
+                                             "explore"):
         args.deck_id = api.me()["active_deck_id"]
         print(f"(using active deck {args.deck_id})")
     return args.fn(args, api)

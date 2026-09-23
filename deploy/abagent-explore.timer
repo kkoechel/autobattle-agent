@@ -1,0 +1,16 @@
+[Unit]
+Description=AutoBattle archetype exploration, hourly
+
+[Timer]
+# Hourly, not every ten minutes. Exploration is not racing a cohort: it
+# generates archetypes, screens them and validates one, and a slice of the
+# seed space per hour still covers all 105 seeds in under three hours.
+#
+# :35 puts it between the competing agent's runs (:06/10) rather than on top
+# of one. They share a single core, so the offset is doing real work.
+OnCalendar=*:35
+AccuracySec=30s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -134,6 +134,21 @@ class Api:
     def decks(self) -> list[dict]:
         return self._call("GET", "/decks")["decks"]
 
+    def slots(self) -> dict:
+        """Deck-slot usage, from API 1.13.0's `slots` summary.
+
+        Row count and slot count differ on purpose -- draft-event decks do not
+        consume a slot, so an account shows 58 decks while using 18 of 18.
+        Before 1.13.0 a client had to fetch every deck individually to work
+        that out; now `available` answers it, and is null for admins, who are
+        exempt. Check it before POST /decks rather than meeting the limit as
+        a 400.
+        """
+        return self._call("GET", "/decks").get("slots") or {}
+
+    def buy_slot(self) -> dict:
+        return self._call("POST", "/decks/slots", body={})
+
     def validator_version(self) -> dict:
         return self._call("GET", "/validator_version")
 
