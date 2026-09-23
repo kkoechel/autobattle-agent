@@ -83,6 +83,17 @@ class Api:
     def cohort(self) -> dict:
         return self._call("GET", "/cohort")
 
+    def next_closing_cohort(self) -> dict | None:
+        """The open cohort that closes soonest, across ALL arenas.
+
+        This is the one POST /cohort/register will act on. The endpoint takes
+        no arena parameter -- it selects `ORDER BY c.closes_at ASC LIMIT 1`
+        over every open cohort (api/v1/index.php route_cohort_register) -- so
+        which arena you end up in is purely a function of when you call.
+        """
+        cs = self.cohort().get("open_cohorts") or []
+        return min(cs, key=lambda c: c["closes_at"]) if cs else None
+
     def open_cohort_for(self, arena: str) -> dict | None:
         """The open (still-accepting) cohort for one arena, or None.
 

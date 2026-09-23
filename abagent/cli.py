@@ -10,7 +10,7 @@ import sys
 import time
 import urllib.request
 
-from .api import Api
+from .api import Api, ApiError
 from .harness import Harness, opponents_from_meta
 from .plans import card_order_from_deck, describe
 from .search import climb
@@ -147,6 +147,39 @@ def cmd_climb(args, api: Api) -> int:
     return 0
 
 
+def register_when_targetable(api: Api, arena: str, deck_id: int,
+                             wait_limit: int = 240, poll: int = 5) -> bool:
+    """Register only while `arena` is the cohort register() will actually hit.
+
+    POST /cohort/register takes no arena: it enters whichever open cohort
+    closes soonest, over all ~12 arenas, which rotate on ~53-second offsets.
+    Calling at the wrong moment either 403s (the next arena is playtester-only)
+    or -- far worse -- silently enters a DIFFERENT arena, where a deck tuned
+    for Standard is either illegal or simply wrong, and nothing says so.
+
+    So we wait for the target arena to reach the front of the queue. That
+    window is about 50 seconds wide and comes round every 10 minutes.
+    """
+    end = time.time() + wait_limit
+    while True:
+        nxt = api.next_closing_cohort()
+        if nxt and nxt.get("arena_slug") == arena:
+            api.register(deck_id)
+            print(f"register: entered {arena} cohort {nxt['cohort_key'][:12]} "
+                  f"({nxt['seconds_remaining']}s before it closed)")
+            return True
+        if time.time() >= end:
+            where = nxt.get("arena_slug") if nxt else "nothing"
+            print(f"register: gave up after {wait_limit}s -- {where} kept the "
+                  f"front of the queue, and registering there would not have "
+                  f"been {arena}")
+            return False
+        if nxt:
+            print(f"register: waiting for {arena}; {nxt['arena_slug']} closes "
+                  f"first in {nxt['seconds_remaining']}s", flush=True)
+        time.sleep(poll)
+
+
 def cmd_clone(args, api: Api) -> int:
     """Copy a deck into a new one for the agent to own.
 
@@ -210,12 +243,22 @@ def cmd_cycle(args, api: Api) -> int:
         return 0
 
     api.update_deck(args.deck_id, battle_plan=plan)
-    reg = api.register(args.deck_id)
-    print(f"cycle: applied {len(confirmed)} change(s) to deck {args.deck_id} "
-          f"and registered — {describe(plan)}")
-    print(f"cycle: projected {score}")
-    print(f"cycle: {json.dumps(reg)[:200]}")
     _save(f"plan_{args.deck_id}.json", plan)
+    print(f"cycle: applied {len(confirmed)} change(s) to deck {args.deck_id} "
+          f"— {describe(plan)}")
+    print(f"cycle: projected {score}")
+
+    try:
+        ok = register_when_targetable(api, args.arena, args.deck_id,
+                                      wait_limit=args.register_wait)
+    except ApiError as e:
+        # The plan is already saved on the deck, so a failed registration
+        # costs this window, not the work.
+        print(f"cycle: registration refused ({e}) — plan is saved, "
+              f"next cycle will try again")
+        return 0
+    if not ok:
+        print("cycle: plan saved but not registered this window")
     return 0
 
 
@@ -269,6 +312,8 @@ def main(argv=None) -> int:
     y.add_argument("--sweeps", type=int, default=4)
     y.add_argument("--min-t", type=float, default=2.0)
     y.add_argument("--confirm-top", type=int, default=3)
+    y.add_argument("--register-wait", type=int, default=240,
+                   help="seconds to wait for the arena to reach the front")
     y.add_argument("--margin", type=int, default=90,
                    help="seconds to leave between finishing and the cohort close")
     y.set_defaults(fn=cmd_cycle)
