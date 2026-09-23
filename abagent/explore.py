@@ -36,7 +36,7 @@ class CardResult:
     name: str
     qty: int
     wins: float
-    delta: float          # versus the untouched shell
+    delta: float          # versus the filler-card control arm
 
     def __str__(self) -> str:
         return f"{self.name[:26]:26} x{self.qty:<2} {self.wins:5.1f}W {self.delta:+5.1f}"
@@ -47,19 +47,36 @@ def _variant(shell: list[int], plan: dict, cut: int, add: int, qty: int,
     return swap(shell, plan, cut, add, qty, limit, rank=rank)
 
 
+CONTROL_CARD = 57   # Straw Man-at-Arms: the engine's own designated filler
+
+
 def census(h: Harness, shell: list[int], plan: dict, opponents: list[Opponent],
            candidates: list[int], catalog: dict[int, dict], seeds: list[int],
            cut: int, qty: int = 5, rank: int = 2, batch_size: int = 40,
-           log=print) -> list[CardResult]:
+           control: int = CONTROL_CARD, log=print) -> list[CardResult]:
     """Substitute each candidate into one shell slot and measure it.
 
     Every candidate replaces the SAME cards at the SAME play-order rank, so
-    the only thing varying between measurements is the card itself. Without
-    that the numbers would compare cards against different decks and mean
-    nothing -- which is the usual way this kind of survey goes wrong.
+    the only thing varying between measurements is the card itself.
+
+    Deltas are reported against a CONTROL ARM -- the same cut refilled with
+    the designated filler card -- not against the untouched shell. Measuring
+    against the shell folds the cost of the cut into every card's score, and
+    the first run of this showed exactly how badly that misleads: a cluster of
+    cards tied at "+0.5", among them The One-Sided Coin of Xyx, which costs 99
+    energy and is never cast. +0.5 was not a gain, it was the going rate for a
+    blank, and every card at that number was indistinguishable from one.
     """
-    base = h.evaluate([("shell", shell, plan)], opponents, seeds)["shell"]
-    log(f"shell: {base}")
+    arms = [("shell", shell, plan)]
+    cv = _variant(shell, plan, cut, control, qty,
+                  int(catalog.get(control, {}).get("deck_limit") or qty), rank)
+    if cv:
+        arms.append(("control", *cv))
+    got = h.evaluate(arms, opponents, seeds)
+    base = got.get("control") or got["shell"]
+    log(f"shell:   {got['shell']}")
+    if "control" in got:
+        log(f"control: {got['control']}  <- deltas are measured against THIS")
     nm = lambda c: (catalog.get(c, {}).get("name") or f"#{c}")
 
     out: list[CardResult] = []
@@ -90,15 +107,21 @@ def interactions(h: Harness, shell: list[int], plan: dict,
                  opponents: list[Opponent], pairs: list[tuple[int, int]],
                  singles: dict[int, float], catalog: dict[int, dict],
                  seeds: list[int], cut: int, qty: int = 5, rank: int = 2,
-                 log=print) -> list[tuple]:
+                 control: int = CONTROL_CARD, log=print) -> list[tuple]:
     """Test pairs for super-additivity: is AB worth more than A plus B?
 
-    `singles` must come from the SAME shell, cut slot and rank as the pairs,
-    or the additive prediction it is compared against is not a prediction of
-    anything. Synergy is (observed AB) - (A + B), both measured as deltas from
-    the same baseline.
+    `singles` must come from the SAME shell, cut slot, rank AND baseline as
+    the pairs, or the additive prediction is not a prediction of anything.
+    That last one is easy to get wrong: census() measures against the filler
+    control, so this must too. Subtracting control-relative singles from a
+    shell-relative joint would put the whole cost of the cut into the synergy
+    term and invent combos that are not there.
     """
-    base = h.evaluate([("shell", shell, plan)], opponents, seeds)["shell"]
+    cv = _variant(shell, plan, cut, control, qty,
+                  int(catalog.get(control, {}).get("deck_limit") or qty), rank)
+    arms = [("shell", shell, plan)] + ([("control", *cv)] if cv else [])
+    got = h.evaluate(arms, opponents, seeds)
+    base = got.get("control") or got["shell"]
     nm = lambda c: (catalog.get(c, {}).get("name") or f"#{c}")
 
     batch, keep = [], []
