@@ -32,7 +32,11 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=/opt/abagent/var
+# var/ holds the caches and the temp payloads the validator reads; bin/ has to
+# be writable too, because fetch replaces the validator binary in place when
+# the server reports a newer engine. Omitting bin/ works until the day the
+# engine is upgraded, and then fails as a read-only filesystem error.
+ReadWritePaths=/opt/abagent/var /opt/abagent/bin
 TimeoutStartSec=900
 
 [Install]
