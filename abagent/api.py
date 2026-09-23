@@ -120,6 +120,14 @@ class Api:
         return self._call("GET", "/results", {
             "arena": arena, "deck_id": deck_id, "limit": limit, "before": before})
 
+    def public_deck(self, deck_id: int) -> dict:
+        """Any deck's list and plan by id -- not only our own.
+
+        This is what makes a historical corpus possible: standings name
+        deck_ids, and this turns a deck_id from any cohort into cards.
+        """
+        return self._call("GET", f"/decks/{deck_id}/public")["deck"]
+
     def deck(self, deck_id: int) -> dict:
         return self._call("GET", f"/decks/{deck_id}")["deck"]
 

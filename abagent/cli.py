@@ -11,6 +11,7 @@ import time
 import urllib.request
 
 from .api import Api, ApiError
+from . import history
 from .harness import Harness, opponents_from_meta
 from .plans import card_order_from_deck, describe
 from .search import climb, optimise
@@ -23,6 +24,13 @@ VALIDATOR = os.path.join(BIN, "validate_linux_amd64")
 
 def _p(name: str) -> str:
     return os.path.join(VAR, name)
+
+
+def _load_or(name: str, default=None):
+    try:
+        return _load(name)
+    except (FileNotFoundError, ValueError):
+        return {} if default is None else default
 
 
 def _load(name: str):
@@ -179,14 +187,35 @@ def cmd_climb(args, api: Api) -> int:
     return 0
 
 
-def best_rebase(h, mine, plan, meta, opps, seeds, top_n=5):
-    """The field deck that most beats ours on shared seeds, or None.
+def best_rebase(h, api, mine, plan, store, opps, seeds, top_n=4, window=24, log=print):
+    """The strongest recent deck that also beats ours on shared seeds.
 
-    Each candidate is scored against a field with itself removed, so it is
-    never credited for beating a copy of itself -- which would flatter any
-    deck the rest of the field is built to answer.
+    Candidates are chosen on a WINDOWED record, not on one cohort's rank and
+    not on all-time. One cohort is a coin flip -- we adopted a deck on the
+    strength of a single #1 finish whose all-time mean rank was 14. All-time
+    is no better, because deck_id survives a rewrite: that same deck stepped
+    from ~33 wins to ~61 within one cohort when its owner rebuilt it, so its
+    lifetime average described a deck that no longer existed.
+
+    Each candidate is then scored against a field with itself removed, so it
+    is never credited for beating a copy of itself.
     """
-    ranked = sorted(meta["decks"], key=lambda d: d["rank"])[:top_n]
+    recs = history.deck_records(store, min_appearances=3, window=window)[:top_n]
+    ranked = []
+    for rec in recs:
+        try:
+            pub = api.public_deck(rec.deck_id)
+        except Exception:
+            continue
+        ids = pub.get("card_ids") or []
+        if not ids:
+            for c in pub.get("cards") or []:
+                ids.extend([int(c["card_id"])] * int(c["quantity"]))
+        if len(ids) >= 90:
+            ranked.append({"deck_id": rec.deck_id, "deck_name": rec.name,
+                           "rank": round(rec.mean_rank), "cards": ids,
+                           "battle_plan": pub.get("battle_plan") or {}})
+    log(f"rebase: {len(ranked)} candidates from the last {window} cohorts")
     best = None
     for d in ranked:
         field = [o for o in opps if o.deck_id != d.get("deck_id")]
@@ -393,8 +422,15 @@ def cmd_cycle(args, api: Api) -> int:
         # rank 1, not a local optimum. Only checked on a stall, because once
         # we are at the top this costs ~110s to learn nothing.
         if args.rebase and time.time() < deadline + args.rebase_grace:
-            cand = best_rebase(h, cards, plan, {"decks": meta_decks}, opps,
-                               [t0_seed + i for i in range(args.rebase_seeds)])
+            try:
+                store = history.fetch(api, args.arena, args.history_cohorts,
+                                      _load_or("history_%s.json" % args.arena))
+                _save(f"history_{args.arena}.json", store)
+            except Exception as e:
+                print(f"cycle: history unavailable ({e.__class__.__name__})")
+                store = {}
+            cand = best_rebase(h, api, cards, plan, store, opps,
+                               [t0_seed + i for i in range(args.rebase_seeds)]) if store else None
             if cand and cand[1] >= args.rebase_min:
                 d, gain = cand
                 counts: dict[int, int] = {}
@@ -512,6 +548,8 @@ def main(argv=None) -> int:
                    help="on a stall, adopt a field deck that measurably beats ours")
     y.add_argument("--no-rebase", dest="rebase", action="store_false")
     y.add_argument("--rebase-seeds", type=int, default=41)
+    y.add_argument("--history-cohorts", type=int, default=60,
+                   help="cohorts of standings to keep for judging decks")
     y.add_argument("--rebase-min", type=float, default=3.0,
                    help="wins a field deck must beat ours by to re-base")
     y.add_argument("--rebase-grace", type=int, default=240,
