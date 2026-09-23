@@ -112,6 +112,23 @@ def fetch(api, arena: str, want: int, cached: dict | None = None,
     return store
 
 
+def our_placements(store: dict, deck_ids: set[int]) -> dict[str, dict]:
+    """Our best row per cohort, by deck id rather than by the is_you flag.
+
+    With a rental entered, GET /results reports one row per cohort and marks
+    the RENTAL as is_you even when the primary placed better -- observed live
+    at rank 2 / 63 wins reported as rank 5 / 61. Anything judging our own
+    performance has to look at the standings and match ids, or it grades the
+    wrong deck.
+    """
+    out = {}
+    for cid, cohort in store.items():
+        rows = [r for r in cohort["standings"] if r.get("deck_id") in deck_ids]
+        if rows:
+            out[cid] = min(rows, key=lambda r: r["rank"])
+    return out
+
+
 def deck_records(store: dict, min_appearances: int = 3,
                  window: int | None = 24) -> list[DeckRecord]:
     """Per-deck performance over the most recent `window` cohorts, best first.

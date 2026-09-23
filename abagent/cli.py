@@ -11,7 +11,7 @@ import time
 import urllib.request
 
 from .api import Api, ApiError
-from . import history
+from . import history, second
 from .harness import Harness, opponents_from_meta
 from .plans import card_order_from_deck, describe
 from .search import climb, counter_round, optimise
@@ -564,6 +564,69 @@ def cmd_clone(args, api: Api) -> int:
     return 0
 
 
+def maintain_second(args, api: Api, h, cards, plan, opps,
+                    repick: bool | None = None, log=print) -> None:
+    """Keep the pass alive and the second slot holding the right deck.
+
+    Three things, cheapest first, because this runs every cycle:
+      - renew the pass only when the remembered expiry is close (there is no
+        endpoint to ask, and asking by buying costs 177 AG a time)
+      - re-assert the standing second deck, which is idempotent and the only
+        way to notice a slot that silently emptied
+      - re-pick the complement, but only on the slow path
+
+    The re-pick is slow-path on purpose. What the pass pays is E[max(primary,
+    second)], and the right complement is the one that stumbles in DIFFERENT
+    cohorts, not the strongest one -- a correlation of 0.88 turned a 63.7-win
+    deck into +0.3 while a 62.0-win deck at 0.16 was worth +0.8. That ranking
+    only changes when the metagame does, so checking it every ten minutes
+    would burn the budget to re-learn the same answer.
+    """
+    if not args.second_deck_id:
+        return
+    state = _load_or("second.json")
+    exp = second.ensure_pass(api, state.get("pass_expiry"),
+                             min_days=args.pass_min_days, log=log)
+    if exp != state.get("pass_expiry"):
+        state["pass_expiry"] = exp
+    second.assert_second(api, args.arena_type_id, args.second_deck_id, log=log)
+
+    if args.repick_complement if repick is None else repick:
+        store = _load_or(f"history_{args.arena}.json")
+        recs = history.deck_records(store, min_appearances=3, window=24)[:6]
+        cands = []
+        for r in recs:
+            if r.deck_id in (args.deck_id, args.second_deck_id):
+                continue
+            try:
+                pub = api.public_deck(r.deck_id)
+            except ApiError:
+                continue
+            ids = pub.get("card_ids") or []
+            if not ids:
+                for c in pub.get("cards") or []:
+                    ids.extend([int(c["card_id"])] * int(c["quantity"]))
+            if len(ids) >= 90:
+                cands.append((r.name, ids, pub.get("battle_plan") or {}))
+        if cands:
+            log("second: re-picking the complement by E[max], not by strength")
+            best = second.pick_complement(
+                h, cards, plan, cands, opps,
+                [args.rng_base + i for i in range(args.complement_seeds)], log=log)
+            if best:
+                name, bcards, bplan, em, gain = best
+                counts: dict[int, int] = {}
+                for cid in bcards:
+                    counts[cid] = counts.get(cid, 0) + 1
+                api.update_deck(args.second_deck_id,
+                                cards=[{"card_id": c, "quantity": q}
+                                       for c, q in sorted(counts.items())],
+                                battle_plan=bplan)
+                log(f"second: slot now holds {name} (E[max] {em:.1f}, {gain:+.1f})")
+                state["complement"] = name
+    _save("second.json", state)
+
+
 def cmd_cycle(args, api: Api) -> int:
     """One unattended pass: refresh, climb within a budget, register if better.
 
@@ -620,6 +683,7 @@ def cmd_cycle(args, api: Api) -> int:
                                   rounds=args.rounds, rng=rng, deadline=deadline)
     if args.tournaments:
         enter_tournaments(api, args.deck_id)
+    maintain_second(args, api, h, mine, start, opps, repick=False)
 
     confirmed = list(swaps)
 
@@ -662,6 +726,11 @@ def cmd_cycle(args, api: Api) -> int:
     if not confirmed:
         # Still stuck: consider a different basin. Incremental swaps cannot
         # cross a valley, and the goal is rank 1, not a local optimum.
+        # Stalled: the complement is worth re-ranking now, before the more
+        # expensive re-base. A shifted metagame changes which deck stumbles
+        # in different cohorts from ours, which is the whole basis of the pick.
+        if args.second_deck_id:
+            maintain_second(args, api, h, cards, plan, opps, repick=True)
         if args.rebase and time.time() < deadline + args.rebase_grace:
             try:
                 store = history.fetch(api, args.arena, args.history_cohorts,
@@ -809,6 +878,15 @@ def main(argv=None) -> int:
     y.add_argument("--rebase-seeds", type=int, default=31)
     y.add_argument("--rebase-top", type=int, default=12,
                    help="how far down the windowed ranking to consider")
+    y.add_argument("--second-deck-id", type=int,
+                   default=int(os.environ.get("ABAGENT_SECOND_DECK_ID") or 0) or None,
+                   help="deck held in the Double Entry Pass slot")
+    y.add_argument("--arena-type-id", type=int, default=1)
+    y.add_argument("--pass-min-days", type=int, default=10)
+    y.add_argument("--complement-seeds", type=int, default=61)
+    y.add_argument("--rng-base", type=int, default=6100)
+    y.add_argument("--repick-complement", action="store_true", default=False,
+                   help="re-rank complements by E[max]; slow, use on a stall")
     y.add_argument("--tournaments", action="store_true", default=True,
                    help="enter open tournaments this deck is legal for")
     y.add_argument("--no-tournaments", dest="tournaments", action="store_false")

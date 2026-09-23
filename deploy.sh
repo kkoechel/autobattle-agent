@@ -13,6 +13,7 @@ SSH=(ssh -i "$KEY" -o IdentitiesOnly=yes -o ConnectTimeout=15 "root@$HOST")
 
 [ -n "${AB_API_KEY:-}" ] || { echo "AB_API_KEY must be set" >&2; exit 1; }
 [ -n "${ABAGENT_DECK_ID:-}" ] || { echo "ABAGENT_DECK_ID must be set (the deck the agent owns; make one with 'clone')" >&2; exit 1; }
+[ -n "${ABAGENT_SECOND_DECK_ID:-}" ] || { echo "ABAGENT_SECOND_DECK_ID must be set (the Double Entry Pass slot)" >&2; exit 1; }
 
 # A NameError is valid syntax, so py_compile and ast.parse both pass it. This
 # is the gate that would have stopped a broken cmd_cycle reaching the timer.
@@ -38,7 +39,8 @@ rsync -az -e "ssh -i $KEY -o IdentitiesOnly=yes" \
 # The key goes over stdin, never on a command line -- an argv is visible to
 # every user on the box via ps for as long as the command runs.
 echo "==> installing credentials (0600, abagent-owned)"
-printf 'AB_API_KEY=%s\nABAGENT_DECK_ID=%s\n' "$AB_API_KEY" "$ABAGENT_DECK_ID" | "${SSH[@]}" \
+printf 'AB_API_KEY=%s\nABAGENT_DECK_ID=%s\nABAGENT_SECOND_DECK_ID=%s\n' \
+  "$AB_API_KEY" "$ABAGENT_DECK_ID" "$ABAGENT_SECOND_DECK_ID" | "${SSH[@]}" \
   'umask 077 && cat > /etc/abagent.env && chown abagent:abagent /etc/abagent.env'
 
 echo "==> fetching validator + card catalogue as abagent"

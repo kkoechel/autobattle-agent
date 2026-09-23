@@ -12,7 +12,7 @@ EnvironmentFile=/etc/abagent.env
 # --deck-id is required: cycle edits and registers that deck unattended, so it
 # must never fall back to "whatever deck is active". Set ABAGENT_DECK_ID in
 # /etc/abagent.env.
-ExecStart=/usr/bin/python3 -u -m abagent.cli --arena pure --deck-id ${ABAGENT_DECK_ID} cycle --budget 420
+ExecStart=/usr/bin/python3 -u -m abagent.cli --arena pure --deck-id ${ABAGENT_DECK_ID} cycle --budget 420 --second-deck-id ${ABAGENT_SECOND_DECK_ID}
 
 # subgames-nyc1 is a 1-vCPU box also serving live Reprisal, Ossuary, Mage Wars
 # and Blind Wizards. CPUWeight (proportional) rather than CPUQuota (a hard cap)
