@@ -1,14 +1,16 @@
 [Unit]
-Description=AutoBattle archetype exploration, hourly
+Description=AutoBattle archetype exploration, every 30 minutes
 
 [Timer]
-# Hourly, not every ten minutes. Exploration is not racing a cohort: it
-# generates archetypes, screens them and validates one, and a slice of the
-# seed space per hour still covers all 105 seeds in under three hours.
+# Every 30 minutes at :05 and :35. The slot now ROTATES each run rather than
+# holding a winner, so cadence is directly how fast the agent learns: each
+# archetype gets ~3 live cohorts before the next one takes the slot. Hourly
+# gave 6 cohorts each and 24 archetypes a day, which is more certainty per
+# deck than the offline screen needs and far too few decks.
 #
-# :35 puts it between the competing agent's runs (:06/10) rather than on top
-# of one. They share a single core, so the offset is doing real work.
-OnCalendar=*:35
+# The :05/:35 offset keeps it off the competing agent's runs (:06/10). They
+# share a single core, so the offset is doing real work.
+OnCalendar=*:05/30
 AccuracySec=30s
 Persistent=false
 

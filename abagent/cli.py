@@ -920,9 +920,10 @@ def cmd_explore(args, api: Api) -> int:
     Seeds are taken a slice at a time and the offset advances each run, so a
     cycle stays inside its budget and successive cycles cover the space.
     """
-    from .archetype import generate, name_for, recent_seeds
-    from .search import paired_t
     import collections
+    import statistics
+
+    from .archetype import generate, name_for, recent_seeds
 
     cmd_fetch(args, api)
     cat_list = _load("cards.json")
@@ -969,6 +970,26 @@ def cmd_explore(args, api: Api) -> int:
         _save("explore.json", state)
         return 0
 
+    # Record how the deck currently in the slot actually did, before replacing
+    # it. Live results are the only check on the offline screen, and they are
+    # free: the slot costs nothing because the primary holds the placement.
+    tried = dict(state.get("tried") or {})
+    cur = state.get("current")
+    if cur:
+        try:
+            rows = api.results(arena=args.arena, deck_id=args.second_deck_id,
+                               limit=12)["results"]
+            if rows:
+                w = statistics.fmean(r["wins"] for r in rows)
+                rk = statistics.fmean(r["placement"] for r in rows)
+                tried.setdefault(cur, {}).update(
+                    {"live_wins": round(w, 1), "live_rank": round(rk, 1),
+                     "cohorts": len(rows)})
+                print(f"explore: {cur} played {len(rows)} live cohorts — "
+                      f"{w:.1f}W, mean rank {rk:.1f}")
+        except ApiError:
+            pass
+
     incumbent = api.deck(args.second_deck_id)
     inc_cards, inc_plan = expand(incumbent), (incumbent.get("battle_plan") or {})
     allopp = opponents_from_meta(meta, exclude_deck_ids={args.deck_id, args.second_deck_id})
@@ -978,35 +999,49 @@ def cmd_explore(args, api: Api) -> int:
     batch += [(f"a{i}", a.cards, a.plan) for i, a in enumerate(archs)]
     sc = h.evaluate(batch, screen, [args.rng_base + i for i in range(21)])
     inc = sc.pop("__inc__")
-    ahead = sorted(((sc[f"a{i}"].wins, i) for i in range(len(archs))), reverse=True)
-    print(f"explore: {len(archs)} archetypes, best {ahead[0][0]:.1f}W "
-          f"vs incumbent {inc.wins:.1f}W")
-    if ahead[0][0] <= inc.wins:
-        print("explore: nothing beat the incumbent on the screen")
+
+    # ROTATE, rather than only promoting a winner. The first version of this
+    # kept the slot for whatever scored highest, and across five runs nothing
+    # ever displaced the first deck -- it screened 17.8W and the generator
+    # kept producing 12-16W. Perfectly reasonable behaviour, and completely
+    # useless: an explorer that holds the best deck it has found is not
+    # exploring, it is exploiting, and the whole point of the rental slot is
+    # that exploiting there buys nothing. The primary keeps the placement.
+    #
+    # So the slot goes to the best archetype that has NOT had live time yet,
+    # above a floor -- a deck scoring a third of the incumbent teaches nothing
+    # and would waste its cohorts. Each rotation earns ~6 live cohorts of real
+    # data against the real field.
+    floor = inc.wins * args.floor_frac
+    ranked = sorted(((sc[f"a{i}"].wins, i) for i in range(len(archs))), reverse=True)
+    pick = None
+    for w, i in ranked:
+        nm = name_for(archs[i].theme, archs[i].seed_name)
+        if nm in tried or w < floor:
+            continue
+        pick = (w, i, nm)
+        break
+
+    if not pick:
+        print(f"explore: nothing new above the {floor:.1f}W floor "
+              f"({len(tried)} archetypes tried so far); holding")
+        state["tried"] = tried
         _save("explore.json", state)
         return 0
 
-    # One pre-specified test of the single leader, full field, unseen seeds.
-    best = archs[ahead[0][1]]
-    v = h.evaluate([("keep", inc_cards, inc_plan), ("try", best.cards, best.plan)],
-                   allopp, [args.rng_base + 5000 + i for i in range(args.validate_seeds)])
-    gain, t = paired_t(v["try"], v["keep"])
-    if not (gain >= args.min_gain and t >= args.min_t):
-        print(f"explore: {best.seed_name} failed validation ({gain:+.1f}W t={t:.1f})")
-        _save("explore.json", state)
-        return 0
-
-    name = name_for(best.theme, best.seed_name)
+    w, i, nm = pick
+    best = archs[i]
     counts: dict[int, int] = {}
     for cid in best.cards:
         counts[cid] = counts.get(cid, 0) + 1
-    api.update_deck(args.second_deck_id, name=name[:80],
+    api.update_deck(args.second_deck_id, name=nm[:80],
                     cards=[{"card_id": c, "quantity": q} for c, q in sorted(counts.items())],
                     battle_plan=best.plan)
-    print(f"explore: slot now holds '{name}' from seed {best.seed_name} "
-          f"({gain:+.1f}W t={t:.1f}) — {best.summary(catalog, 4)}")
-    state["current"] = name
-    state.setdefault("history", []).append({"name": name, "gain": round(gain, 2)})
+    tried.setdefault(nm, {})["screen_wins"] = round(w, 1)
+    state["tried"] = tried
+    state["current"] = nm
+    print(f"explore: rotating slot -> '{nm}' ({w:.1f}W screen, incumbent "
+          f"{inc.wins:.1f}W) — {best.summary(catalog, 4)}")
     _save("explore.json", state)
     return 0
 
@@ -1134,8 +1169,8 @@ def main(argv=None) -> int:
     e.add_argument("--new-days", type=int, default=7,
                    help="treat cards added this recently as priority seeds")
     e.add_argument("--validate-seeds", type=int, default=161)
-    e.add_argument("--min-gain", type=float, default=0.4)
-    e.add_argument("--min-t", type=float, default=2.0)
+    e.add_argument("--floor-frac", type=float, default=0.6,
+                   help="skip archetypes below this fraction of the incumbent")
     e.add_argument("--rng-base", type=int, default=9100)
     e.set_defaults(fn=cmd_explore)
 
