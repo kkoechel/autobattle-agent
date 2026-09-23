@@ -66,10 +66,17 @@ def climb(harness: Harness, cards: list[int], opponents: list[Opponent],
           confirm_seeds: int = 21, max_sweeps: int = 6, min_t: float = 2.0,
           confirm_top: int = 3, validate_seeds: int = 161,
           rng: random.Random | None = None, deadline: float | None = None,
-          log=print) -> tuple[dict, Score, list[Step]]:
+          log=print) -> tuple[dict, Score | None, list[Step]]:
     rng = rng or random.Random(20260922)
     plan = dict(start_plan or {})
     history: list[Step] = []
+
+    # The baseline is itself a full evaluation, so check the clock before
+    # paying for it. Without this a 4-second budget still bought 86 seconds of
+    # scoring before the first deadline check inside the sweep loop.
+    if deadline and time.time() >= deadline:
+        log("climb: no budget left, skipping")
+        return plan, None, history
 
     seeds = _seed_block(rng, confirm_seeds)
     incumbent = harness.evaluate([("incumbent", cards, plan)], opponents, seeds)["incumbent"]

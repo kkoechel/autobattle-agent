@@ -266,6 +266,11 @@ def cmd_cycle(args, api: Api) -> int:
     catalog = {int(c["id"]): c for c in _load("cards.json")}
     meta_decks = _load(f"meta_{args.arena}.json")["decks"]
 
+    # Registration is now standing (POST /cohort/register with an arena writes
+    # user_arena_decks), so missing a close no longer costs an entry -- the
+    # deck is in every future cohort regardless. Landing an edit before the
+    # close only decides whether it takes effect this cohort or the next one,
+    # which makes the margin a preference rather than a correctness rule.
     budget = args.budget
     live = api.open_cohort_for(args.arena)
     if live:
@@ -274,9 +279,11 @@ def cmd_cycle(args, api: Api) -> int:
             print(f"cycle: {live['seconds_remaining']}s to close, trimming "
                   f"search budget {budget}s -> {max(room, 0)}s")
             budget = max(room, 0)
-        if budget <= 0:
-            print("cycle: too close to the cohort close to search, skipping")
-            return 0
+    if budget < args.min_budget:
+        print(f"cycle: {budget}s is below the {args.min_budget}s floor — "
+              f"a search this short cannot finish a single validation, "
+              f"skipping rather than burning the box for nothing")
+        return 0
 
     deadline = t0 + budget
     rng = random.Random(int(t0))
@@ -320,7 +327,10 @@ def cmd_cycle(args, api: Api) -> int:
     _save(f"plan_{args.deck_id}.json", plan)
     print(f"cycle: applied {len(confirmed)} change(s) to deck {args.deck_id} "
           f"— {describe(plan)}")
-    print(f"cycle: projected {score}")
+    # climb returns no score when it skipped for lack of budget, which is a
+    # normal outcome now that the joint search runs first and can use it all.
+    if score is not None:
+        print(f"cycle: projected {score}")
 
     try:
         ok = register_when_targetable(api, args.arena, args.deck_id,
@@ -392,7 +402,9 @@ def main(argv=None) -> int:
                    help="order+swap rounds after the scalar search")
     y.add_argument("--register-wait", type=int, default=240,
                    help="seconds to wait for the arena to reach the front")
-    y.add_argument("--margin", type=int, default=90,
+    y.add_argument("--min-budget", type=int, default=150,
+                   help="skip the cycle entirely below this many seconds")
+    y.add_argument("--margin", type=int, default=45,
                    help="seconds to leave between finishing and the cohort close")
     y.set_defaults(fn=cmd_cycle)
 
