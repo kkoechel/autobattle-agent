@@ -25,6 +25,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dfield
 
+from .moves import is_playable
+
 # Tags that describe provenance or triggers rather than what a card is for.
 # Overlapping on 'common' or 'trigger-start-of-turn' is not synergy.
 NOISE_TAGS = {
@@ -76,9 +78,9 @@ def staples(meta_decks: list[dict], catalog: dict[int, dict], top: int = 10
     for d in meta_decks:
         for cid in set(d["cards"]):
             seen[cid] = seen.get(cid, 0) + 1
+    from .moves import is_playable
     ranked = sorted(seen.items(), key=lambda kv: -kv[1])
-    return [cid for cid, _ in ranked
-            if catalog.get(cid, {}).get("rarity") != "token"][:top]
+    return [cid for cid, _ in ranked if is_playable(catalog.get(cid))][:top]
 
 
 def build(seed: int, catalog: dict[int, dict], meta_decks: list[dict],
@@ -86,7 +88,7 @@ def build(seed: int, catalog: dict[int, dict], meta_decks: list[dict],
           ) -> Archetype | None:
     """One deck built for `seed`. None when the seed cannot legally headline."""
     limit = lambda c: int(catalog.get(c, {}).get("deck_limit") or 0)
-    if limit(seed) <= 0:
+    if not is_playable(catalog.get(seed)):
         return None
 
     theme = theme_of(seed, catalog)
@@ -98,10 +100,7 @@ def build(seed: int, catalog: dict[int, dict], meta_decks: list[dict],
     total = limit(seed)
 
     ranked = sorted(
-        (c for c in catalog
-         if c != seed and limit(c) > 0
-         and not catalog[c].get("is_retired") and not catalog[c].get("is_vip")
-         and catalog[c].get("rarity") != "token"),
+        (c for c in catalog if c != seed and is_playable(catalog[c])),
         key=lambda c: (-affinity(c, tset, catalog), int(catalog[c].get("cost") or 0)))
 
     room = size - staple_slots
@@ -148,6 +147,30 @@ def build(seed: int, catalog: dict[int, dict], meta_decks: list[dict],
     return Archetype(seed=seed, seed_name=catalog.get(seed, {}).get("name", str(seed)),
                      cards=cards, plan=plan, theme=theme,
                      members=sorted(picks, key=lambda kv: -kv[1]))
+
+
+def recent_seeds(catalog: dict[int, dict], days: int = 7,
+                 now: str | None = None) -> list[int]:
+    """Cards added in the last `days`, newest first.
+
+    Every card carries created_at, so this needs no snapshot diffing -- and
+    new cards are the single best exploration target available. Nobody has
+    built around one that shipped this morning, by definition, so it cannot
+    already be priced into the metagame the way an old unplayed card can be.
+    Around 80 cards arrived in September and the field plays only 2 of the 10
+    newest.
+
+    Deliberately NOT filtered by whether the field already plays the card.
+    "A deck exists that runs one copy" and "anyone has built around it" are
+    different claims, and only the second is what this is looking for.
+    """
+    import datetime
+    today = datetime.date.fromisoformat(now) if now else datetime.date.today()
+    cutoff = (today - datetime.timedelta(days=days)).isoformat()
+    fresh = [(str(c.get("created_at") or ""), cid) for cid, c in catalog.items()
+             if str(c.get("created_at") or "")[:10] >= cutoff
+             and is_playable(c) and (c.get("rules_text") or "").strip()]
+    return [cid for _, cid in sorted(fresh, reverse=True)]
 
 
 def generate(seeds: list[int], catalog: dict[int, dict], meta_decks: list[dict],

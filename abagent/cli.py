@@ -817,7 +817,7 @@ def cmd_explore(args, api: Api) -> int:
     Seeds are taken a slice at a time and the offset advances each run, so a
     cycle stays inside its budget and successive cycles cover the space.
     """
-    from .archetype import generate, name_for
+    from .archetype import generate, name_for, recent_seeds
     from .search import paired_t
     import collections
 
@@ -830,16 +830,30 @@ def cmd_explore(args, api: Api) -> int:
     played = set()
     for d in meta["decks"]:
         played |= set(d["cards"])
+    from .moves import is_playable
     seeds_all = sorted(i for i, c in catalog.items()
-                       if i not in played and not c.get("is_retired")
-                       and not c.get("is_vip") and c.get("rarity") != "token"
-                       and int(c.get("deck_limit") or 0) > 0
+                       if i not in played and is_playable(c)
                        and (c.get("rules_text") or "").strip())
     state = _load_or("explore.json")
+    done = set(state.get("explored") or [])
+
+    # New cards jump the queue. One that shipped this morning has never been
+    # built around by anyone, which is a stronger claim than "unplayed" -- an
+    # old unplayed card may simply have been tried and found wanting.
+    fresh = [c for c in recent_seeds(catalog, args.new_days) if c not in done]
+    if fresh:
+        names = ", ".join(catalog[c]["name"] for c in fresh[:4])
+        print(f"explore: {len(fresh)} card(s) added in the last {args.new_days}d "
+              f"take priority — {names}")
+
+    room = max(0, args.slice - len(fresh))
     off = int(state.get("offset") or 0) % max(1, len(seeds_all))
-    slice_ = seeds_all[off:off + args.slice] or seeds_all[:args.slice]
-    state["offset"] = (off + args.slice) % max(1, len(seeds_all))
-    print(f"explore: seeds {off}..{off+len(slice_)} of {len(seeds_all)}")
+    rotating = seeds_all[off:off + room] or seeds_all[:room]
+    state["offset"] = (off + room) % max(1, len(seeds_all))
+    slice_ = (fresh + [c for c in rotating if c not in fresh])[:args.slice]
+    state["explored"] = sorted(done | set(slice_))
+    print(f"explore: {len(slice_)} seeds ({len(fresh)} new, "
+          f"rotation at {off} of {len(seeds_all)})")
 
     archs, seen = [], set()
     for a in generate(slice_, catalog, meta["decks"]):
@@ -1008,6 +1022,8 @@ def main(argv=None) -> int:
     e.add_argument("--second-deck-id", type=int,
                    default=int(os.environ.get("ABAGENT_SECOND_DECK_ID") or 0) or None)
     e.add_argument("--slice", type=int, default=40)
+    e.add_argument("--new-days", type=int, default=7,
+                   help="treat cards added this recently as priority seeds")
     e.add_argument("--validate-seeds", type=int, default=161)
     e.add_argument("--min-gain", type=float, default=0.4)
     e.add_argument("--min-t", type=float, default=2.0)

@@ -27,14 +27,39 @@ import collections
 import random
 
 
+def is_playable(card: dict | None) -> bool:
+    """Can this card legally go in a deck we build?
+
+    One predicate rather than a filter repeated at each call site, because the
+    catalogue is 38% retired (332 of 865) and a missed check is silent: the
+    engine happily simulates a retired card, so an archetype built around one
+    measures fine offline and is then corrected or rejected live.
+
+    The field-mined paths need this as much as the catalogue-mined ones. No
+    retired card is in a live deck today, but that is a fact about today --
+    retire a card while decks still run it and every "what does the field
+    play" query starts recommending it.
+    """
+    if not card:
+        return False
+    if card.get("is_retired") or card.get("is_vip"):
+        return False
+    if card.get("rarity") == "token":
+        return False
+    return int(card.get("deck_limit") or 0) > 0
+
+
 # --- reading the field ---------------------------------------------------
 
-def field_signal(meta_decks: list[dict], top_n: int = 15, min_decks: int = 4
+def field_signal(meta_decks: list[dict], top_n: int = 15, min_decks: int = 4,
+                 catalog: dict[int, dict] | None = None
                  ) -> tuple[collections.Counter, collections.Counter]:
     """(how many top decks run each card, total copies across those decks)."""
     present, copies = collections.Counter(), collections.Counter()
     for d in meta_decks[:top_n]:
         for cid, n in collections.Counter(d["cards"]).items():
+            if catalog is not None and not is_playable(catalog.get(cid)):
+                continue
             present[cid] += 1
             copies[cid] += n
     for cid in [c for c, n in present.items() if n < min_decks]:
@@ -206,7 +231,7 @@ def counter_candidates(mine: collections.Counter, focus_decks: list[list[int]],
             present[cid] += 1
     out = []
     for cid, seen in present.most_common():
-        if cid in mine or cid not in catalog:
+        if cid in mine or not is_playable(catalog.get(cid)):
             continue
         out.append((cid, max(1, round(counts[cid] / seen))))
     return out
