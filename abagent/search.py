@@ -64,7 +64,7 @@ def climb(harness: Harness, cards: list[int], opponents: list[Opponent],
           start_plan: dict | None = None, card_info: dict[int, dict] | None = None,
           sweep_seeds: int = 5,
           confirm_seeds: int = 21, max_sweeps: int = 6, min_t: float = 2.0,
-          confirm_top: int = 3,
+          confirm_top: int = 3, validate_seeds: int = 41,
           rng: random.Random | None = None, deadline: float | None = None,
           log=print) -> tuple[dict, Score, list[Step]]:
     rng = rng or random.Random(20260922)
@@ -130,13 +130,29 @@ def climb(harness: Harness, cards: list[int], opponents: list[Opponent],
                     f"< {min_t}) -- rejected as noise")
                 continue
 
+            # Taking the best of several on the confirmation block makes that
+            # block selection data. One final pre-specified test of the single
+            # survivor, on seeds nothing was chosen on, is what makes the
+            # accepted number mean what it says.
+            vblock = _seed_block(rng, validate_seeds)
+            vchk = harness.evaluate(
+                [("keep", cards, plan), ("try", cards, best_trial)], opponents, vblock)
+            best_gain, best_t = paired_t(vchk["try"], vchk["keep"])
+            if not (best_gain > 0 and best_t >= min_t):
+                history.append(Step(field, plan.get(field), best_trial[field],
+                                    best_gain, best_t, False))
+                log(f"sweep{sweep} {field}: {best_trial[field]!r} confirmed but "
+                    f"failed validation ({best_gain:+.1f}W t={best_t:.1f}) "
+                    f"-- rejected")
+                continue
+
             history.append(Step(field, plan.get(field), best_trial[field],
                                 best_gain, best_t, True))
             log(f"sweep{sweep} {field}: {plan.get(field)!r} -> {best_trial[field]!r}"
                 f"  {best_gain:+.1f}W  t={best_t:.1f}  CONFIRMED"
                 f"  (of {len(trials)} confirmed)")
             plan = best_trial
-            incumbent = chk[f"try{trials.index(best_trial)}"]
+            incumbent = vchk["try"]
             changed = True
 
         if not changed:
@@ -151,14 +167,20 @@ def climb(harness: Harness, cards: list[int], opponents: list[Opponent],
 def sweep_and_confirm(harness: Harness, base_cards: list[int], base_plan: dict,
                       cands: list[tuple[list[int], dict]], opponents: list[Opponent],
                       rng: random.Random, sweep_seeds: int, confirm_seeds: int,
-                      min_t: float, confirm_top: int
+                      min_t: float, confirm_top: int, validate_seeds: int = 41
                       ) -> tuple[list[int], dict, float, float] | None:
-    """Rank candidates cheaply, then confirm the best few properly.
+    """Select cheaply, narrow, then VALIDATE the single survivor.
 
-    Same discipline as the scalar search -- shared seeds within a round, a
-    fresh block for the confirmation, a paired t-test to accept -- but over
-    candidates that may differ in their card list as well as their plan. The
-    harness already scores per-candidate card lists, so nothing there changes.
+    Three stages, and the third is not optional. Selecting the best of ~16
+    sweep candidates and then taking the best of three on the confirmation
+    block makes that block selection data too -- the winner's curse, one level
+    up from where it was first fixed. Measured: a Void Flower swap that
+    "confirmed" at +3.8W t=2.6 was worth +1.48W over 124 fresh seeds, and
+    individual blocks of it ranged from -0.6W (t=-0.30) to +3.3W (t=2.47).
+
+    So the chosen move faces one final pre-specified comparison, on seeds
+    nothing has been selected on, with no max taken over anything. That test
+    is unbiased because there is only one of it.
     """
     if not cands:
         return None
@@ -185,7 +207,18 @@ def sweep_and_confirm(harness: Harness, base_cards: list[int], base_plan: dict,
         gain, t = paired_t(chk[f"try{i}"], chk["keep"])
         if gain > 0 and t >= min_t and (best is None or gain > best[2]):
             best = (c, p, gain, t)
-    return best
+    if best is None:
+        return None
+
+    # Stage three: one pre-specified test of the survivor, on unseen seeds.
+    cards, plan = best[0], best[1]
+    block = _seed_block(rng, validate_seeds)
+    final = harness.evaluate(
+        [("keep", base_cards, base_plan), ("try", cards, plan)], opponents, block)
+    gain, t = paired_t(final["try"], final["keep"])
+    if gain > 0 and t >= min_t:
+        return (cards, plan, gain, t)
+    return None
 
 
 def optimise(harness: Harness, cards: list[int], opponents: list[Opponent],
