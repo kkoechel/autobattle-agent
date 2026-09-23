@@ -14,6 +14,11 @@ SSH=(ssh -i "$KEY" -o IdentitiesOnly=yes -o ConnectTimeout=15 "root@$HOST")
 [ -n "${AB_API_KEY:-}" ] || { echo "AB_API_KEY must be set" >&2; exit 1; }
 [ -n "${ABAGENT_DECK_ID:-}" ] || { echo "ABAGENT_DECK_ID must be set (the deck the agent owns; make one with 'clone')" >&2; exit 1; }
 
+# A NameError is valid syntax, so py_compile and ast.parse both pass it. This
+# is the gate that would have stopped a broken cmd_cycle reaching the timer.
+echo "==> checking for unbound names"
+python3 tools/check_names.py || { echo "refusing to deploy" >&2; exit 1; }
+
 echo "==> preparing $HOST:$DEST"
 "${SSH[@]}" bash -s <<'REMOTE'
 set -euo pipefail

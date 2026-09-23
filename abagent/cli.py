@@ -209,6 +209,7 @@ def cmd_cycle(args, api: Api) -> int:
     """
     t0 = time.time()
     cmd_fetch(args, api)
+    h, deck, mine, opps, info = _setup(args, api)
     start = dict(deck.get("battle_plan") or {})
 
     # Budget against the cohort we are actually trying to enter, not a fixed
