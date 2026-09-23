@@ -130,6 +130,7 @@ def cmd_climb(args, api: Api) -> int:
                               sweep_seeds=args.sweep_seeds,
                               confirm_seeds=args.confirm_seeds,
                               max_sweeps=args.sweeps, min_t=args.min_t,
+                              confirm_top=args.confirm_top,
                               rng=random.Random(args.rng))
     print(f"\n{sum(1 for s in hist if s.confirmed)} confirmed of {len(hist)} "
           f"challengers, {time.time() - t:.0f}s")
@@ -183,6 +184,7 @@ def cmd_cycle(args, api: Api) -> int:
                               sweep_seeds=args.sweep_seeds,
                               confirm_seeds=args.confirm_seeds,
                               max_sweeps=args.sweeps, min_t=args.min_t,
+                              confirm_top=args.confirm_top,
                               rng=random.Random(int(t0)),
                               deadline=deadline)
 
@@ -231,6 +233,8 @@ def main(argv=None) -> int:
     c.add_argument("--rng", type=int, default=20260922)
     c.add_argument("--min-t", type=float, default=2.0,
                    help="standard errors a confirmed gain must clear")
+    c.add_argument("--confirm-top", type=int, default=3,
+                   help="how many sweep leaders get a confirmation round")
     c.add_argument("--seed-card-order", action="store_true",
                    help="start card_order from the deck's own copy counts")
     c.add_argument("--apply", action="store_true")
@@ -249,6 +253,7 @@ def main(argv=None) -> int:
     y.add_argument("--confirm-seeds", type=int, default=21)
     y.add_argument("--sweeps", type=int, default=4)
     y.add_argument("--min-t", type=float, default=2.0)
+    y.add_argument("--confirm-top", type=int, default=3)
     y.set_defaults(fn=cmd_cycle)
 
     r = sub.add_parser("results")

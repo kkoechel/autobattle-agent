@@ -64,6 +64,7 @@ def climb(harness: Harness, cards: list[int], opponents: list[Opponent],
           start_plan: dict | None = None, card_info: dict[int, dict] | None = None,
           sweep_seeds: int = 5,
           confirm_seeds: int = 21, max_sweeps: int = 6, min_t: float = 2.0,
+          confirm_top: int = 3,
           rng: random.Random | None = None, deadline: float | None = None,
           log=print) -> tuple[dict, Score, list[Step]]:
     rng = rng or random.Random(20260922)
@@ -97,28 +98,46 @@ def climb(harness: Harness, cards: list[int], opponents: list[Opponent],
             scored = harness.evaluate(batch, opponents, sweep_block)
 
             base = scored.pop("__incumbent__")
-            best_label, best = max(scored.items(), key=lambda kv: kv[1].key)
-            if best.key <= base.key:
+            ahead = [(lbl, sc) for lbl, sc in scored.items() if sc.key > base.key]
+            if not ahead:
                 continue
 
-            # Confirmation on seeds neither side has seen.
-            trial = cand[int(best_label.rsplit("#", 1)[1])]
+            # Confirm the top few, not just the leader. A 5-seed sweep ranks
+            # ~10 values with a ~6-win SD each, so which one comes first is
+            # substantially luck: observed live, the same field on the same
+            # deck yielded energy_hold 5 -> 0 (+2.5W, t=2.4) on one run and
+            # nothing on another, purely because 3 and 4 happened to lead the
+            # sweep there and 0 never got a confirmation round.
+            ahead.sort(key=lambda kv: kv[1].key, reverse=True)
             block = _seed_block(rng, confirm_seeds)
-            chk = harness.evaluate(
-                [("keep", cards, plan), ("try", cards, trial)], opponents, block)
-            gain, t = paired_t(chk["try"], chk["keep"])
-            ok = gain > 0 and t >= min_t
-            history.append(Step(field, plan.get(field), trial[field], gain, t, ok))
+            trials = [cand[int(lbl.rsplit("#", 1)[1])] for lbl, _ in ahead[:confirm_top]]
+            batch = [("keep", cards, plan)]
+            batch += [(f"try{i}", cards, tp) for i, tp in enumerate(trials)]
+            chk = harness.evaluate(batch, opponents, block)
 
-            if ok:
-                log(f"sweep{sweep} {field}: {plan.get(field)!r} -> {trial[field]!r}"
-                    f"  {gain:+.1f}W  t={t:.1f}  CONFIRMED")
-                plan = trial
-                incumbent = chk["try"]
-                changed = True
-            else:
-                log(f"sweep{sweep} {field}: {trial[field]!r} led the sweep but "
-                    f"{gain:+.1f}W t={t:.1f} < {min_t} -- rejected as noise")
+            best_trial, best_gain, best_t = None, 0.0, 0.0
+            for i, tp in enumerate(trials):
+                gain, t = paired_t(chk[f"try{i}"], chk["keep"])
+                if gain > 0 and t >= min_t and gain > best_gain:
+                    best_trial, best_gain, best_t = tp, gain, t
+
+            if best_trial is None:
+                lead = trials[0]
+                gain, t = paired_t(chk["try0"], chk["keep"])
+                history.append(Step(field, plan.get(field), lead[field], gain, t, False))
+                log(f"sweep{sweep} {field}: {len(trials)} candidate(s) led the "
+                    f"sweep, none confirmed (best {gain:+.1f}W t={t:.1f} "
+                    f"< {min_t}) -- rejected as noise")
+                continue
+
+            history.append(Step(field, plan.get(field), best_trial[field],
+                                best_gain, best_t, True))
+            log(f"sweep{sweep} {field}: {plan.get(field)!r} -> {best_trial[field]!r}"
+                f"  {best_gain:+.1f}W  t={best_t:.1f}  CONFIRMED"
+                f"  (of {len(trials)} confirmed)")
+            plan = best_trial
+            incumbent = chk[f"try{trials.index(best_trial)}"]
+            changed = True
 
         if not changed:
             log(f"sweep{sweep}: no confirmed improvement, stopping")
