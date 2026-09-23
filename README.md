@@ -106,7 +106,26 @@ unbounded process is an OOM rather than a slowdown.
 
 Shipped: the harness, the plan search, the cycle, the deployment.
 
-Next: the LLM proposer. The card list is untouched so far — everything above
-tunes standing instructions only, which was deliberate, to find out how much
-of the gap is plan and how much is cards before spending a token on card
-design.
+First full result, on a real Standard deck, **changing no cards at all**:
+
+```
+start  cheapest / hold 5 / random targets      25.4W 25.4L 18.2D   ~rank 25
+final  card_order[40] / least_armor targets    41.2W 14.9L 13.0D   ~rank 17
+```
+
+Two confirmed changes out of eight challengers, and the last sweep confirmed
+nothing — so the *scalar* plan fields are close to spent. Of the two, one is
+nearly all of it: giving the engine an explicit `card_order` instead of
+`cheapest` is worth +17.4 wins on its own.
+
+Two levers remain, in order:
+
+1. **`card_order` as a permutation.** It is currently seeded from the deck's
+   own copy counts and never searched. It is a 40-element ordering and the
+   single highest-leverage field in the game — the heuristic seed alone bought
+   +17.4 wins, and nothing has asked whether it is a *good* ordering.
+2. **The card list**, still completely untouched.
+
+Both are where the LLM proposer goes, and (1) is the better first target: it
+is a pure ranking problem over cards whose rules text the model can read, with
+a fitness function that answers in one second.
