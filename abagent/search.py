@@ -146,3 +146,134 @@ def climb(harness: Harness, cards: list[int], opponents: list[Opponent],
     log(f"final  {describe(plan)}")
     log(f"       {incumbent}")
     return plan, incumbent, history
+
+
+def sweep_and_confirm(harness: Harness, base_cards: list[int], base_plan: dict,
+                      cands: list[tuple[list[int], dict]], opponents: list[Opponent],
+                      rng: random.Random, sweep_seeds: int, confirm_seeds: int,
+                      min_t: float, confirm_top: int
+                      ) -> tuple[list[int], dict, float, float] | None:
+    """Rank candidates cheaply, then confirm the best few properly.
+
+    Same discipline as the scalar search -- shared seeds within a round, a
+    fresh block for the confirmation, a paired t-test to accept -- but over
+    candidates that may differ in their card list as well as their plan. The
+    harness already scores per-candidate card lists, so nothing there changes.
+    """
+    if not cands:
+        return None
+
+    block = _seed_block(rng, sweep_seeds)
+    batch = [("__base__", base_cards, base_plan)]
+    batch += [(f"c{i}", c, p) for i, (c, p) in enumerate(cands)]
+    scored = harness.evaluate(batch, opponents, block)
+    base = scored.pop("__base__")
+
+    ahead = [(lbl, sc) for lbl, sc in scored.items() if sc.key > base.key]
+    if not ahead:
+        return None
+    ahead.sort(key=lambda kv: kv[1].key, reverse=True)
+    picks = [cands[int(lbl[1:])] for lbl, _ in ahead[:confirm_top]]
+
+    block = _seed_block(rng, confirm_seeds)
+    batch = [("keep", base_cards, base_plan)]
+    batch += [(f"try{i}", c, p) for i, (c, p) in enumerate(picks)]
+    chk = harness.evaluate(batch, opponents, block)
+
+    best = None
+    for i, (c, p) in enumerate(picks):
+        gain, t = paired_t(chk[f"try{i}"], chk["keep"])
+        if gain > 0 and t >= min_t and (best is None or gain > best[2]):
+            best = (c, p, gain, t)
+    return best
+
+
+def optimise(harness: Harness, cards: list[int], opponents: list[Opponent],
+             meta_decks: list[dict], catalog: dict[int, dict],
+             plan: dict | None = None, card_info: dict[int, dict] | None = None,
+             sweep_seeds: int = 5, confirm_seeds: int = 21, min_t: float = 2.0,
+             confirm_top: int = 3, rounds: int = 4, order_samples: int = 12,
+             swap_samples: int = 16, rng: random.Random | None = None,
+             deadline: float | None = None, log=print
+             ) -> tuple[list[int], dict, list[str]]:
+    """Plan, play order and card list, alternating -- because they interact.
+
+    Order first within each round: a swap inherits the card_order slot of the
+    card it replaces, so a better-ordered deck gives every subsequent swap a
+    more meaningful slot to inherit.
+    """
+    from .moves import (add_candidates, as_counter, cut_candidates,
+                        field_signal, order_moves, swap, swap_ranks)
+
+    rng = rng or random.Random()
+    plan = dict(plan or {})
+    changes: list[str] = []
+    present, copies = field_signal(meta_decks)
+    nm = lambda c: (catalog.get(c, {}).get("name") or f"#{c}")
+
+    for rnd in range(1, rounds + 1):
+        moved = False
+
+        if deadline and time.time() > deadline:
+            log(f"round{rnd}: deadline reached, stopping")
+            break
+
+        # --- play order -------------------------------------------------
+        cands = [(cards, p) for p in order_moves(plan, rng, order_samples)]
+        got = sweep_and_confirm(harness, cards, plan, cands, opponents, rng,
+                                sweep_seeds, confirm_seeds, min_t, confirm_top)
+        if got:
+            _, plan, gain, t = got
+            head = ", ".join(nm(c) for c in (plan.get("card_order") or [])[:3])
+            log(f"round{rnd} order: {gain:+.1f}W t={t:.1f} CONFIRMED "
+                f"(now leads with {head})")
+            changes.append(f"order {gain:+.1f}W")
+            moved = True
+
+        if deadline and time.time() > deadline:
+            log(f"round{rnd}: deadline reached after order, stopping")
+            break
+
+        # --- card swaps, proposed by the field ---------------------------
+        mine = as_counter(cards)
+        adds = add_candidates(mine, present, copies)
+        cuts = cut_candidates(mine, present, plan)
+        # Each (cut, add) pair is tried at several card_order ranks, because
+        # where the new card sits decides whether it is ever cast -- inheriting
+        # the cut card's slot buries it at the back by construction.
+        ranks = swap_ranks(len(plan.get("card_order") or []))
+        cands, seen = [], []
+        for add, typical in adds:
+            limit = int(catalog.get(add, {}).get("deck_limit") or 1)
+            for cut in cuts[:4]:
+                qty = min(typical, limit, mine.get(cut, 0))
+                if qty <= 0:
+                    continue
+                for rank in ranks:
+                    out = swap(cards, plan, cut, add, qty, limit, rank=rank)
+                    if out:
+                        cands.append(out)
+                        seen.append((cut, add, qty, rank))
+                if len(cands) >= swap_samples:
+                    break
+            if len(cands) >= swap_samples:
+                break
+
+        got = sweep_and_confirm(harness, cards, plan, cands, opponents, rng,
+                               sweep_seeds, confirm_seeds, min_t, confirm_top)
+        if got:
+            new_cards, new_plan, gain, t = got
+            idx = next(i for i, (c, p) in enumerate(cands)
+                       if c == new_cards and p == new_plan)
+            cut, add, qty, rank = seen[idx]
+            log(f"round{rnd} swap: -{qty} {nm(cut)} +{qty} {nm(add)} "
+                f"@order[{rank}]  {gain:+.1f}W t={t:.1f} CONFIRMED")
+            changes.append(f"-{qty} {nm(cut)} +{qty} {nm(add)} {gain:+.1f}W")
+            cards, plan = new_cards, new_plan
+            moved = True
+
+        if not moved:
+            log(f"round{rnd}: nothing confirmed, stopping")
+            break
+
+    return cards, plan, changes
