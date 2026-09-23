@@ -571,6 +571,7 @@ def cmd_cycle(args, api: Api) -> int:
                                   confirm_seeds=args.confirm_seeds,
                                   min_t=args.min_t, confirm_top=args.confirm_top,
                                   validate_seeds=args.validate_seeds,
+                                  min_gain=args.min_gain,
                                   rounds=args.rounds, rng=rng, deadline=deadline)
     confirmed = list(swaps)
 
@@ -582,6 +583,7 @@ def cmd_cycle(args, api: Api) -> int:
                               max_sweeps=args.sweeps, min_t=args.min_t,
                               confirm_top=args.confirm_top,
                               validate_seeds=args.validate_seeds,
+                              min_gain=args.min_gain,
                               rng=rng, deadline=deadline)
     confirmed += [f"{s.field}={s.after!r} {s.gain:+.1f}W" for s in hist if s.confirmed]
 
@@ -593,7 +595,8 @@ def cmd_cycle(args, api: Api) -> int:
         # dilution. The counter round screens against those decks alone.
         got = counter_round(h, cards, plan, opps, catalog, rng,
                             validate_seeds=args.validate_seeds,
-                            min_t=args.min_t, focus_k=args.focus)
+                            min_t=args.min_t, min_gain=args.min_gain,
+                            focus_k=args.focus)
         if got:
             cards, plan, gain, t = got
             counts2: dict[int, int] = {}
@@ -702,6 +705,8 @@ def main(argv=None) -> int:
     c.add_argument("--confirm-seeds", type=int, default=21)
     c.add_argument("--sweeps", type=int, default=6)
     c.add_argument("--rng", type=int, default=20260922)
+    c.add_argument("--min-gain", type=float, default=0.4,
+                   help="wins a change must be worth to be applied at all")
     c.add_argument("--min-t", type=float, default=2.0,
                    help="standard errors a confirmed gain must clear")
     c.add_argument("--confirm-top", type=int, default=3,
@@ -740,6 +745,8 @@ def main(argv=None) -> int:
     y.add_argument("--sweep-seeds", type=int, default=21)
     y.add_argument("--confirm-seeds", type=int, default=21)
     y.add_argument("--sweeps", type=int, default=4)
+    y.add_argument("--min-gain", type=float, default=0.4,
+                   help="wins a change must be worth to be applied at all")
     y.add_argument("--min-t", type=float, default=2.0)
     y.add_argument("--confirm-top", type=int, default=3)
     y.add_argument("--validate-seeds", type=int, default=161,

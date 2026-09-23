@@ -56,6 +56,26 @@ def paired_t(a: Score, b: Score) -> tuple[float, float]:
     return (mean, mean / (sd / len(diffs) ** 0.5))
 
 
+# Statistical significance is not the same as being worth doing. With 161
+# seeds the harness resolves a 0.1-win difference, but a single cohort has a
+# ~2.2-win SD, so a 0.1-win change is a twentieth of the noise in the only
+# outcome that matters -- it cannot move placement, and accepting it just
+# rewrites the deck for nothing.
+#
+# Measured over 131 validation tests on the adopted list, the distribution of
+# gains was symmetric about zero (+0.0 x59, -0.0 x24, +0.1 x20, -0.1 x10),
+# which is what a search finds when there is nothing left to find. At t>=2.0
+# one-sided, chance alone predicts ~3 false accepts in that many tests, and 8
+# changes were accepted -- including discard_priority walking cheapest ->
+# costliest -> lowest_priority, banking +0.1W per step.
+MIN_GAIN = 0.4
+
+
+def accept(gain: float, t: float, min_t: float, min_gain: float = MIN_GAIN) -> bool:
+    """Both gates: big enough to matter, and clear enough to believe."""
+    return gain >= min_gain and t >= min_t
+
+
 def _seed_block(rng: random.Random, n: int) -> list[int]:
     return [rng.randrange(1, 2_000_000_000) for _ in range(n)]
 
@@ -65,7 +85,7 @@ def climb(harness: Harness, cards: list[int], opponents: list[Opponent],
           sweep_seeds: int = 21,
           confirm_seeds: int = 21, max_sweeps: int = 6, min_t: float = 2.0,
           confirm_top: int = 3, validate_seeds: int = 161,
-          rng: random.Random | None = None, deadline: float | None = None,
+          min_gain: float = MIN_GAIN, rng: random.Random | None = None, deadline: float | None = None,
           log=print) -> tuple[dict, Score | None, list[Step]]:
     rng = rng or random.Random(20260922)
     plan = dict(start_plan or {})
@@ -121,7 +141,7 @@ def climb(harness: Harness, cards: list[int], opponents: list[Opponent],
             vchk = harness.evaluate(
                 [("keep", cards, plan), ("try", cards, best_trial)], opponents, vblock)
             best_gain, best_t = paired_t(vchk["try"], vchk["keep"])
-            if not (best_gain > 0 and best_t >= min_t):
+            if not accept(best_gain, best_t, min_t, min_gain):
                 history.append(Step(field, plan.get(field), best_trial[field],
                                     best_gain, best_t, False))
                 log(f"sweep{sweep} {field}: {best_trial[field]!r} led the screen, "
@@ -150,7 +170,8 @@ def climb(harness: Harness, cards: list[int], opponents: list[Opponent],
 def sweep_and_confirm(harness: Harness, base_cards: list[int], base_plan: dict,
                       cands: list[tuple[list[int], dict]], opponents: list[Opponent],
                       rng: random.Random, sweep_seeds: int, confirm_seeds: int,
-                      min_t: float, confirm_top: int, validate_seeds: int = 161
+                      min_t: float, confirm_top: int, validate_seeds: int = 161,
+                      min_gain: float = MIN_GAIN
                       ) -> tuple[list[int], dict, float, float] | None:
     """Select cheaply, narrow, then VALIDATE the single survivor.
 
@@ -196,7 +217,7 @@ def sweep_and_confirm(harness: Harness, base_cards: list[int], base_plan: dict,
     final = harness.evaluate(
         [("keep", base_cards, base_plan), ("try", cards, plan)], opponents, block)
     gain, t = paired_t(final["try"], final["keep"])
-    if gain > 0 and t >= min_t:
+    if accept(gain, t, min_t, min_gain):
         return (cards, plan, gain, t)
     return None
 
@@ -206,7 +227,7 @@ def optimise(harness: Harness, cards: list[int], opponents: list[Opponent],
              plan: dict | None = None, card_info: dict[int, dict] | None = None,
              sweep_seeds: int = 21, confirm_seeds: int = 21, min_t: float = 2.0,
              confirm_top: int = 3, validate_seeds: int = 161,
-             rounds: int = 4, order_samples: int = 6,
+             min_gain: float = MIN_GAIN, rounds: int = 4, order_samples: int = 6,
              swap_samples: int = 6, rng: random.Random | None = None,
              deadline: float | None = None, log=print
              ) -> tuple[list[int], dict, list[str]]:
@@ -236,7 +257,7 @@ def optimise(harness: Harness, cards: list[int], opponents: list[Opponent],
         cands = [(cards, p) for p in order_moves(plan, rng, order_samples)]
         got = sweep_and_confirm(harness, cards, plan, cands, opponents, rng,
                                 sweep_seeds, confirm_seeds, min_t, confirm_top,
-                                validate_seeds)
+                                validate_seeds, min_gain)
         if got:
             _, plan, gain, t = got
             head = ", ".join(nm(c) for c in (plan.get("card_order") or [])[:3])
@@ -276,7 +297,7 @@ def optimise(harness: Harness, cards: list[int], opponents: list[Opponent],
 
         got = sweep_and_confirm(harness, cards, plan, cands, opponents, rng,
                                sweep_seeds, confirm_seeds, min_t, confirm_top,
-                               validate_seeds)
+                               validate_seeds, min_gain)
         if got:
             new_cards, new_plan, gain, t = got
             idx = next(i for i, (c, p) in enumerate(cands)
@@ -300,7 +321,8 @@ def counter_round(harness: Harness, cards: list[int], plan: dict,
                   rng: random.Random, screen_seeds: int = 41,
                   validate_seeds: int = 161, min_t: float = 2.0,
                   focus_k: int = 6, samples: int = 10,
-                  min_focus_gain: float = 0.5, log=print
+                  min_focus_gain: float = 0.5, min_gain: float = MIN_GAIN,
+                  log=print
                   ) -> tuple[list[int], dict, float, float] | None:
     """Target the few matchups that still cost us, screened against them alone.
 
@@ -390,7 +412,7 @@ def counter_round(harness: Harness, cards: list[int], plan: dict,
     chk = harness.evaluate([("keep", cards, plan), ("try", new_cards, new_plan)],
                            opponents, vblock)
     gain, t = paired_t(chk["try"], chk["keep"])
-    if gain > 0 and t >= min_t:
+    if accept(gain, t, min_t, min_gain):
         return (new_cards, new_plan, gain, t)
     log(f"counter: rejected -- {gain:+.1f}W t={t:.1f} across the full field")
     return None
