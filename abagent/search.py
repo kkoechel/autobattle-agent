@@ -299,7 +299,8 @@ def counter_round(harness: Harness, cards: list[int], plan: dict,
                   opponents: list[Opponent], catalog: dict[int, dict],
                   rng: random.Random, screen_seeds: int = 41,
                   validate_seeds: int = 161, min_t: float = 2.0,
-                  focus_k: int = 6, samples: int = 10, log=print
+                  focus_k: int = 6, samples: int = 10,
+                  min_focus_gain: float = 0.5, log=print
                   ) -> tuple[list[int], dict, float, float] | None:
     """Target the few matchups that still cost us, screened against them alone.
 
@@ -370,6 +371,16 @@ def counter_round(harness: Harness, cards: list[int], plan: dict,
     new_cards, new_plan = cands[idx]
     cut, add, qty = seen[idx]
     fgain = ahead[0][1].wins - base.wins
+
+    # The screen ranks on (wins, -losses), so a candidate can lead having
+    # gained no wins at all -- only the loss tiebreak, which over six
+    # opponents is noise. The point of screening against the focus set is
+    # that a real fix looks BIG there; promoting a flat one just spends
+    # ~145s of full-field validation to reject it.
+    if fgain < min_focus_gain:
+        log(f"counter: best candidate gains only {fgain:+.1f} vs the focus "
+            f"set (<{min_focus_gain}) -- not worth validating")
+        return None
     nm = lambda c: (catalog.get(c, {}).get("name") or f"#{c}")
     log(f"counter: -{qty} {nm(cut)} +{qty} {nm(add)} gains {fgain:+.1f} "
         f"vs the focus set; checking the whole field")

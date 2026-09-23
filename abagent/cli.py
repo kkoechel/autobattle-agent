@@ -282,6 +282,48 @@ def cmd_adopt(args, api: Api) -> int:
     return 0
 
 
+CKPT_PREFIX = "abagent ckpt"
+
+
+def checkpoint(api: Api, cards: list[int], plan: dict, label: str,
+               keep: int = 4, log=print) -> int | None:
+    """Save the current list as its own deck before something changes it.
+
+    Every gain here is measured offline against a snapshot of the field, and
+    the live cohort is the thing that actually decides. A re-base or an
+    accepted swap can therefore look right and still be worse in play, and
+    without a copy the previous list is simply gone -- PUT /decks/{id}
+    overwrites in place and keeps no history.
+
+    Slots are finite (17 by default, from user_deck_limit), so the oldest
+    checkpoints are pruned rather than accumulated. Only decks this agent
+    named are ever deleted.
+    """
+    try:
+        counts: dict[int, int] = {}
+        for cid in cards:
+            counts[cid] = counts.get(cid, 0) + 1
+        made = api.create_deck(f"{CKPT_PREFIX} {label}"[:80])
+        did = int(made["deck"]["id"] if "deck" in made else made["id"])
+        api.update_deck(did, cards=[{"card_id": c, "quantity": q}
+                                    for c, q in sorted(counts.items())],
+                        battle_plan=plan)
+        log(f"checkpoint: saved deck {did} '{CKPT_PREFIX} {label}'")
+    except ApiError as e:
+        log(f"checkpoint: could not save ({e}) — continuing unsaved")
+        return None
+
+    try:
+        mine = [d for d in api.decks() if str(d.get("name", "")).startswith(CKPT_PREFIX)]
+        mine.sort(key=lambda d: d.get("updated_at") or "", reverse=True)
+        for old in mine[keep:]:
+            api.delete_deck(int(old["id"]))
+            log(f"checkpoint: pruned {old['id']} '{old['name']}'")
+    except ApiError as e:
+        log(f"checkpoint: prune skipped ({e})")
+    return did
+
+
 def register_when_targetable(api: Api, arena: str, deck_id: int,
                              wait_limit: int = 240, poll: int = 5) -> bool:
     """Register only while `arena` is the cohort register() will actually hit.
@@ -454,6 +496,8 @@ def cmd_cycle(args, api: Api) -> int:
                                [t0_seed + i for i in range(args.rebase_seeds)]) if store else None
             if cand and cand[1] >= args.rebase_min:
                 d, gain = cand
+                checkpoint(api, cards, plan,
+                           f"{time.strftime('%m-%d %H:%M')} pre-rebase")
                 counts: dict[int, int] = {}
                 for cid in d["cards"]:
                     counts[cid] = counts.get(cid, 0) + 1

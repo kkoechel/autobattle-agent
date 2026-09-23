@@ -152,6 +152,9 @@ class Api:
             body["battle_plan"] = battle_plan
         return self._call("PUT", f"/decks/{deck_id}", body=body)
 
+    def delete_deck(self, deck_id: int) -> dict:
+        return self._call("DELETE", f"/decks/{deck_id}")
+
     def register(self, deck_id: int, arena: str | None = None) -> dict:
         """Register a deck, optionally naming the arena.
 
