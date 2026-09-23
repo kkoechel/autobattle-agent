@@ -118,14 +118,45 @@ nothing — so the *scalar* plan fields are close to spent. Of the two, one is
 nearly all of it: giving the engine an explicit `card_order` instead of
 `cheapest` is worth +17.4 wins on its own.
 
+### Since then
+
+`cycle` also searches the **play order and the card list together**, with
+candidates proposed by the arena's own finalized cohort — 70 real decks with
+full lists and the rank each finished at. Cards in ≥4 of the top 15 that we
+do not run are add candidates; our cards no top deck runs are cut candidates.
+
+That is hypothesis generation, not inference. Mean finishing rank per card is
+badly confounded: most standouts are `deck_limit: 1` legendaries, so the decks
+running them are also the better-resourced accounts. Every proposal still has
+to clear the same paired t-test in our own deck.
+
+**Acceptance is three stages, and the third is not optional.** Sweep (select
+from ~16), confirm (narrow to 3 on a fresh block), then validate the single
+survivor on seeds nothing was selected on, with no max taken over anything.
+Skipping that third stage let a swap "confirm" at +3.8W, t=2.6 that was
+actually worth +1.48W over 124 fresh seeds. Taking the best of several on the
+confirmation block makes that block selection data — the winner's curse, one
+level up from where it was first fixed.
+
+`validate_seeds` is **161**, from measurement rather than taste. On that same
++1.48W swap: 21 seeds → t=0.86; 41 seeds → −0.88W at t=−0.54, *the wrong
+sign*; 81 → +2.22W; 161 → +1.54W at t=2.45. A validation stage that cannot
+resolve the effects reaching it rejects everything, which looks like rigour
+and is really a broken instrument. It costs ~125s, so budget about two
+accepted moves per cycle.
+
 Two levers remain, in order:
 
-1. **`card_order` as a permutation.** It is currently seeded from the deck's
-   own copy counts and never searched. It is a 40-element ordering and the
-   single highest-leverage field in the game — the heuristic seed alone bought
-   +17.4 wins, and nothing has asked whether it is a *good* ordering.
-2. **The card list**, still completely untouched.
+1. **An LLM proposer.** The field mining does more of this job than expected —
+   it cuts the candidate space from 524 cards to ~16 grounded proposals. What
+   it cannot do is suggest a swap nobody in the field has tried, which is the
+   narrower job left: read `rules_text` and the per-opponent record and
+   propose what the standings do not already demonstrate.
+2. **Multi-card moves.** Every swap so far is one card for one card. The
+   distance from ~45W to the 60W at the top of the field is ~10 single swaps,
+   or a smaller number of coordinated ones.
 
-Both are where the LLM proposer goes, and (1) is the better first target: it
-is a pure ranking problem over cards whose rules text the model can read, with
-a fitness function that answers in one second.
+`Score.per_opponent` records the W/L/D against each of the 69 decks
+individually and is still unread. That is the diagnostic worth feeding a
+proposer — not "we win 60%" but "we go 0-5 against these three decks, and
+here is what they play".
