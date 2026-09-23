@@ -179,6 +179,26 @@ def cmd_climb(args, api: Api) -> int:
     return 0
 
 
+def best_rebase(h, mine, plan, meta, opps, seeds, top_n=5):
+    """The field deck that most beats ours on shared seeds, or None.
+
+    Each candidate is scored against a field with itself removed, so it is
+    never credited for beating a copy of itself -- which would flatter any
+    deck the rest of the field is built to answer.
+    """
+    ranked = sorted(meta["decks"], key=lambda d: d["rank"])[:top_n]
+    best = None
+    for d in ranked:
+        field = [o for o in opps if o.deck_id != d.get("deck_id")]
+        res = h.evaluate([("ours", mine, plan),
+                          ("theirs", d["cards"], d.get("battle_plan") or {})],
+                         field, seeds)
+        gain = res["theirs"].wins - res["ours"].wins
+        if res["theirs"].key > res["ours"].key and (best is None or gain > best[1]):
+            best = (d, gain)
+    return best
+
+
 def cmd_adopt(args, api: Api) -> int:
     """Re-base our deck onto a list from the field, measured first.
 
@@ -309,6 +329,7 @@ def cmd_cycle(args, api: Api) -> int:
     ~9 minutes before the next close.
     """
     t0 = time.time()
+    t0_seed = int(t0) % 1_000_000
     cmd_fetch(args, api)
     h, deck, mine, opps, info = _setup(args, api)
     start = dict(deck.get("battle_plan") or {})
@@ -367,6 +388,30 @@ def cmd_cycle(args, api: Api) -> int:
     confirmed += [f"{s.field}={s.after!r} {s.gain:+.1f}W" for s in hist if s.confirmed]
 
     if not confirmed:
+        # Stalled. That is the signal to consider a different basin rather
+        # than idle: incremental swaps cannot cross a valley, and the goal is
+        # rank 1, not a local optimum. Only checked on a stall, because once
+        # we are at the top this costs ~110s to learn nothing.
+        if args.rebase and time.time() < deadline + args.rebase_grace:
+            cand = best_rebase(h, cards, plan, {"decks": meta_decks}, opps,
+                               [t0_seed + i for i in range(args.rebase_seeds)])
+            if cand and cand[1] >= args.rebase_min:
+                d, gain = cand
+                counts: dict[int, int] = {}
+                for cid in d["cards"]:
+                    counts[cid] = counts.get(cid, 0) + 1
+                api.update_deck(args.deck_id,
+                                cards=[{"card_id": c, "quantity": q}
+                                       for c, q in sorted(counts.items())],
+                                battle_plan=d.get("battle_plan") or {})
+                print(f"cycle: search stalled — re-based onto rank {d['rank']} "
+                      f"'{d['deck_name'][:28]}' ({gain:+.1f}W)")
+                register_when_targetable(api, args.arena, args.deck_id,
+                                         wait_limit=args.register_wait)
+                return 0
+            print(f"cycle: search stalled and no field deck beats ours by "
+                  f"{args.rebase_min}W — holding")
+            return 0
         print(f"cycle: no confirmed improvement in {time.time() - t0:.0f}s, "
               f"leaving deck {args.deck_id} as-is")
         return 0
@@ -463,6 +508,14 @@ def main(argv=None) -> int:
                    help="order+swap rounds after the scalar search")
     y.add_argument("--register-wait", type=int, default=240,
                    help="seconds to wait for the arena to reach the front")
+    y.add_argument("--rebase", action="store_true", default=True,
+                   help="on a stall, adopt a field deck that measurably beats ours")
+    y.add_argument("--no-rebase", dest="rebase", action="store_false")
+    y.add_argument("--rebase-seeds", type=int, default=41)
+    y.add_argument("--rebase-min", type=float, default=3.0,
+                   help="wins a field deck must beat ours by to re-base")
+    y.add_argument("--rebase-grace", type=int, default=240,
+                   help="seconds past the search deadline a re-base may still use")
     y.add_argument("--min-budget", type=int, default=150,
                    help="skip the cycle entirely below this many seconds")
     y.add_argument("--margin", type=int, default=45,
