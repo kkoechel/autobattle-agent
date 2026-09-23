@@ -62,7 +62,7 @@ def _seed_block(rng: random.Random, n: int) -> list[int]:
 
 def climb(harness: Harness, cards: list[int], opponents: list[Opponent],
           start_plan: dict | None = None, card_info: dict[int, dict] | None = None,
-          sweep_seeds: int = 5,
+          sweep_seeds: int = 21,
           confirm_seeds: int = 21, max_sweeps: int = 6, min_t: float = 2.0,
           confirm_top: int = 3, validate_seeds: int = 161,
           rng: random.Random | None = None, deadline: float | None = None,
@@ -109,38 +109,14 @@ def climb(harness: Harness, cards: list[int], opponents: list[Opponent],
             if not ahead:
                 continue
 
-            # Confirm the top few, not just the leader. A 5-seed sweep ranks
-            # ~10 values with a ~6-win SD each, so which one comes first is
-            # substantially luck: observed live, the same field on the same
-            # deck yielded energy_hold 5 -> 0 (+2.5W, t=2.4) on one run and
-            # nothing on another, purely because 3 and 4 happened to lead the
-            # sweep there and 0 never got a confirmation round.
+            # Two stages, not three. The screen now runs at enough seeds to
+            # actually rank (5 could not: ~3.4 SE against ~1.5W effects), so
+            # the middle round that re-picked among the top few was choosing
+            # on noise a second time and reintroducing the selection bias it
+            # existed to remove. Screen once, then test the single leader.
             ahead.sort(key=lambda kv: kv[1].key, reverse=True)
-            block = _seed_block(rng, confirm_seeds)
-            trials = [cand[int(lbl.rsplit("#", 1)[1])] for lbl, _ in ahead[:confirm_top]]
-            batch = [("keep", cards, plan)]
-            batch += [(f"try{i}", cards, tp) for i, tp in enumerate(trials)]
-            chk = harness.evaluate(batch, opponents, block)
+            best_trial = cand[int(ahead[0][0].rsplit("#", 1)[1])]
 
-            best_trial, best_gain, best_t = None, 0.0, 0.0
-            for i, tp in enumerate(trials):
-                gain, t = paired_t(chk[f"try{i}"], chk["keep"])
-                if gain > 0 and t >= min_t and gain > best_gain:
-                    best_trial, best_gain, best_t = tp, gain, t
-
-            if best_trial is None:
-                lead = trials[0]
-                gain, t = paired_t(chk["try0"], chk["keep"])
-                history.append(Step(field, plan.get(field), lead[field], gain, t, False))
-                log(f"sweep{sweep} {field}: {len(trials)} candidate(s) led the "
-                    f"sweep, none confirmed (best {gain:+.1f}W t={t:.1f} "
-                    f"< {min_t}) -- rejected as noise")
-                continue
-
-            # Taking the best of several on the confirmation block makes that
-            # block selection data. One final pre-specified test of the single
-            # survivor, on seeds nothing was chosen on, is what makes the
-            # accepted number mean what it says.
             vblock = _seed_block(rng, validate_seeds)
             vchk = harness.evaluate(
                 [("keep", cards, plan), ("try", cards, best_trial)], opponents, vblock)
@@ -148,7 +124,7 @@ def climb(harness: Harness, cards: list[int], opponents: list[Opponent],
             if not (best_gain > 0 and best_t >= min_t):
                 history.append(Step(field, plan.get(field), best_trial[field],
                                     best_gain, best_t, False))
-                log(f"sweep{sweep} {field}: {best_trial[field]!r} confirmed but "
+                log(f"sweep{sweep} {field}: {best_trial[field]!r} led the screen, "
                     f"failed validation ({best_gain:+.1f}W t={best_t:.1f}) "
                     f"-- rejected")
                 continue
@@ -156,8 +132,8 @@ def climb(harness: Harness, cards: list[int], opponents: list[Opponent],
             history.append(Step(field, plan.get(field), best_trial[field],
                                 best_gain, best_t, True))
             log(f"sweep{sweep} {field}: {plan.get(field)!r} -> {best_trial[field]!r}"
-                f"  {best_gain:+.1f}W  t={best_t:.1f}  CONFIRMED"
-                f"  (of {len(trials)} confirmed)")
+                f"  {best_gain:+.1f}W  t={best_t:.1f}  VALIDATED"
+                f"  (led a {len(cand)}-candidate screen)")
             plan = best_trial
             incumbent = vchk["try"]
             changed = True
@@ -192,6 +168,13 @@ def sweep_and_confirm(harness: Harness, base_cards: list[int], base_plan: dict,
     if not cands:
         return None
 
+    # Stage one: screen. This used to run at 5 seeds, which does not work.
+    # The paired SE is ~1.38 wins at 31 seeds, so at 5 it is ~3.44 -- and the
+    # effects actually on offer here are ~1.5 wins, i.e. 0.44 SE. A screen at
+    # that resolution is not ranking candidates, it is shuffling them, and the
+    # expensive validation downstream was being spent on whichever candidate
+    # noise happened to favour. Fewer candidates with enough seeds to separate
+    # them beats more candidates sorted at random, for the same total cost.
     block = _seed_block(rng, sweep_seeds)
     batch = [("__base__", base_cards, base_plan)]
     batch += [(f"c{i}", c, p) for i, (c, p) in enumerate(cands)]
@@ -202,23 +185,13 @@ def sweep_and_confirm(harness: Harness, base_cards: list[int], base_plan: dict,
     if not ahead:
         return None
     ahead.sort(key=lambda kv: kv[1].key, reverse=True)
-    picks = [cands[int(lbl[1:])] for lbl, _ in ahead[:confirm_top]]
+    cards, plan = cands[int(ahead[0][0][1:])]
 
-    block = _seed_block(rng, confirm_seeds)
-    batch = [("keep", base_cards, base_plan)]
-    batch += [(f"try{i}", c, p) for i, (c, p) in enumerate(picks)]
-    chk = harness.evaluate(batch, opponents, block)
-
-    best = None
-    for i, (c, p) in enumerate(picks):
-        gain, t = paired_t(chk[f"try{i}"], chk["keep"])
-        if gain > 0 and t >= min_t and (best is None or gain > best[2]):
-            best = (c, p, gain, t)
-    if best is None:
-        return None
-
-    # Stage three: one pre-specified test of the survivor, on unseen seeds.
-    cards, plan = best[0], best[1]
+    # Stage two: one pre-specified test of that single survivor, on seeds
+    # nothing was selected on. One candidate means no max is taken over
+    # anything, which is what makes the number unbiased. The old middle stage
+    # is gone: with a screen that resolves, it was choosing among candidates
+    # again and reintroducing the selection bias it was meant to remove.
     block = _seed_block(rng, validate_seeds)
     final = harness.evaluate(
         [("keep", base_cards, base_plan), ("try", cards, plan)], opponents, block)
@@ -231,10 +204,10 @@ def sweep_and_confirm(harness: Harness, base_cards: list[int], base_plan: dict,
 def optimise(harness: Harness, cards: list[int], opponents: list[Opponent],
              meta_decks: list[dict], catalog: dict[int, dict],
              plan: dict | None = None, card_info: dict[int, dict] | None = None,
-             sweep_seeds: int = 5, confirm_seeds: int = 21, min_t: float = 2.0,
+             sweep_seeds: int = 21, confirm_seeds: int = 21, min_t: float = 2.0,
              confirm_top: int = 3, validate_seeds: int = 161,
-             rounds: int = 4, order_samples: int = 12,
-             swap_samples: int = 16, rng: random.Random | None = None,
+             rounds: int = 4, order_samples: int = 6,
+             swap_samples: int = 6, rng: random.Random | None = None,
              deadline: float | None = None, log=print
              ) -> tuple[list[int], dict, list[str]]:
     """Plan, play order and card list, alternating -- because they interact.

@@ -369,7 +369,8 @@ def main(argv=None) -> int:
     b.set_defaults(fn=cmd_baseline)
 
     c = sub.add_parser("climb")
-    c.add_argument("--sweep-seeds", type=int, default=5)
+    c.add_argument("--sweep-seeds", type=int, default=21,
+                   help="seeds for the screening pass (5 cannot resolve a 1.5W effect)")
     c.add_argument("--confirm-seeds", type=int, default=21)
     c.add_argument("--sweeps", type=int, default=6)
     c.add_argument("--rng", type=int, default=20260922)
@@ -391,7 +392,7 @@ def main(argv=None) -> int:
     y = sub.add_parser("cycle")
     y.add_argument("--budget", type=int, default=420,
                    help="seconds of search before it must stop (default 420)")
-    y.add_argument("--sweep-seeds", type=int, default=5)
+    y.add_argument("--sweep-seeds", type=int, default=21)
     y.add_argument("--confirm-seeds", type=int, default=21)
     y.add_argument("--sweeps", type=int, default=4)
     y.add_argument("--min-t", type=float, default=2.0)
