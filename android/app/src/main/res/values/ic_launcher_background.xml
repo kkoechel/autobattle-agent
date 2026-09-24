@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Ink, the same value as the Compose palette's background. The adaptive
+         icon's background layer must be flat: the system parallaxes the two
+         layers against each other, and anything with detail here smears. -->
+    <color name="ic_launcher_background">#12131A</color>
+</resources>
