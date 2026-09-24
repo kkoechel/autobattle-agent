@@ -88,7 +88,14 @@ def staples(meta_decks: list[dict], catalog: dict[int, dict], top: int = 10
         for cid in set(d["cards"]):
             seen[cid] = seen.get(cid, 0) + 1
     from .moves import is_playable
-    ranked = sorted(seen.items(), key=lambda kv: -kv[1])
+    # Tie-break on card id, explicitly. Sorting on count alone leaves ties in
+    # dict insertion order, which here comes from iterating set(d["cards"]) --
+    # so which of six cards tied at 21 decks made the cut was decided by
+    # CPython's set iteration order. Staples are added until the deck is full,
+    # so that implementation detail was choosing cards for every generated
+    # deck, and it is not reproducible in another language or guaranteed
+    # across interpreter versions.
+    ranked = sorted(seen.items(), key=lambda kv: (-kv[1], kv[0]))
     return [cid for cid, _ in ranked
             if is_playable(catalog.get(cid))
             and (catalog.get(cid, {}).get("rules_text") or "").strip()][:top]
@@ -110,9 +117,15 @@ def build(seed: int, catalog: dict[int, dict], meta_decks: list[dict],
     picks: list[tuple[int, int]] = [(seed, limit(seed))]
     total = limit(seed)
 
+    # Tie-break on card id, explicitly. Affinity and cost leave genuine ties --
+    # Elvish Poetry and Honorable Knowledge are identical on both for a
+    # bounce/draw/honor theme -- and without a third key the winner is decided
+    # by catalog dict insertion order, which is the order GET /cards happened
+    # to return. cards.json is not sorted by id (it starts 904, 683, 835), so
+    # a generated deck depended on a remote ORDER BY.
     ranked = sorted(
         (c for c in catalog if c != seed and is_playable(catalog[c])),
-        key=lambda c: (-affinity(c, tset, catalog), int(catalog[c].get("cost") or 0)))
+        key=lambda c: (-affinity(c, tset, catalog), int(catalog[c].get("cost") or 0), c))
 
     room = size - staple_slots
     for cid in ranked[:pool]:
