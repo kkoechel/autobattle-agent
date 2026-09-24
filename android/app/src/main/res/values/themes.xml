@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Splash/window background only; the UI itself is themed in Compose so
+         the palette lives in one Kotlin file rather than being split across
+         XML and code. -->
+    <style name="Theme.Agent" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#12131A</item>
+        <item name="android:statusBarColor">#12131A</item>
+    </style>
+</resources>

@@ -1,0 +1,15 @@
+<!-- Placeholder mark: a stylised die/card corner. Adaptive icons mask the
+     outer 18dp of a 108dp canvas, so everything meaningful stays inside the
+     centre 72dp. Replace with real artwork; nothing else references it. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#C8A560"
+        android:pathData="M38,30 h32 a6,6 0 0 1 6,6 v36 a6,6 0 0 1 -6,6 h-32 a6,6 0 0 1 -6,-6 v-36 a6,6 0 0 1 6,-6 z"/>
+    <path android:fillColor="#12131A"
+        android:pathData="M46,44 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0"/>
+    <path android:fillColor="#12131A"
+        android:pathData="M62,64 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0"/>
+    <path android:fillColor="#12131A"
+        android:pathData="M54,54 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0"/>
+</vector>
