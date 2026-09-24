@@ -4,6 +4,7 @@ import android.content.Context
 import mobile.Mobile
 import online.autobattle.agent.api.ApiClient
 import online.autobattle.agent.engine.Aggregator
+import online.autobattle.agent.engine.Catalogue
 import online.autobattle.agent.engine.Deck
 import online.autobattle.agent.engine.PayloadBuilder
 import online.autobattle.agent.engine.Score
@@ -68,6 +69,12 @@ class Analyst(private val ctx: Context, private val api: ApiClient) {
 
     fun meta(arena: String): JSONObject =
         JSONObject(cached("meta_$arena.json", 5 * 60 * 1000L) { api.meta(arena).toString() })
+
+    /** The catalogue, indexed. Disk-cached, so cheap after the first call. */
+    fun catalogueObj(): Catalogue = Catalogue(catalogue())
+
+    /** The arena field as the generator wants it. */
+    fun metaDecks(arena: String = "pure"): JSONArray = meta(arena).getJSONArray("decks")
 
     private fun expand(deck: JSONObject): List<Int> {
         val out = ArrayList<Int>()
