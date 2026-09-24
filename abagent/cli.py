@@ -926,6 +926,7 @@ def cmd_explore(args, api: Api) -> int:
     cycle stays inside its budget and successive cycles cover the space.
     """
     import collections
+    import hashlib
     import statistics
 
     from .archetype import generate, name_for, recent_seeds, theme_of
@@ -993,19 +994,23 @@ def cmd_explore(args, api: Api) -> int:
     mutants = []
     if args.mutate:
         from .archetype import Archetype, mutate
-        store = _load_or(f"history_{args.arena}.json")
-        top = history.deck_records(store, min_appearances=3,
-                                   window=24)[:args.mutate_from]
+        # Shells come from the meta we already fetched this cycle, not from
+        # the history store. Only cmd_cycle populates that store, so the
+        # explorers never had one -- and the symptom was silent: "0 mutations
+        # of the top 0 decks", printed every run while the best candidate
+        # source produced nothing at all and the tag archetypes carried the
+        # whole search. GET /meta already returns each deck's full card list
+        # ordered by finishing rank, which is exactly what a shell needs.
+        top = sorted(meta["decks"], key=lambda d: d.get("rank", 999))[:args.mutate_from]
         rng = random.Random(int(time.time()))
         pool = [c for c in seeds_all]          # unplayed, already partitioned
         for rec in top:
-            try:
-                pub = api.public_deck(rec.deck_id)
-            except ApiError:
-                continue
-            ids = pub.get("card_ids") or []
+            ids = rec.get("cards") or []
             if len(ids) < 90:
                 continue
+            pub = {"card_ids": ids, "battle_plan": rec.get("battle_plan") or {}}
+            rec = type("R", (), {"name": rec.get("deck_name", "?"),
+                                 "deck_id": rec.get("deck_id")})()
             for _ in range(args.mutate_each):
                 m = mutate(ids, pub.get("battle_plan") or {}, catalog, pool,
                            rng, swaps=args.mutate_swaps)
@@ -1105,6 +1110,10 @@ def cmd_explore(args, api: Api) -> int:
                                 cards=[{"card_id": k, "quantity": v}
                                        for k, v in sorted(counts.items())],
                                 battle_plan=p)
+                if best_w > float(state.get("best_screen") or 0):
+                    state["best_screen"] = round(best_w, 1)
+                    state["best_deck"] = {"name": focus["name"], "cards": c,
+                                          "plan": p, "screen": round(best_w, 1)}
                 print(f"explore: refined {focus['name']} "
                       f"{base.wins:.1f}W -> {best_w:.1f}W (+{nm})")
                 state["installed_at"] = time.strftime("%Y-%m-%d %H:%M:%S",
@@ -1133,19 +1142,56 @@ def cmd_explore(args, api: Api) -> int:
     sc = h.evaluate(batch, screen, block)
     inc = sc.pop("__inc__")
 
-    floor = inc.wins * args.floor_frac
+    # The floor is anchored to the BEST deck ever screened, not to the
+    # incumbent. Anchoring it to the incumbent made it a ratchet with no
+    # bottom: every slightly-worse pick lowered the bar for the next one, and
+    # over a day the screens fell from 16-20 wins to 4-9 while the live
+    # results sank to rank 30.
+    best_ever = max([float(v.get("screen_wins") or 0) for v in tried.values()]
+                    + [float(state.get("best_screen") or 0), inc.wins])
+    floor = best_ever * args.floor_frac
+
+    # Identity is the CARD LIST, not the name. name_for() draws on ~34 tag
+    # words, so genuinely different decks collide on a name constantly -- and
+    # keying `tried` by name meant the first "Ember Fury" blackballed every
+    # later deck that happened to be called one. 26 names had excluded most of
+    # the space, including every good deck found so far.
+    def ident(a):
+        return hashlib.sha256(
+            repr(sorted(collections.Counter(a.cards).items())).encode()
+        ).hexdigest()[:16]
+
+    seen_ids = set(state.get("tried_ids") or [])
     ranked = sorted(((sc[f"a{i}"].wins, i) for i in range(len(archs))), reverse=True)
     pick = None
     for w, i in ranked:
-        nm = name_for(archs[i].theme, archs[i].seed_name)
-        if nm in tried or w < floor:
+        if ident(archs[i]) in seen_ids or w < floor:
             continue
-        pick = (w, i, nm)
+        pick = (w, i, name_for(archs[i].theme, archs[i].seed_name))
         break
 
     if not pick:
-        print(f"explore: nothing new above the {floor:.1f}W floor "
-              f"({len(tried)} archetypes tried); holding")
+        # Holding means holding whatever happens to be loaded, which after a
+        # bad rotation is a bad deck. Fall back to the best list ever found
+        # and refine that instead of sitting on a 4-win pile.
+        bb = state.get("best_deck")
+        if bb and inc.wins < best_ever * args.floor_frac:
+            counts = collections.Counter(bb["cards"])
+            api.update_deck(args.second_deck_id, name=bb["name"][:80],
+                            cards=[{"card_id": c, "quantity": q}
+                                   for c, q in sorted(counts.items())],
+                            battle_plan=bb["plan"])
+            state["current"] = bb["name"]
+            state["installed_at"] = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+            state["focus"] = {"name": bb["name"], "cards": bb["cards"],
+                              "plan": bb["plan"], "screen": bb.get("screen"),
+                              "stale": 0, "history": []}
+            print(f"explore: nothing new above the {floor:.1f}W floor; "
+                  f"restoring best known '{bb['name']}' "
+                  f"({bb.get('screen')}W) and refining it")
+        else:
+            print(f"explore: nothing new above the {floor:.1f}W floor "
+                  f"({len(seen_ids)} decks tried); holding")
         state["tried"] = tried
         _save("explore.json", state)
         return 0
@@ -1157,9 +1203,15 @@ def cmd_explore(args, api: Api) -> int:
                     cards=[{"card_id": c, "quantity": q} for c, q in sorted(counts.items())],
                     battle_plan=best.plan)
     tried.setdefault(nm, {})["screen_wins"] = round(w, 1)
+    seen_ids.add(ident(best))
+    state["tried_ids"] = sorted(seen_ids)
     state["tried"] = tried
     state["current"] = nm
     state["installed_at"] = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+    if w > float(state.get("best_screen") or 0):
+        state["best_screen"] = round(w, 1)
+        state["best_deck"] = {"name": nm, "cards": best.cards,
+                              "plan": best.plan, "screen": round(w, 1)}
 
     # A deck that screens better than anything tried so far is a starting
     # point worth developing, not another sample.
