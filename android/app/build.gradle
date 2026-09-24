@@ -1,0 +1,33 @@
+apply plugin: 'com.android.application'
+apply plugin: 'org.jetbrains.kotlin.android'
+
+android {
+    namespace 'online.autobattle.agent'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId "online.autobattle.agent"
+        minSdk 24
+        targetSdk 36
+        versionCode 1
+        versionName "0.1"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        // The engine AAR ships arm64 only. Adding more ABIs means rebuilding
+        // it with more -target values in build_aar.sh; each one adds ~3.8MB of
+        // libgojni.so to the APK.
+        ndk { abiFilters 'arm64-v8a' }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = '17' }
+}
+
+dependencies {
+    implementation files('libs/engine.aar')
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+}

@@ -4,3 +4,13 @@ var/*.tmp
 bin/validate_*
 __pycache__/
 *.pyc
+
+# Android app
+android/build/
+android/app/build/
+android/.gradle/
+android/local.properties
+# The AAR is a build artefact of shell/engine in the autobattle.online repo.
+# A committed copy silently drifts from the engine it was cut from, and it
+# carries a digest that must match what the game's own validator produces.
+android/app/libs/*.aar

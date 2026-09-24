@@ -1,0 +1,9 @@
+buildscript {
+    repositories { google(); mavenCentral() }
+    dependencies {
+        // Matched to the existing autobattle-mobile app so both projects can
+        // share a Gradle install and a CI image.
+        classpath 'com.android.tools.build:gradle:8.13.0'
+        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.0.21'
+    }
+}
