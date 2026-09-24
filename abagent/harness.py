@@ -131,9 +131,29 @@ class Harness:
             slots.append({"slot_id": sid, "cards": cards,
                           "battle_plan": plan or {}, "champion_id": None})
             for o in opponents:
-                for s in seeds:
+                for si, s in enumerate(seeds):
+                    # Alternate seats by seed INDEX, not by seed value, so
+                    # every candidate plays seed i in the same chair. That
+                    # keeps the comparison paired -- the whole reason these
+                    # share seeds -- while giving each candidate half its
+                    # games first and half second.
+                    #
+                    # Seat is not alternated by the live game: cohorts pair
+                    # each deck once with slot_a fixed by slot order, so a
+                    # deck plays every match from the same chair. Measured
+                    # seat advantage was +0.4pp, but with 720 matches a side
+                    # the standard error is ~2.6pp -- "not detectable" rather
+                    # than "zero", and a real 2pp effect is ~1.4 wins across
+                    # 69 pairings against a 0.4-win acceptance threshold. It
+                    # cancels in paired A/B comparisons, where every candidate
+                    # sat in the same chair; it does NOT cancel when a harness
+                    # number is compared to a live one, which is exactly what
+                    # adoption and re-basing decisions do.
+                    first, second = ((sid, o.slot_id) if si % 2 == 0
+                                     else (o.slot_id, sid))
                     matches.append({"match_id": f"{sid}|{o.slot_id}|{s}",
-                                    "slot_a": sid, "slot_b": o.slot_id, "seed": s})
+                                    "slot_a": first, "slot_b": second,
+                                    "seed": s})
 
         results = self._run({"cards": self.cards, "slots": slots,
                              "matches": matches, "chaos_effect": ""})
@@ -144,6 +164,9 @@ class Harness:
                                                   for sid in label_by_slot}
         per_opp: dict[str, dict[str, list[int]]] = {sid: {} for sid in label_by_slot}
         for r in results:
+            # Attribution is by slot_id, not by seat, so it is unaffected by
+            # the alternation above: winner_slot names the winning slot
+            # whichever chair it sat in.
             sid, oid, seed = r["match_id"].split("|")
             seed = int(seed)
             w = r["winner_slot"]
