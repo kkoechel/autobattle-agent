@@ -1,0 +1,19 @@
+[Unit]
+Description=AutoBattle agents — assert they are still making progress
+
+[Service]
+Type=oneshot
+User=abagent
+Group=abagent
+WorkingDirectory=/opt/abagent
+# No credentials on purpose: a broken API key must not silence the check whose
+# job is to report broken things.
+Environment=AB_API_KEY=unused
+# Exits non-zero when something has stalled, so systemd marks the unit failed
+# and `systemctl --failed` shows it. Four stalls in a row were found by a
+# human noticing rather than by any signal; this is the signal.
+ExecStart=/usr/bin/python3 -u -m abagent.cli health --max-idle 3
+Nice=19
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=yes

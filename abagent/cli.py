@@ -148,6 +148,38 @@ def detect_card_changes(catalog: list[dict], our_cards: set[int], log=print) -> 
     return changed
 
 
+def tolerate_outage(args, e: ApiError) -> int:
+    """Swallow a brief upstream failure; surface a sustained one.
+
+    A 503 from the game server killed a cycle outright. One blip should not,
+    since the next cycle is ten minutes away and will simply retry -- but
+    exiting 0 unconditionally would make a real outage invisible, which is the
+    same failure as every other stall here: healthy-looking silence.
+
+    So consecutive failures are counted in var/. Below the threshold this is a
+    logged skip and a clean exit; at or above it the process exits non-zero so
+    systemd marks the unit failed and `systemctl --failed` shows it.
+    """
+    st = _load_or("outage.json")
+    n = int(st.get("consecutive") or 0) + 1
+    st["consecutive"] = n
+    st["last"] = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+    _save("outage.json", st)
+    if n < args.outage_tolerance:
+        print(f"cycle: upstream unavailable ({e}); skipping this cycle "
+              f"({n}/{args.outage_tolerance} consecutive)")
+        return 0
+    print(f"cycle: upstream unavailable {n} cycles running ({e}) — failing "
+          f"loudly so this is visible", file=sys.stderr)
+    return 1
+
+
+def clear_outage() -> None:
+    st = _load_or("outage.json")
+    if st.get("consecutive"):
+        _save("outage.json", {"consecutive": 0})
+
+
 def cmd_fetch(args, api: Api) -> int:
     check_api(api)
     os.makedirs(BIN, exist_ok=True)
@@ -725,7 +757,11 @@ def cmd_cycle(args, api: Api) -> int:
     """
     t0 = time.time()
     t0_seed = int(t0) % 1_000_000
-    cmd_fetch(args, api)
+    try:
+        cmd_fetch(args, api)
+    except ApiError as e:
+        return tolerate_outage(args, e)
+    clear_outage()
     h, deck, mine, opps, info = _setup(args, api)
     start = dict(deck.get("battle_plan") or {})
 
@@ -931,7 +967,11 @@ def cmd_explore(args, api: Api) -> int:
 
     from .archetype import generate, name_for, recent_seeds, theme_of
 
-    cmd_fetch(args, api)
+    try:
+        cmd_fetch(args, api)
+    except ApiError as e:
+        return tolerate_outage(args, e)
+    clear_outage()
     cat_list = _load("cards.json")
     catalog = {int(c["id"]): c for c in cat_list}
     meta = _load(f"meta_{args.arena}.json")
@@ -1334,6 +1374,27 @@ def cmd_beat(args, api: Api) -> int:
     return 0
 
 
+def cmd_health(args, api: Api) -> int:
+    """Assert the agents are still making progress, not merely running.
+
+    Exists because four stalls in a row were caught by a human noticing, not
+    by any check: timers fired, services exited zero, logs said success. The
+    thing none of them reported was that nothing was changing.
+    """
+    from . import health
+    checks = []
+    for label, var in (("competitor (var)", os.path.join(ROOT, "var")),
+                       ("explorer (var-explore)", os.path.join(ROOT, "var-explore")),
+                       ("discovery (var-discover)", os.path.join(ROOT, "var-discover"))):
+        if not os.path.isdir(var):
+            continue
+        if "var-" in var:
+            checks.append((label, health.check_explorer(var, args.max_idle)))
+        else:
+            checks.append((label, health.check_competitor(var)))
+    return health.report(checks)
+
+
 def cmd_results(args, api: Api) -> int:
     rows = api.results(arena=args.arena, deck_id=args.deck_id, limit=args.limit)
     print(f"{'closed':20} {'arena':10} {'place':>8} {'W-L-D':>12} {'win%':>6}")
@@ -1440,6 +1501,8 @@ def main(argv=None) -> int:
                    help="seconds past the search deadline a re-base may still use")
     y.add_argument("--stage-reserve", type=int, default=200,
                    help="time a slow stage needs to FINISH, not just to start")
+    y.add_argument("--outage-tolerance", type=int, default=3,
+                   help="consecutive upstream failures before failing loudly")
     y.add_argument("--cycle-max", type=int, default=420,
                    help="hard wall-clock ceiling for the entire cycle")
     y.add_argument("--slow-every", type=int, default=3600,
@@ -1457,6 +1520,7 @@ def main(argv=None) -> int:
     e.add_argument("--new-days", type=int, default=7,
                    help="treat cards added this recently as priority seeds")
     e.add_argument("--validate-seeds", type=int, default=161)
+    e.add_argument("--outage-tolerance", type=int, default=3)
     e.add_argument("--mutate", action="store_true", default=True,
                    help="mutate top decks with unplayed cards (primary source)")
     e.add_argument("--no-mutate", dest="mutate", action="store_false")
@@ -1486,11 +1550,18 @@ def main(argv=None) -> int:
     b.add_argument("--rng-base", type=int, default=3300)
     b.set_defaults(fn=cmd_beat)
 
+    hc = sub.add_parser("health")
+    hc.add_argument("--max-idle", type=float, default=3.0,
+                    help="hours the slot may go unchanged before it is a fail")
+    hc.set_defaults(fn=cmd_health)
+
     r = sub.add_parser("results")
     r.add_argument("--limit", type=int, default=15)
     r.set_defaults(fn=cmd_results)
 
     args = ap.parse_args(argv)
+    if args.cmd == "health":
+        return args.fn(args, None)
     api = Api()
     if args.deck_id is None and args.cmd == "cycle":
         raise SystemExit("cycle requires an explicit --deck-id: it edits and "
