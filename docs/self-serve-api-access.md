@@ -61,17 +61,31 @@ toggle:** `POST /decks/slots` (562) is under the same gate and calls
 enablement therefore means a leaked or borrowed key can drain autogold into
 deck slots, which is not true today for a player who never asked an admin.
 
-Two ways to handle it, your call:
+**Decided: split the gate.** The site-side reviewer argued for this and was
+right; the original lean toward a single toggle is withdrawn.
 
-1. **Ship the toggle as-is.** Simplest. The blast radius is one player's own
-   autogold, and they opted in. Worth a line in the confirm copy.
-2. **Split the gate.** Leave `decks/slots` on admin-granted `is_api_user` and
-   let the self-serve flag cover only the four self-scoped deck routes. More
-   correct, more work, and needs a second column or a capability check.
+The deciding property is recoverability, which the first draft failed to
+weigh. The four deck routes are destructive but reversible — a leaked key can
+wreck your decks and you rebuild them. `buy_deck_slot()` is neither: at 277 AG
+a slot and up to 82 slots available, a borrowed key can burn ~22,700 AG with
+no undo. Bundling an irreversible spend into a convenience toggle is only
+equivalent to the rest until the first time it isn't.
 
-I lean 1 for now — but I am not the right person to weigh it, since it is your
-economy and you have corrected me on this codebase three times this session
-(the cohort ownership path, the Double Entry docs, the 17-slot limit).
+The shape, which needs no capability system:
+
+- new column `is_api_user_self`, set by the player from their profile
+- `POST /decks/slots` keeps requiring admin-granted `is_api_user`
+- the four self-scoped deck routes accept **either** flag
+
+One correction to the record, which changes nothing about the decision. The
+argument cited "15 redundant Double Entry Passes" as precedent for unintended
+AG spend. Checked against both accounts: each holds a pass to 2027-01-06 —
+104 days, ~15 weeks, ~2,655 AG — which is what kkoechel asked for verbatim
+("renew the double deck entry pass for both throgh december"). That spend was
+deliberate. The real near-miss was `ensure_pass()` calling `purchase()` merely
+to READ the expiry date, which on a ten-minute timer is 25,488 AG/day; it was
+fixed before deploy and never spent. The irreversibility argument does not
+need the precedent and is not weakened by losing it.
 
 ## The change
 
@@ -93,12 +107,30 @@ economy and you have corrected me on this codebase three times this session
 - With it on, `PUT /decks/{id}` on **their own** deck returns 200.
 - With it on, `PUT /decks/{id}` on **someone else's** deck still returns 404
   (it already does — please confirm it still does after the change).
+- **With `is_api_user_self` on but `is_api_user` off, `POST /decks/slots`
+  returns 403.** This is the whole point of the split; it wants a test, not
+  just an implementation.
+- **`require_discord_bot()` (api/v1/index.php) must NOT accept the new flag.**
+  It currently checks `is_api_user` alongside an `@autobattle.bot` email; if
+  the new column is folded in carelessly, a self-enabled player with a
+  matching email could reach bot routes. Unlikely, worth a test.
+- **The profile panel at `game/profile.php:509` must reflect either flag.** Its
+  condition is `is_api_user || is_playtester || admin` today, so a player who
+  self-enables would otherwise still be told to "contact an admin".
 - Toggling off revokes immediately, without a new key.
-- `GET /me` reflects the current state, because the app reads `is_api_user`
-  there to decide whether to offer "apply this change" at all.
+- `GET /me` reports the state unambiguously.
 
-That last point is the only hard dependency the app has: **`/me` must report
-the flag**, which it already does today.
+### What /me must expose
+
+This is the app's only hard dependency. The app needs to answer one question —
+*may I offer an "apply this change" button?* — which under the split is
+`is_api_user || is_api_user_self`. Either is fine:
+
+- return both columns and let the client OR them, or
+- return a derived `can_write_decks` boolean (preferred — it keeps the rule on
+  the server, so a later change to the gate does not need an app release).
+
+The app does not buy deck slots and will not ask for that capability.
 
 ## What the app will do with it
 
