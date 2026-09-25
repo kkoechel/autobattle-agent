@@ -16,6 +16,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import online.autobattle.agent.chat.Builder
+import online.autobattle.agent.chat.Counter
 import online.autobattle.agent.chat.DeckRef
 import online.autobattle.agent.chat.Grammar
 import online.autobattle.agent.chat.Improver
@@ -38,6 +39,7 @@ sealed interface Line {
     data class Analysed(val a: Analysis) : Line
     data class Built(val o: Builder.Outcome, val cat: Catalogue) : Line
     data class Improved(val r: Improver.Result, val cat: Catalogue) : Line
+    data class Countered(val r: Counter.Result, val cat: Catalogue) : Line
 }
 
 /**
@@ -54,6 +56,7 @@ class ChatEngine(
     private val grammar: Grammar,
     private val analyse: (DeckRef) -> Analysis,
     private val improve: (DeckRef) -> Improver?,
+    private val counter: () -> Counter?,
 ) {
     fun respond(text: String, onProgress: (String) -> Unit): List<Line> =
         when (val i = grammar.parse(text)) {
@@ -83,10 +86,24 @@ class ChatEngine(
                 }
             }
 
-            is Intent.Beat -> listOf(Line.Said(true,
-                "I cannot build a counter to “${i.who}” yet. Analysing your " +
-                    "deck will show you its record against them, which is the first " +
-                    "half of that answer."))
+            is Intent.Beat -> {
+                val c = counter()
+                val target = c?.find(i.who)
+                when {
+                    c == null -> listOf(Line.Said(true, "I could not load your deck."))
+                    target == null -> listOf(Line.Said(true,
+                        "I cannot find a deck called “${i.who}” in the current " +
+                            "field. Decks I can see include: " +
+                            c.names().joinToString(", ") + "."))
+                    else -> {
+                        onProgress("Looking for an answer to ${target.name}…")
+                        val r = c.run(target, onProgress = onProgress)
+                        if (r == null) listOf(Line.Said(true,
+                            "I could not build a variant to test against ${target.name}."))
+                        else listOf(Line.Countered(r, cat))
+                    }
+                }
+            }
 
             is Intent.Unsure -> listOf(Line.Said(true, buildString {
                 append("I did not follow that. I can analyse your deck, or build one " +
@@ -104,8 +121,9 @@ class ChatEngine(
                 "•  improve my deck — try every card the field never plays, then " +
                 "validate the best one properly (about a minute)\n" +
                 "•  build me a poison deck — generate candidates around a theme " +
-                "and measure them against the field's best\n\n" +
-                "Countering a named opponent is not built yet."
+                "and measure them against the field's best\n" +
+                "•  beat Hymn — search for an answer to one named deck, then check " +
+                "it has not cost you the rest of the field"
     }
 }
 
@@ -127,6 +145,7 @@ fun Transcript(lines: List<Line>, modifier: Modifier = Modifier) {
                 is Line.Analysed -> Bubble(true) { AnalysisCard(l.a) }
                 is Line.Built -> Bubble(true) { BuiltCard(l.o, l.cat) }
                 is Line.Improved -> Bubble(true) { ImprovedCard(l.r, l.cat) }
+                is Line.Countered -> Bubble(true) { CounteredCard(l.r, l.cat) }
             }
         }
     }
@@ -310,6 +329,57 @@ private fun ImprovedCard(r: Improver.Result, cat: Catalogue) {
 }
 
 @Composable
+private fun CounteredCard(r: Counter.Result, cat: Catalogue) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("${r.addQty}× ${r.addName}", fontWeight = FontWeight.SemiBold)
+        Text("for " + r.removed.joinToString(", ") { "${it.second}× ${cat.name(it.first)}" } +
+            (if (r.fromTheirList) "  ·  taken from their own list" else ""),
+            color = Subtle, style = MaterialTheme.typography.bodySmall)
+
+        // The matchup first, because it is what was asked about.
+        Text("vs ${r.target.name}:  ${r.before}  →  ${r.after}",
+            style = MaterialTheme.typography.titleMedium,
+            color = if (r.matchupImproved) Good else Warn)
+
+        // Then the verdict, which is decided on the FIELD and not on the
+        // matchup. Beating one deck is worth about a win in seventy-three; a
+        // card that wins it and costs two elsewhere is not a counter, however
+        // well it answers the question that was asked.
+        Text(
+            when {
+                r.keeps ->
+                    ("Worth making: %+.1f wins across all %d opponents, t=%.1f — " +
+                        "the matchup improved and the rest of the field did not suffer for it.")
+                        .format(r.fieldGain, r.opponents, r.fieldT)
+                r.matchupImproved ->
+                    ("Not worth making. It does improve that matchup, but across all %d " +
+                        "opponents it is %+.1f wins at t=%.1f — below the bar of %.1f and " +
+                        "t=%.1f. Beating one deck is worth about a win in %d, and this " +
+                        "gives that back elsewhere.")
+                        .format(r.opponents, r.fieldGain, r.fieldT,
+                            online.autobattle.agent.engine.Stats.MIN_GAIN,
+                            online.autobattle.agent.engine.Stats.MIN_T, r.opponents)
+                else ->
+                    ("Nothing I tried beat them. The best of %d candidates still goes %s, " +
+                        "and across the field it is %+.1f wins.")
+                        .format(r.screened, r.after.toString(), r.fieldGain)
+            },
+            color = if (r.keeps) Good else Warn,
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Text("Your deck %.1f wins overall, this %.1f · %d cohorts vs %d decks · %.0fs"
+            .format(r.incumbent.wins, r.candidate.wins, r.validateSeeds,
+                r.opponents, r.elapsedMs / 1000.0),
+            color = Subtle, style = MaterialTheme.typography.bodySmall)
+        Text(
+            "Screened ${r.screened} cards against ${r.target.name} alone, where the " +
+                "effect is undiluted, then judged on the whole field.",
+            color = Subtle, style = MaterialTheme.typography.bodySmall,
+        )
+    }
+}
+
+@Composable
 fun Composer(busy: Boolean, onSend: (String) -> Unit) {
     var text by remember { mutableStateOf("") }
     val fire = {
@@ -377,6 +447,15 @@ fun ChatPane(
                     cat, Builder(cat, meta), grammar,
                     analyse = { ref ->
                         analyst.analyse(if (ref is DeckRef.Id) ref.id else deckId)
+                    },
+                    counter = {
+                        val d = analyst.deckFor(deckId)
+                        if (d == null) null else Counter(
+                            cat, meta, deckId,
+                            d.optString("name").ifBlank { "your deck" },
+                            Analyst.expandCards(d),
+                            d.optJSONObject("battle_plan") ?: JSONObject(),
+                        )
                     },
                     improve = { ref ->
                         val id = if (ref is DeckRef.Id) ref.id else deckId
@@ -508,6 +587,17 @@ private fun record(ctx: android.content.Context, l: Line) {
             wins = l.r.candidate.wins, opponents = l.r.opponents,
             seeds = l.r.validateSeeds,
             gain = l.r.gain, t = l.r.t, accepted = l.r.accepted,
+        )
+        is Line.Countered -> Journal.Entry(
+            at = System.currentTimeMillis(), kind = "beat",
+            deck = l.r.deckName,
+            headline = "${l.r.addQty}× ${l.r.addName} vs ${l.r.target.name}",
+            detail = "${l.r.target.name} ${l.r.before} → ${l.r.after}" +
+                (if (l.r.fromTheirList) " · from their own list" else "") +
+                " · screened ${l.r.screened} cards against them alone",
+            wins = l.r.candidate.wins, opponents = l.r.opponents,
+            seeds = l.r.validateSeeds,
+            gain = l.r.fieldGain, t = l.r.fieldT, accepted = l.r.keeps,
         )
         else -> null
     } ?: return

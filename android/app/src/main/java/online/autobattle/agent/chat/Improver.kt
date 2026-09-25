@@ -80,52 +80,6 @@ class Improver(
             .sorted()
     }
 
-    /**
-     * Which of our cards to cut, worst-ranked in card_order first.
-     *
-     * The same slot is cut for every candidate, so the only thing varying
-     * between measurements is the card that replaces it.
-     */
-    private fun cutsFor(qty: Int): List<Mutate.Swap> {
-        val have = deckCards.groupingBy { it }.eachCount()
-        val order = Mutate.cutCandidates(deckCards, deckPlan)
-        val out = ArrayList<Mutate.Swap>()
-        var need = qty
-        for (c in order) {
-            if (need <= 0) break
-            val avail = have[c] ?: 0
-            if (avail <= 0) continue
-            val take = minOf(need, avail)
-            out.add(Mutate.Swap(c, 0, take))     // `add` filled in per candidate
-            need -= take
-        }
-        return out
-    }
-
-    private fun variant(add: Int, qty: Int): Mutate.Result? =
-        Mutate.apply(deckCards, deckPlan, cutsFor(qty).map { it.copy(add = add) }, cat)
-
-    private fun opponents(limit: Int): List<Deck> {
-        val all = (0 until metaDecks.length()).map { metaDecks.getJSONObject(it) }
-            .filter { it.optInt("deck_id", -1) != deckId }
-        val stride = maxOf(1, all.size / limit)
-        return all.filterIndexed { i, _ -> i % stride == 0 }.take(limit)
-            .mapIndexed { i, d ->
-                val a = d.getJSONArray("cards")
-                Deck("O$i", (0 until a.length()).map { a.getInt(it) },
-                    d.optJSONObject("battle_plan"), d.optString("deck_name"),
-                    d.optInt("deck_id", -1))
-            }
-    }
-
-    private fun simulate(arms: List<Deck>, opps: List<Deck>, seeds: List<Int>, workers: Int):
-            Map<String, Score> {
-        val payload = PayloadBuilder(cat.raw).build(arms, opps, seeds)
-        val env = JSONObject(Mobile.run(payload, workers.toLong()))
-        return Aggregator.aggregate(
-            env.getJSONArray("results").toString(), arms, seeds, opps.size)
-    }
-
     fun run(
         qty: Int = 5,
         screenOpponents: Int = 16,
@@ -140,7 +94,7 @@ class Improver(
 
         // ---- stage 1: order the whole pool ------------------------------
         onProgress("Measuring ${pool.size} cards the field never plays…")
-        val sOpp = opponents(screenOpponents)
+        val sOpp = fieldOpponents(metaDecks, deckId, screenOpponents)
         val sSeeds = (0 until screenSeeds).map { 3_000_000 + it }
 
         val arms = ArrayList<Deck>()
@@ -149,7 +103,7 @@ class Improver(
         val byArm = HashMap<String, Triple<Int, Mutate.Result, Int>>()
         for (c in pool) {
             val q = minOf(qty, cat.deckLimit(c))
-            val v = variant(c, q) ?: continue
+            val v = variantOf(deckCards, deckPlan, cat, c, q) ?: continue
             val slot = "A${byArm.size}"
             byArm[slot] = Triple(c, v, v.swaps.sumOf { it.qty })
             arms.add(Deck(slot, v.cards, v.plan, cat.name(c), null))
@@ -173,13 +127,13 @@ class Improver(
         val depths = byArm.values.map { it.third }.toSet()
         val controlSlot = HashMap<Int, String>()
         for (d in depths) {
-            val cv = variant(Archetype.INFINITE_FILLER, d) ?: continue
+            val cv = variantOf(deckCards, deckPlan, cat, Archetype.INFINITE_FILLER, d) ?: continue
             val slot = "C$d"
             controlSlot[d] = slot
             arms.add(Deck(slot, cv.cards, cv.plan, "control x$d", null))
         }
 
-        val screen = simulate(arms, sOpp, sSeeds, workers)
+        val screen = simulate(cat, arms, sOpp, sSeeds, workers)
         val mine = screen["MINE"]!!
         fun baseFor(depth: Int): Double =
             controlSlot[depth]?.let { screen[it]?.wins } ?: mine.wins
@@ -197,14 +151,14 @@ class Improver(
         // Reusing the screen's seeds would report the number that won the
         // screen, which is the winner's curse restated.
         onProgress("Validating ${cat.name(best.first)} over $validateSeeds cohorts…")
-        val vOpp = opponents(Int.MAX_VALUE)
+        val vOpp = fieldOpponents(metaDecks, deckId, Int.MAX_VALUE)
         val vSeeds = (0 until validateSeeds).map { 4_000_000 + it }
-        val v = variant(best.first, minOf(qty, cat.deckLimit(best.first))) ?: return null
+        val v = variantOf(deckCards, deckPlan, cat, best.first, minOf(qty, cat.deckLimit(best.first))) ?: return null
         val vArms = listOf(
             Deck("MINE", deckCards, deckPlan, deckName, deckId),
             Deck("CAND", v.cards, v.plan, cat.name(best.first), null),
         )
-        val vr = simulate(vArms, vOpp, vSeeds, workers)
+        val vr = simulate(cat, vArms, vOpp, vSeeds, workers)
         val (gain, t) = Stats.pairedT(vr["CAND"]!!, vr["MINE"]!!)
 
         return Result(
