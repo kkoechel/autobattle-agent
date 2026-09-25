@@ -18,12 +18,14 @@ import androidx.compose.ui.unit.sp
 import online.autobattle.agent.chat.Builder
 import online.autobattle.agent.chat.DeckRef
 import online.autobattle.agent.chat.Grammar
+import online.autobattle.agent.chat.Improver
 import online.autobattle.agent.chat.Intent
 import online.autobattle.agent.api.ApiClient
 import online.autobattle.agent.data.Analysis
 import online.autobattle.agent.data.Analyst
 import online.autobattle.agent.data.Secrets
 import online.autobattle.agent.engine.Catalogue
+import org.json.JSONObject
 import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -34,6 +36,7 @@ sealed interface Line {
     data class Said(val fromAgent: Boolean, val text: String) : Line
     data class Analysed(val a: Analysis) : Line
     data class Built(val o: Builder.Outcome, val cat: Catalogue) : Line
+    data class Improved(val r: Improver.Result, val cat: Catalogue) : Line
 }
 
 /**
@@ -49,6 +52,7 @@ class ChatEngine(
     private val builder: Builder,
     private val grammar: Grammar,
     private val analyse: (DeckRef) -> Analysis,
+    private val improve: (DeckRef) -> Improver?,
 ) {
     fun respond(text: String, onProgress: (String) -> Unit): List<Line> =
         when (val i = grammar.parse(text)) {
@@ -67,11 +71,16 @@ class ChatEngine(
                 else listOf(Line.Built(o, cat))
             }
 
-            is Intent.Improve -> listOf(Line.Said(true,
-                "Not in this version. When it lands it will mutate your own list " +
-                    "rather than replace it — that is the generator that actually " +
-                    "produces good decks. For now, ask me to analyse your deck and " +
-                    "I will show you which matchups are costing you."))
+            is Intent.Improve -> {
+                val imp = improve(i.deck)
+                if (imp == null) listOf(Line.Said(true, "I could not load that deck."))
+                else {
+                    val r = imp.run(onProgress = onProgress)
+                    if (r == null) listOf(Line.Said(true,
+                        "There are no unplayed cards left to try against that deck."))
+                    else listOf(Line.Improved(r, cat))
+                }
+            }
 
             is Intent.Beat -> listOf(Line.Said(true,
                 "I cannot build a counter to “${i.who}” yet. Analysing your " +
@@ -88,12 +97,14 @@ class ChatEngine(
 
     companion object {
         const val HELP =
-            "Two things work today:\n\n" +
+            "Three things work today:\n\n" +
                 "•  analyse my deck — score it against the live field and show " +
-                "which matchups cost you\n" +
+                "which matchups cost you (about 3 seconds)\n" +
+                "•  improve my deck — try every card the field never plays, then " +
+                "validate the best one properly (about a minute)\n" +
                 "•  build me a poison deck — generate candidates around a theme " +
                 "and measure them against the field's best\n\n" +
-                "Improving a deck and countering a named opponent are not built yet."
+                "Countering a named opponent is not built yet."
     }
 }
 
@@ -114,6 +125,7 @@ fun Transcript(lines: List<Line>, modifier: Modifier = Modifier) {
                 }
                 is Line.Analysed -> Bubble(true) { AnalysisCard(l.a) }
                 is Line.Built -> Bubble(true) { BuiltCard(l.o, l.cat) }
+                is Line.Improved -> Bubble(true) { ImprovedCard(l.r, l.cat) }
             }
         }
     }
@@ -246,6 +258,57 @@ private fun DeckBody(c: Builder.Candidate, cat: Catalogue, compact: Boolean = fa
 }
 
 @Composable
+private fun ImprovedCard(r: Improver.Result, cat: Catalogue) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("${r.addQty}× ${r.addName}", fontWeight = FontWeight.SemiBold)
+        Text("for " + r.removed.joinToString(", ") { "${it.second}× ${cat.name(it.first)}" },
+            color = Subtle, style = MaterialTheme.typography.bodySmall)
+
+        // The validated number, never the screen's. The screen picked this
+        // card out of a field of candidates, so its screen score is the
+        // maximum of many noisy draws and biased upward by construction -- a
+        // "+3.8W t=2.6" swap measured that way was really +1.48W.
+        Text(
+            if (r.gain >= 0) "%+.1f wins".format(r.gain) else "%.1f wins".format(r.gain),
+            style = MaterialTheme.typography.titleMedium,
+            color = if (r.accepted) Good else Warn,
+        )
+        Text(
+            if (r.accepted)
+                ("Worth making. %.1f wins over %d cohorts against the full %d-deck field, " +
+                    "t=%.1f — clears the bar of %.1f wins and t=%.1f.")
+                    .format(r.gain, r.validateSeeds, r.opponents, r.t,
+                        online.autobattle.agent.engine.Stats.MIN_GAIN,
+                        online.autobattle.agent.engine.Stats.MIN_T)
+            else
+                ("Not worth making. %+.1f wins at t=%.1f over %d cohorts — below the bar " +
+                    "of %.1f wins and t=%.1f, so it cannot be told apart from your deck " +
+                    "as it stands.")
+                    .format(r.gain, r.t, r.validateSeeds,
+                        online.autobattle.agent.engine.Stats.MIN_GAIN,
+                        online.autobattle.agent.engine.Stats.MIN_T),
+            color = if (r.accepted) Good else Warn,
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Text("%s %.1f wins · your deck %.1f".format(
+            r.addName, r.candidate.wins, r.incumbent.wins),
+            color = Subtle, style = MaterialTheme.typography.bodySmall)
+
+        // Both numbers are shown on purpose. The screen figure is what made
+        // this the survivor; the validated figure is what it is actually
+        // worth, and the gap between them IS the winner's curse, made visible
+        // rather than quietly discarded.
+        Text(
+            "Screened ${r.screened} unplayed cards; this one led by %.1f against a blank. "
+                .format(r.screenDelta) +
+                "Validated separately on a fresh seed block · %.0fs total."
+                    .format(r.elapsedMs / 1000.0),
+            color = Subtle, style = MaterialTheme.typography.bodySmall,
+        )
+    }
+}
+
+@Composable
 fun Composer(busy: Boolean, onSend: (String) -> Unit) {
     var text by remember { mutableStateOf("") }
     val fire = {
@@ -307,9 +370,21 @@ fun ChatPane(
                 val cat = analyst.catalogueObj()
                 val meta = analyst.metaDecks()
                 val grammar = Grammar(Grammar.vocabularyOf(cat))
-                grammar to ChatEngine(cat, Builder(cat, meta), grammar) { ref ->
-                    analyst.analyse(if (ref is DeckRef.Id) ref.id else deckId)
-                }
+                grammar to ChatEngine(
+                    cat, Builder(cat, meta), grammar,
+                    analyse = { ref ->
+                        analyst.analyse(if (ref is DeckRef.Id) ref.id else deckId)
+                    },
+                    improve = { ref ->
+                        val id = if (ref is DeckRef.Id) ref.id else deckId
+                        val d = analyst.deckFor(id)
+                        if (d == null) null else Improver(
+                            cat, meta, id,
+                            d.optString("name").ifBlank { "your deck" },
+                            Analyst.expandCards(d), d.optJSONObject("battle_plan") ?: JSONObject(),
+                        )
+                    },
+                )
             }
         }.onSuccess { (g, e) ->
             engine = e

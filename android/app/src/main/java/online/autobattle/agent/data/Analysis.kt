@@ -76,14 +76,23 @@ class Analyst(private val ctx: Context, private val api: ApiClient) {
     /** The arena field as the generator wants it. */
     fun metaDecks(arena: String = "pure"): JSONArray = meta(arena).getJSONArray("decks")
 
-    private fun expand(deck: JSONObject): List<Int> {
-        val out = ArrayList<Int>()
-        val cards = deck.getJSONArray("cards")
-        for (i in 0 until cards.length()) {
-            val c = cards.getJSONObject(i)
-            repeat(c.getInt("quantity")) { out.add(c.getInt("card_id")) }
+    /** One of the player's decks, or null if it cannot be read. */
+    fun deckFor(deckId: Int): JSONObject? =
+        runCatching { api.deck(deckId) }.getOrNull()
+
+    private fun expand(deck: JSONObject): List<Int> = expandCards(deck)
+
+    companion object {
+        /** GET /decks returns (card_id, quantity) pairs; the engine wants a flat list. */
+        fun expandCards(deck: JSONObject): List<Int> {
+            val out = ArrayList<Int>()
+            val cards = deck.optJSONArray("cards") ?: return out
+            for (i in 0 until cards.length()) {
+                val c = cards.getJSONObject(i)
+                repeat(c.getInt("quantity")) { out.add(c.getInt("card_id")) }
+            }
+            return out
         }
-        return out
     }
 
     /**
