@@ -67,6 +67,33 @@ class ApiClient(private val apiKey: String, private val base: String = BASE) {
     /** Any deck's list by id, including other players'. Works on a plain key. */
     fun publicDeck(id: Int): JSONObject = call("GET", "/decks/$id/public").getJSONObject("deck")
 
+    /**
+     * Replace a deck's card list and battle plan. The ONLY write this app makes.
+     *
+     * PUT replaces the list wholesale -- the server deletes every deck_cards
+     * row and reinserts what it is given -- so a partial list silently
+     * truncates the deck. Always send all 100.
+     *
+     * It also enforces neither deck_limit nor card ownership: the website's
+     * own save path clamps to min(deck_limit, owned), this route does not. A
+     * deck saved here with 20 copies of a 15-limit card is accepted by the API
+     * and collapses the next time the player saves it on the site. Respecting
+     * limits is therefore the caller's job, which is why every list this app
+     * produces comes out of Mutate.apply, which caps at cat.deckLimit.
+     *
+     * The server marks a deck valid only at 90-100 cards.
+     */
+    fun updateDeck(id: Int, cards: List<Int>, battlePlan: JSONObject?): JSONObject {
+        val counts = cards.groupingBy { it }.eachCount()
+        val arr = JSONArray()
+        for ((cardId, qty) in counts.entries.sortedBy { it.key }) {
+            arr.put(JSONObject().put("card_id", cardId).put("quantity", qty))
+        }
+        val body = JSONObject().put("cards", arr)
+        if (battlePlan != null) body.put("battle_plan", battlePlan)
+        return call("PUT", "/decks/$id", body).getJSONObject("deck")
+    }
+
     fun results(arena: String? = null, limit: Int = 25): JSONArray {
         val q = buildString {
             append("/results?limit=").append(limit)

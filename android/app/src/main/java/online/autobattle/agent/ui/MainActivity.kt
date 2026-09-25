@@ -33,7 +33,18 @@ class MainActivity : ComponentActivity() {
 
 private sealed interface Phase {
     data object NeedKey : Phase
-    data class Ready(val accountName: String, val deckId: Int, val deckName: String) : Phase
+    data class Ready(
+        val accountName: String,
+        val deckId: Int,
+        val deckName: String,
+        /**
+         * Server-derived, never inferred from the raw flags. The site mirrors
+         * require_deck_api_user() into can_write_decks precisely so the gate
+         * can move without needing an app release; recomputing it here from
+         * is_api_user would reintroduce the coupling it exists to avoid.
+         */
+        val canWrite: Boolean,
+    ) : Phase
 }
 
 @Composable
@@ -114,6 +125,7 @@ fun AgentApp() {
                             accountName = p.accountName,
                             deckId = p.deckId,
                             deckName = p.deckName,
+                            canWrite = p.canWrite,
                             modifier = Modifier.fillMaxSize(),
                             visible = tab == 0,
                             onSignOut = { Secrets.clear(ctx); phase = Phase.NeedKey },
@@ -133,6 +145,7 @@ private fun identify(key: String): Phase.Ready {
     return Phase.Ready(
         me.optString("name"), id,
         if (id > 0) api.deck(id).optString("name") else "",
+        me.optBoolean("can_write_decks", false),
     )
 }
 

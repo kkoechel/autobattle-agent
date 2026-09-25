@@ -41,6 +41,8 @@ class Counter(
     }
 
     data class Result(
+        /** The deck measured, never whichever one is active. See Improver. */
+        val deckId: Int,
         val deckName: String,
         val target: Target,
         val before: Record,
@@ -50,6 +52,9 @@ class Counter(
         val addName: String,
         val addQty: Int,
         val removed: List<Pair<Int, Int>>,
+        /** The resulting deck, so an accepted counter can actually be applied. */
+        val cards: List<Int>,
+        val plan: JSONObject,
         val fromTheirList: Boolean,
         val screened: Int,
         val fieldGain: Double,
@@ -169,13 +174,14 @@ class Counter(
         val (gain, t) = Stats.pairedT(vr["CAND"]!!, vr["MINE"]!!)
 
         return Result(
-            deckName = deckName, target = target,
+            deckId = deckId, deckName = deckName, target = target,
             before = recordOf(vr["MINE"]!!, targetSlot),
             after = recordOf(vr["CAND"]!!, targetSlot),
             h2hSeeds = validateSeeds,
             add = best.first, addName = cat.name(best.first),
             addQty = v.swaps.sumOf { it.qty },
             removed = v.swaps.map { it.cut to it.qty },
+            cards = v.cards, plan = v.plan,
             fromTheirList = best.first in fromThem,
             screened = byArm.size,
             fieldGain = gain, fieldT = t,

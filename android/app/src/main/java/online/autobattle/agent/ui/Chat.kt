@@ -33,9 +33,29 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/**
+ * A change the player may apply, and everything needed to confirm it honestly.
+ *
+ * Only offered for results that CLEARED the acceptance gate. A change below
+ * the bar "cannot be told apart from your deck as it stands" -- applying it is
+ * neither an improvement nor a mistake, it is churn, and the project's own
+ * measurements show that stacking such steps tunes a deck to its seed block
+ * rather than to the game. The app will not put a button on that.
+ */
+data class Proposal(
+    val deckId: Int,
+    val deckName: String,
+    val summary: String,
+    val adds: List<Pair<Int, Int>>,
+    val removes: List<Pair<Int, Int>>,
+    val cards: List<Int>,
+    val plan: org.json.JSONObject,
+)
+
 /** One entry in the transcript. */
 sealed interface Line {
     data class Said(val fromAgent: Boolean, val text: String) : Line
+    data class Applied(val deckName: String, val summary: String) : Line
     data class Analysed(val a: Analysis) : Line
     data class Built(val o: Builder.Outcome, val cat: Catalogue) : Line
     data class Improved(val r: Improver.Result, val cat: Catalogue) : Line
@@ -128,7 +148,12 @@ class ChatEngine(
 }
 
 @Composable
-fun Transcript(lines: List<Line>, modifier: Modifier = Modifier) {
+fun Transcript(
+    lines: List<Line>,
+    modifier: Modifier = Modifier,
+    canWrite: Boolean = false,
+    onApply: (Proposal) -> Unit = {},
+) {
     val state = androidx.compose.foundation.lazy.rememberLazyListState()
     LaunchedEffect(lines.size) {
         if (lines.isNotEmpty()) state.animateScrollToItem(lines.size - 1)
@@ -142,10 +167,30 @@ fun Transcript(lines: List<Line>, modifier: Modifier = Modifier) {
                 is Line.Said -> Bubble(l.fromAgent) {
                     Text(l.text, style = MaterialTheme.typography.bodyMedium)
                 }
+                is Line.Applied -> Bubble(true) {
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text("Applied to ${l.deckName}.", color = Good,
+                            fontWeight = FontWeight.SemiBold,
+                            style = MaterialTheme.typography.bodyMedium)
+                        Text(l.summary, color = Subtle,
+                            style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            "It takes effect in the next cohort your deck enters. " +
+                                "Ask me to analyse it again once a few have finished.",
+                            color = Subtle, style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
                 is Line.Analysed -> Bubble(true) { AnalysisCard(l.a) }
                 is Line.Built -> Bubble(true) { BuiltCard(l.o, l.cat) }
-                is Line.Improved -> Bubble(true) { ImprovedCard(l.r, l.cat) }
-                is Line.Countered -> Bubble(true) { CounteredCard(l.r, l.cat) }
+                is Line.Improved -> Bubble(true) {
+                    ImprovedCard(l.r, l.cat)
+                    ApplyRow(proposalFor(l.r, l.cat), canWrite, onApply)
+                }
+                is Line.Countered -> Bubble(true) {
+                    CounteredCard(l.r, l.cat)
+                    ApplyRow(proposalFor(l.r, l.cat), canWrite, onApply)
+                }
             }
         }
     }
@@ -274,6 +319,82 @@ private fun DeckBody(c: Builder.Candidate, cat: Catalogue, compact: Boolean = fa
         Text("$themed themed cards; the other ${c.cards.size - themed} are " +
             "${c.origin}'s, kept because that list already works.",
             color = Subtle, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+
+/** Null unless the result cleared the gate — see Proposal. */
+private fun proposalFor(r: Improver.Result, cat: Catalogue): Proposal? {
+    if (!r.accepted) return null
+    return Proposal(
+        deckId = r.deckId, deckName = r.deckName,
+        summary = "${r.addQty}× ${r.addName} for " +
+            r.removed.joinToString(", ") { "${it.second}× ${cat.name(it.first)}" },
+        adds = listOf(r.add to r.addQty), removes = r.removed,
+        cards = r.cards, plan = r.plan,
+    )
+}
+
+private fun proposalFor(r: Counter.Result, cat: Catalogue): Proposal? {
+    // Judged on the field, exactly as the card itself is: a counter that wins
+    // the named matchup and costs wins elsewhere is not offered, however well
+    // it answers the question that was asked.
+    if (!r.keeps) return null
+    return Proposal(
+        deckId = r.deckId, deckName = r.deckName,
+        summary = "${r.addQty}× ${r.addName} for " +
+            r.removed.joinToString(", ") { "${it.second}× ${cat.name(it.first)}" } +
+            " · vs ${r.target.name}: ${r.before} → ${r.after}",
+        adds = listOf(r.add to r.addQty), removes = r.removed,
+        cards = r.cards, plan = r.plan,
+    )
+}
+
+@Composable
+private fun ApplyRow(p: Proposal?, canWrite: Boolean, onApply: (Proposal) -> Unit) {
+    if (p == null) return
+    var confirming by remember { mutableStateOf(false) }
+
+    if (!canWrite) {
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "To apply this from the app, turn on API deck access under API Key " +
+                "on your profile. Until then the change is yours to make on the site.",
+            color = Subtle, style = MaterialTheme.typography.bodySmall,
+        )
+        return
+    }
+
+    // Confirmed against the exact card-for-card diff, never against a summary.
+    // This is the only write the app makes, and PUT replaces the whole list --
+    // so the thing to be sure about is what the deck will CONTAIN, not what
+    // the change was called.
+    if (confirming) {
+        AlertDialog(
+            onDismissRequest = { confirming = false },
+            title = { Text("Apply to ${p.deckName}?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(p.summary, style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(4.dp))
+                    Text("Your deck will have ${p.cards.size} cards afterwards. " +
+                        "This replaces the list on autobattle.online and takes effect " +
+                        "in the next cohort.",
+                        color = Subtle, style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { confirming = false; onApply(p) }) { Text("Apply") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirming = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    Spacer(Modifier.height(6.dp))
+    Button(onClick = { confirming = true }, modifier = Modifier.fillMaxWidth()) {
+        Text("Apply to my deck")
     }
 }
 
@@ -422,6 +543,7 @@ fun ChatPane(
     accountName: String,
     deckId: Int,
     deckName: String,
+    canWrite: Boolean = false,
     modifier: Modifier = Modifier,
     /** False while another tab is in front; the pane keeps its state and work. */
     visible: Boolean = true,
@@ -522,7 +644,43 @@ fun ChatPane(
                     style = MaterialTheme.typography.bodySmall)
             }
         }
-        Transcript(lines, Modifier.weight(1f).fillMaxWidth())
+        Transcript(
+            lines, Modifier.weight(1f).fillMaxWidth(), canWrite = canWrite,
+            onApply = { p ->
+                busy = true; progress = "Saving to autobattle.online…"
+                scope.launch {
+                    val line = runCatching {
+                        withContext(Dispatchers.IO) {
+                            val key = Secrets.load(ctx) ?: error("No stored key")
+                            val saved = ApiClient(key)
+                                .updateDeck(p.deckId, p.cards, p.plan)
+                            // Trust the server's echo, not our own intent: PUT
+                            // replaces the list wholesale and marks a deck
+                            // invalid outside 90-100 cards, so what came back
+                            // is the only thing that says the write landed.
+                            val n = saved.optInt("card_count", -1)
+                            val valid = saved.optInt("is_valid", 0) == 1
+                            if (n != p.cards.size || !valid)
+                                error("saved as $n cards, valid=$valid")
+                            Line.Applied(p.deckName, p.summary)
+                        }
+                    }.getOrElse {
+                        Line.Said(true, "Could not save: " + readable(it))
+                    }
+                    if (line is Line.Applied) {
+                        Journal.append(ctx, Journal.Entry(
+                            at = System.currentTimeMillis(), kind = "applied",
+                            deck = p.deckName, headline = "Applied: ${p.summary}",
+                            detail = "written to autobattle.online",
+                            wins = 0.0, opponents = 0, seeds = 0,
+                            gain = null, t = null, accepted = true,
+                        ))
+                    }
+                    lines = lines + line
+                    progress = null; busy = false
+                }
+            },
+        )
 
         progress?.let {
             Text(it, color = Subtle, style = MaterialTheme.typography.bodySmall)

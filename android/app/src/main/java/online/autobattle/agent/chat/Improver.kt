@@ -44,6 +44,14 @@ class Improver(
 ) {
 
     data class Result(
+        /**
+         * The deck this was measured against -- NOT whichever deck happens to
+         * be active. "improve deck 46660" targets one deck by id while the
+         * account's active deck is another; writing the result to the active
+         * one would save a measured improvement to a deck it was never
+         * measured on.
+         */
+        val deckId: Int,
         val deckName: String,
         val add: Int,
         val addName: String,
@@ -162,6 +170,7 @@ class Improver(
         val (gain, t) = Stats.pairedT(vr["CAND"]!!, vr["MINE"]!!)
 
         return Result(
+            deckId = deckId,
             deckName = deckName,
             add = best.first, addName = cat.name(best.first),
             addQty = v.swaps.sumOf { it.qty },
