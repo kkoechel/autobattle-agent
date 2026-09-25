@@ -30,6 +30,9 @@ sealed interface Intent {
     /** Find answers to one named opponent. */
     data class Beat(val who: String) : Intent
 
+    /** Measure one named card in the player's own deck. */
+    data class Card(val cardId: Int, val heard: String) : Intent
+
     data object Help : Intent
 
     /** Not understood. Carries what we DID recognise, so the reply is useful. */
@@ -41,7 +44,18 @@ sealed interface DeckRef {
     data class Id(val id: Int) : DeckRef
 }
 
-class Grammar(tagVocabulary: Set<String>) {
+class Grammar(
+    tagVocabulary: Set<String>,
+    /**
+     * Card names, for "what does Bomber Bee do in my deck".
+     *
+     * Card names beat tags when both match, because a name is far more
+     * specific: "Plague Sovereign" contains no tag word, but "Venom Dart"
+     * would otherwise resolve to the poison THEME and quietly build a deck
+     * when the player asked about one card.
+     */
+    cardNames: Map<String, Int> = emptyMap(),
+) {
 
     /**
      * Phrases a player might type, mapped to the tag the engine knows.
@@ -96,6 +110,24 @@ class Grammar(tagVocabulary: Set<String>) {
 
     private val vocab = tagVocabulary.toList().sorted()
 
+    /** normalised card name -> id. Longest match wins, as with tags. */
+    private val nameIndex: Map<String, Int> =
+        cardNames.entries.associate { normalise(it.key) to it.value }
+            .filterKeys { it.isNotBlank() }
+
+    private val maxNameWords =
+        nameIndex.keys.maxOfOrNull { it.count { c -> c == ' ' } + 1 } ?: 1
+
+    private fun findCard(norm: String): Int? {
+        val words = norm.split(" ").filter { it.isNotEmpty() }
+        for (n in minOf(maxNameWords, words.size) downTo 1) {
+            for (i in 0..(words.size - n)) {
+                nameIndex[words.subList(i, i + n).joinToString(" ")]?.let { return it }
+            }
+        }
+        return null
+    }
+
     private val verbs = mapOf(
         "build" to setOf("build", "make", "create", "design", "generate", "brew",
                          "construct", "craft"),
@@ -120,6 +152,13 @@ class Grammar(tagVocabulary: Set<String>) {
 
         val verb = findVerb(words)
         val tag = findTag(norm)
+
+        // A named card wins over everything except an explicit build request.
+        // "what does Venom Dart do", "should I run more Bomber Bee", "cut
+        // Straw Man-at-Arms" are all questions about one card, and every one
+        // of them contains words that would otherwise route elsewhere.
+        val named = findCard(norm)
+        if (named != null && verb != "build") return Intent.Card(named, raw.trim())
 
         // "beat Hymn" -- the target is a deck NAME, so it is whatever follows
         // the verb rather than anything from the tag vocabulary. Checked

@@ -21,6 +21,7 @@ import online.autobattle.agent.chat.Counter
 import online.autobattle.agent.chat.DeckRef
 import online.autobattle.agent.chat.Grammar
 import online.autobattle.agent.chat.Improver
+import online.autobattle.agent.chat.Inspect
 import online.autobattle.agent.chat.Intent
 import online.autobattle.agent.api.ApiClient
 import online.autobattle.agent.data.Analysis
@@ -64,6 +65,7 @@ sealed interface Line {
     data class Built(val o: Builder.Outcome, val cat: Catalogue) : Line
     data class Improved(val r: Improver.Result, val cat: Catalogue) : Line
     data class Countered(val r: Counter.Result, val cat: Catalogue) : Line
+    data class Inspected(val r: Inspect.Result, val cat: Catalogue) : Line
 }
 
 /**
@@ -81,10 +83,22 @@ class ChatEngine(
     private val analyse: (DeckRef) -> Analysis,
     private val improve: (DeckRef) -> Improver?,
     private val counter: () -> Counter?,
+    private val inspect: () -> Inspect?,
 ) {
     fun respond(text: String, onProgress: (String) -> Unit): List<Line> =
         when (val i = grammar.parse(text)) {
             is Intent.Help -> listOf(Line.Said(true, HELP))
+
+            is Intent.Card -> {
+                val ins = inspect()
+                if (ins == null) listOf(Line.Said(true, "I could not load your deck."))
+                else {
+                    val r = ins.run(i.cardId, onProgress = onProgress)
+                    if (r == null) listOf(Line.Said(true,
+                        "There is nothing I can try with that card in this deck."))
+                    else listOf(Line.Inspected(r, cat))
+                }
+            }
 
             is Intent.Analyse -> {
                 onProgress("Simulating your deck against the field…")
@@ -147,7 +161,9 @@ class ChatEngine(
                 "•  build me a poison deck — generate candidates around a theme " +
                 "and measure them against the field's best\n" +
                 "•  beat Hymn — search for an answer to one named deck, then check " +
-                "it has not cost you the rest of the field"
+                "it has not cost you the rest of the field\n" +
+                "•  what does Bomber Bee do in my deck — measure one card you name, " +
+                "both adding more of it and cutting it entirely"
     }
 }
 
@@ -196,6 +212,7 @@ fun Transcript(
                     CounteredCard(l.r, l.cat)
                     ApplyRow(proposalFor(l.r, l.cat), canWrite, onApply)
                 }
+                is Line.Inspected -> Bubble(true) { InspectCard(l.r, canWrite, onApply) }
             }
         }
     }
@@ -366,6 +383,71 @@ private fun proposalFor(r: Counter.Result, cat: Catalogue): Proposal {
         adds = listOf(r.add to r.addQty), removes = r.removed,
         cards = r.cards, plan = r.plan,
     )
+}
+
+@Composable
+private fun InspectCard(r: Inspect.Result, canWrite: Boolean, onApply: (Proposal) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(r.cardName, fontWeight = FontWeight.SemiBold)
+        Text(
+            if (r.copiesNow > 0) "You run ${r.copiesNow} of a possible ${r.deckLimit}."
+            else "Not in your deck. You could run up to ${r.deckLimit}.",
+            color = Subtle, style = MaterialTheme.typography.bodySmall,
+        )
+        if (r.rulesText.isNotBlank()) {
+            Text(r.rulesText, style = MaterialTheme.typography.bodySmall)
+        }
+        Text("Your deck as it stands: %.1f wins of %d".format(r.incumbent.wins, r.opponents),
+            style = MaterialTheme.typography.bodyMedium)
+
+        // Every direction measured is shown, not the best one. The player
+        // asked what this card does; "cutting it costs you nothing" is as much
+        // of an answer as "one more is worth half a win", and only one of them
+        // is a recommendation.
+        r.variants.forEach { v ->
+            Spacer(Modifier.height(2.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(v.label, style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f))
+                Text("%+.1f".format(v.gain), fontFamily = FontFamily.Monospace,
+                    color = when {
+                        v.recommended -> Good
+                        v.harmful -> Bad
+                        else -> Subtle
+                    })
+            }
+            Text(
+                when {
+                    v.recommended ->
+                        "%.1f wins, t=%.1f — a real gain.".format(v.wins, v.t)
+                    v.harmful ->
+                        "%.1f wins, t=%.1f — a real loss. It is earning its slot."
+                            .format(v.wins, v.t)
+                    else ->
+                        "%.1f wins, t=%.1f — inside the noise.".format(v.wins, v.t)
+                },
+                color = Subtle, style = MaterialTheme.typography.bodySmall,
+            )
+            ApplyRow(
+                Proposal(
+                    deckId = r.deckId, deckName = r.deckName,
+                    summary = "${r.cardName}: ${v.label}",
+                    verdict = if (v.harmful)
+                        ("Measured %+.1f wins at t=%.1f over %d cohorts — this makes " +
+                            "your deck measurably worse.").format(v.gain, v.t, r.seeds)
+                    else
+                        "Measured %+.1f wins at t=%.1f over %d cohorts against the full field."
+                            .format(v.gain, v.t, r.seeds),
+                    recommended = v.recommended,
+                    adds = emptyList(), removes = emptyList(),
+                    cards = v.cards, plan = v.plan,
+                ), canWrite, onApply,
+            )
+        }
+        Text("%d cohorts vs %d decks · %.0fs. Every option shares one seed block, so " .format(r.seeds, r.opponents, r.elapsedMs / 1000.0) +
+            "they are comparable with each other and not just with your deck.",
+            color = Subtle, style = MaterialTheme.typography.bodySmall)
+    }
 }
 
 @Composable
@@ -650,11 +732,24 @@ fun ChatPane(
                 val analyst = Analyst(ctx, ApiClient(key))
                 val cat = analyst.catalogueObj()
                 val meta = analyst.metaDecks()
-                val grammar = Grammar(Grammar.vocabularyOf(cat))
+                val names = HashMap<String, Int>()
+                for (id in cat.byId.keys) {
+                    if (cat.isPlayable(id)) names[cat.name(id)] = id
+                }
+                val grammar = Grammar(Grammar.vocabularyOf(cat), names)
                 grammar to ChatEngine(
                     cat, Builder(cat, meta), grammar,
                     analyse = { ref ->
                         analyst.analyse(if (ref is DeckRef.Id) ref.id else deckId)
+                    },
+                    inspect = {
+                        val d = analyst.deckFor(deckId)
+                        if (d == null) null else Inspect(
+                            cat, meta, deckId,
+                            d.optString("name").ifBlank { "your deck" },
+                            Analyst.expandCards(d),
+                            d.optJSONObject("battle_plan") ?: JSONObject(),
+                        )
                     },
                     counter = {
                         val d = analyst.deckFor(deckId)

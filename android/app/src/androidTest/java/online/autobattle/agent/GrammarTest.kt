@@ -34,7 +34,12 @@ class GrammarTest {
 
     private val cat by lazy { Catalogue(JSONArray(asset("cards.json"))) }
     private val vocab by lazy { Grammar.vocabularyOf(cat) }
-    private val g by lazy { Grammar(vocab) }
+    private val names by lazy {
+        val m = HashMap<String, Int>()
+        for (id in cat.byId.keys) if (cat.isPlayable(id)) m[cat.name(id)] = id
+        m
+    }
+    private val g by lazy { Grammar(vocab, names) }
 
     @Test fun vocabulary_is_drawn_from_playable_cards_only() {
         assertTrue("expected a real vocabulary, got ${vocab.size}", vocab.size in 20..120)
@@ -127,6 +132,34 @@ class GrammarTest {
         } else {
             assertEquals("poison", (i as Intent.Build).tag)
         }
+    }
+
+    @Test fun a_named_card_resolves_to_that_card() {
+        val id = names["Bomber Bee"]
+        if (id != null) {
+            val i = g.parse("what does Bomber Bee do in my deck")
+            assertTrue("got $i", i is Intent.Card)
+            assertEquals(id, (i as Intent.Card).cardId)
+        }
+    }
+
+    @Test fun a_card_name_beats_a_tag_inside_it() {
+        // "Venom Dart" contains no tag word, but a card whose name embeds one
+        // must still resolve to the CARD: asking about one card and being
+        // handed a 30-second theme build is the worst kind of near-miss,
+        // because the answer looks plausible.
+        val poisonCard = names.keys.firstOrNull { it.contains("Venom", true) }
+        if (poisonCard != null) {
+            val i = g.parse("should I run more $poisonCard")
+            assertTrue("$poisonCard -> $i", i is Intent.Card)
+        }
+    }
+
+    @Test fun an_explicit_build_still_wins_over_a_card_name() {
+        // "build me a poison deck" must stay a build even if some card is
+        // called something poison-ish; the verb is unambiguous.
+        val i = g.parse("build me a poison deck")
+        assertTrue("got $i", i is Intent.Build)
     }
 
     @Test fun help_is_reachable() {
