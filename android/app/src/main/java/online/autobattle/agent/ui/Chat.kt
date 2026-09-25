@@ -23,6 +23,7 @@ import online.autobattle.agent.chat.Intent
 import online.autobattle.agent.api.ApiClient
 import online.autobattle.agent.data.Analysis
 import online.autobattle.agent.data.Analyst
+import online.autobattle.agent.data.Journal
 import online.autobattle.agent.data.Secrets
 import online.autobattle.agent.engine.Catalogue
 import org.json.JSONObject
@@ -352,6 +353,8 @@ fun ChatPane(
     deckId: Int,
     deckName: String,
     modifier: Modifier = Modifier,
+    /** False while another tab is in front; the pane keeps its state and work. */
+    visible: Boolean = true,
     onSignOut: () -> Unit,
 ) {
     val ctx = LocalContext.current
@@ -420,7 +423,11 @@ fun ChatPane(
         )
     }
 
-    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(
+        modifier.fillMaxWidth().then(if (visible) Modifier else Modifier.size(0.dp)),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (!visible) return@Column
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -453,6 +460,7 @@ fun ChatPane(
                         engine!!.respond(text) { p -> progress = p }
                     }
                 }.getOrElse { listOf(Line.Said(true, readable(it))) }
+                said.forEach { record(ctx, it) }
                 lines = lines + said
                 progress = null
                 busy = false
@@ -468,4 +476,40 @@ private fun greeting(deckName: String, g: Grammar): String = buildString {
     append("try one of: ")
     append(g.someThemes(5).joinToString(", "))
     append(".")
+}
+
+
+/**
+ * Write a measured answer into the journal.
+ *
+ * Only results with a number go in. A greeting or a "did not follow that" is
+ * conversation, not a finding, and a notebook padded with those stops being
+ * worth reading.
+ */
+private fun record(ctx: android.content.Context, l: Line) {
+    val e = when (l) {
+        is Line.Built -> Journal.Entry(
+            at = System.currentTimeMillis(), kind = "build",
+            deck = l.o.best.name,
+            headline = l.o.best.name,
+            detail = "vs ${l.o.controlName}, the field's best" +
+                (if (l.o.best.origin == "theme") " · built from the theme"
+                 else " · on ${l.o.best.origin}"),
+            wins = l.o.score.wins, opponents = l.o.opponents, seeds = l.o.seeds,
+            gain = l.o.gain, t = l.o.t, accepted = l.o.beatsField,
+        )
+        is Line.Improved -> Journal.Entry(
+            at = System.currentTimeMillis(), kind = "improve",
+            deck = l.r.deckName,
+            headline = "${l.r.addQty}× ${l.r.addName}",
+            detail = "for " + l.r.removed.joinToString(", ") {
+                "${it.second}× ${l.cat.name(it.first)}"
+            } + " · led a ${l.r.screened}-card census by %+.1f".format(l.r.screenDelta),
+            wins = l.r.candidate.wins, opponents = l.r.opponents,
+            seeds = l.r.validateSeeds,
+            gain = l.r.gain, t = l.r.t, accepted = l.r.accepted,
+        )
+        else -> null
+    } ?: return
+    Journal.append(ctx, e)
 }

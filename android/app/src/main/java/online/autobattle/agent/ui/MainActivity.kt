@@ -9,7 +9,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -96,13 +98,29 @@ fun AgentApp() {
                     }
                 }
 
-                is Phase.Ready -> ChatPane(
-                    accountName = p.accountName,
-                    deckId = p.deckId,
-                    deckName = p.deckName,
-                    modifier = Modifier.weight(1f),
-                    onSignOut = { Secrets.clear(ctx); phase = Phase.NeedKey },
-                )
+                is Phase.Ready -> {
+                    // The chat pane is kept alive across tab switches rather
+                    // than swapped out, so a 20-second improve run is not
+                    // thrown away by looking at the journal while it works.
+                    var tab by rememberSaveable { mutableIntStateOf(0) }
+                    TabRow(selectedTabIndex = tab, containerColor = Color.Transparent) {
+                        Tab(selected = tab == 0, onClick = { tab = 0 },
+                            text = { Text("Chat") })
+                        Tab(selected = tab == 1, onClick = { tab = 1 },
+                            text = { Text("Findings") })
+                    }
+                    Box(Modifier.weight(1f)) {
+                        ChatPane(
+                            accountName = p.accountName,
+                            deckId = p.deckId,
+                            deckName = p.deckName,
+                            modifier = Modifier.fillMaxSize(),
+                            visible = tab == 0,
+                            onSignOut = { Secrets.clear(ctx); phase = Phase.NeedKey },
+                        )
+                        if (tab == 1) FindingsPane(Modifier.fillMaxSize())
+                    }
+                }
             }
         }
     }
