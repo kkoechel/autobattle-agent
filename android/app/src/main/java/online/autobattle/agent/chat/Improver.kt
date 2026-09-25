@@ -61,6 +61,18 @@ class Improver(
         val plan: JSONObject,
         val screened: Int,
         val screenDelta: Double,                // versus the filler control arm
+        /**
+         * EVERY card measured, best first, as wins against the blank control
+         * at its own cut depth.
+         *
+         * Kept rather than discarded because a card that costs eight wins is
+         * as informative as one that gains two, and because handing back a
+         * single verdict from 107 measurements leaves nothing to decide. These
+         * are SCREEN numbers and carry the winner's curse: they order
+         * candidates, they cannot accept one. The survivor's real value is the
+         * separately validated figure above.
+         */
+        val census: List<Pair<Int, Double>>,
         val gain: Double,                       // validated, versus the real deck
         val t: Double,
         val candidate: Score,
@@ -176,7 +188,7 @@ class Improver(
             addQty = v.swaps.sumOf { it.qty },
             removed = v.swaps.map { it.cut to it.qty },
             cards = v.cards, plan = v.plan,
-            screened = byArm.size, screenDelta = best.second,
+            screened = byArm.size, screenDelta = best.second, census = ordered,
             gain = gain, t = t,
             candidate = vr["CAND"]!!, incumbent = vr["MINE"]!!,
             validateSeeds = validateSeeds, opponents = vOpp.size,

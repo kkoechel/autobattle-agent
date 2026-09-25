@@ -1,6 +1,7 @@
 package online.autobattle.agent.ui
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -46,6 +47,9 @@ data class Proposal(
     val deckId: Int,
     val deckName: String,
     val summary: String,
+    /** What the measurement actually said, shown at the point of decision. */
+    val verdict: String,
+    val recommended: Boolean,
     val adds: List<Pair<Int, Int>>,
     val removes: List<Pair<Int, Int>>,
     val cards: List<Int>,
@@ -185,6 +189,7 @@ fun Transcript(
                 is Line.Built -> Bubble(true) { BuiltCard(l.o, l.cat) }
                 is Line.Improved -> Bubble(true) {
                     ImprovedCard(l.r, l.cat)
+                    Census(l.r.census, l.cat, l.r.screened)
                     ApplyRow(proposalFor(l.r, l.cat), canWrite, onApply)
                 }
                 is Line.Countered -> Bubble(true) {
@@ -205,7 +210,12 @@ private fun Bubble(fromAgent: Boolean, content: @Composable () -> Unit) {
             else MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
             shape = RoundedCornerShape(14.dp),
             modifier = Modifier.fillMaxWidth(if (fromAgent) 1f else 0.85f),
-        ) { Box(Modifier.padding(12.dp)) { content() } }
+            // Column, not Box. A Box stacks its children on top of one
+            // another, which was invisible while every bubble held a single
+            // Column and silently overlapped the moment one held three --
+            // the card, the census and the apply button drew over each other,
+            // and only the last one painted was legible.
+        ) { Column(Modifier.padding(12.dp)) { content() } }
     }
 }
 
@@ -323,11 +333,16 @@ private fun DeckBody(c: Builder.Candidate, cat: Catalogue, compact: Boolean = fa
 }
 
 
-/** Null unless the result cleared the gate — see Proposal. */
-private fun proposalFor(r: Improver.Result, cat: Catalogue): Proposal? {
-    if (!r.accepted) return null
+private fun proposalFor(r: Improver.Result, cat: Catalogue): Proposal {
     return Proposal(
         deckId = r.deckId, deckName = r.deckName,
+        verdict = if (r.accepted)
+            "Measured %+.1f wins at t=%.1f over %d cohorts — clears the bar."
+                .format(r.gain, r.t, r.validateSeeds)
+        else
+            "Measured %+.1f wins at t=%.1f over %d cohorts — below the bar, so it cannot be told apart from your deck as it stands."
+                .format(r.gain, r.t, r.validateSeeds),
+        recommended = r.accepted,
         summary = "${r.addQty}× ${r.addName} for " +
             r.removed.joinToString(", ") { "${it.second}× ${cat.name(it.first)}" },
         adds = listOf(r.add to r.addQty), removes = r.removed,
@@ -335,13 +350,16 @@ private fun proposalFor(r: Improver.Result, cat: Catalogue): Proposal? {
     )
 }
 
-private fun proposalFor(r: Counter.Result, cat: Catalogue): Proposal? {
-    // Judged on the field, exactly as the card itself is: a counter that wins
-    // the named matchup and costs wins elsewhere is not offered, however well
-    // it answers the question that was asked.
-    if (!r.keeps) return null
+private fun proposalFor(r: Counter.Result, cat: Catalogue): Proposal {
     return Proposal(
         deckId = r.deckId, deckName = r.deckName,
+        verdict = if (r.keeps)
+            "Improves %s and costs nothing elsewhere: %+.1f wins across the field, t=%.1f."
+                .format(r.target.name, r.fieldGain, r.fieldT)
+        else
+            "Answers %s (%s → %s) but costs %+.1f wins across the whole field, t=%.1f."
+                .format(r.target.name, r.before, r.after, r.fieldGain, r.fieldT),
+        recommended = r.keeps,
         summary = "${r.addQty}× ${r.addName} for " +
             r.removed.joinToString(", ") { "${it.second}× ${cat.name(it.first)}" } +
             " · vs ${r.target.name}: ${r.before} → ${r.after}",
@@ -351,35 +369,35 @@ private fun proposalFor(r: Counter.Result, cat: Catalogue): Proposal? {
 }
 
 @Composable
-private fun ApplyRow(p: Proposal?, canWrite: Boolean, onApply: (Proposal) -> Unit) {
-    if (p == null) return
+private fun ApplyRow(p: Proposal, canWrite: Boolean, onApply: (Proposal) -> Unit) {
     var confirming by remember { mutableStateOf(false) }
 
     if (!canWrite) {
         Spacer(Modifier.height(6.dp))
         Text(
-            "To apply this from the app, turn on API deck access under API Key " +
+            "To apply changes from the app, turn on API deck access under API Key " +
                 "on your profile. Until then the change is yours to make on the site.",
             color = Subtle, style = MaterialTheme.typography.bodySmall,
         )
         return
     }
 
-    // Confirmed against the exact card-for-card diff, never against a summary.
-    // This is the only write the app makes, and PUT replaces the whole list --
-    // so the thing to be sure about is what the deck will CONTAIN, not what
-    // the change was called.
+    // Offered whatever the measurement said. The gate is an OPINION, not a
+    // lock: it answers "should I recommend this", and the player is answering
+    // "do I want it". Its verdict travels with the button rather than
+    // replacing it, so the choice is informed without being made for them.
     if (confirming) {
         AlertDialog(
             onDismissRequest = { confirming = false },
             title = { Text("Apply to ${p.deckName}?") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(p.summary, style = MaterialTheme.typography.bodyMedium)
-                    Spacer(Modifier.height(4.dp))
-                    Text("Your deck will have ${p.cards.size} cards afterwards. " +
-                        "This replaces the list on autobattle.online and takes effect " +
-                        "in the next cohort.",
+                    Text(p.verdict, color = if (p.recommended) Good else Warn,
+                        style = MaterialTheme.typography.bodySmall)
+                    Text("Your deck will have ${p.cards.size} cards afterwards. This " +
+                        "replaces the list on autobattle.online and takes effect in " +
+                        "the next cohort.",
                         color = Subtle, style = MaterialTheme.typography.bodySmall)
                 }
             },
@@ -393,8 +411,76 @@ private fun ApplyRow(p: Proposal?, canWrite: Boolean, onApply: (Proposal) -> Uni
     }
 
     Spacer(Modifier.height(6.dp))
-    Button(onClick = { confirming = true }, modifier = Modifier.fillMaxWidth()) {
-        Text("Apply to my deck")
+    if (p.recommended) {
+        Button(onClick = { confirming = true }, modifier = Modifier.fillMaxWidth()) {
+            Text("Apply to my deck")
+        }
+    } else {
+        // Present but quieter. Nothing is stopping them; the app simply is not
+        // urging them.
+        OutlinedButton(onClick = { confirming = true }, modifier = Modifier.fillMaxWidth()) {
+            Text("Apply anyway", color = Subtle)
+        }
+    }
+}
+
+/**
+ * Every card the census measured, best and worst first.
+ *
+ * The middle is elided rather than paginated: a hundred cards clustered
+ * within a win of a blank is one fact, not a hundred, and printing them all
+ * would bury the two ends that actually say something.
+ */
+@Composable
+private fun Census(census: List<Pair<Int, Double>>, cat: Catalogue, screened: Int) {
+    if (census.size < 4) return
+    var open by remember { mutableStateOf(false) }
+
+    Spacer(Modifier.height(4.dp))
+    TextButton(onClick = { open = !open }, contentPadding = PaddingValues(0.dp)) {
+        Text(if (open) "Hide the other ${screened - 1} cards"
+             else "Show what all $screened cards measured",
+            color = MaterialTheme.colorScheme.primary,
+            style = MaterialTheme.typography.bodySmall)
+    }
+    if (!open) return
+
+    val top = census.take(8)
+    val bottom = census.takeLast(4)
+    val middle = census.size - top.size - bottom.size
+
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        top.forEach { (id, d) -> CensusRow(cat.name(id), d) }
+        if (middle > 0) {
+            val lo = census[top.size].second
+            val hi = census[census.size - bottom.size - 1].second
+            Text("─ $middle more between %+.1f and %+.1f ─".format(hi, lo),
+                color = Subtle, fontSize = 11.sp,
+                modifier = Modifier.padding(vertical = 3.dp))
+        }
+        bottom.forEach { (id, d) -> CensusRow(cat.name(id), d) }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Screen numbers, against a blank card in the same slot: 16 opponents, " +
+                "5 cohorts each. They order candidates and nothing more — the " +
+                "best was re-measured properly above, and came out lower. Anything " +
+                "here you want tested for real, ask me to improve with it.",
+            color = Subtle, style = MaterialTheme.typography.bodySmall,
+        )
+    }
+}
+
+@Composable
+private fun CensusRow(name: String, delta: Double) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(name.take(28), style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.weight(1f))
+        Text("%+.1f".format(delta), fontFamily = FontFamily.Monospace, fontSize = 12.sp,
+            color = when {
+                delta >= 1.0 -> Good
+                delta <= -1.0 -> Bad
+                else -> Subtle
+            })
     }
 }
 
