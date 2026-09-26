@@ -12,6 +12,11 @@ EnvironmentFile=/etc/abagent.env
 # --deck-id is required: cycle edits and registers that deck unattended, so it
 # must never fall back to "whatever deck is active". Set ABAGENT_DECK_ID in
 # /etc/abagent.env.
+# Do NOT add --repick-complement here. This account's rental slot deck is
+# written by abagent-discover.service; cycle only points the slot at it and
+# keeps the Double Entry Pass alive. Enabling the complement makes cycle
+# overwrite a discovered deck every ten minutes, and it would look like the
+# discovery reverting on its own rather than like a conflict.
 ExecStart=/usr/bin/python3 -u -m abagent.cli --arena pure --deck-id ${ABAGENT_DECK_ID} cycle --budget 260 --second-deck-id ${ABAGENT_SECOND_DECK_ID}
 
 # subgames-nyc1 is a 1-vCPU box also serving live Reprisal, Ossuary, Mage Wars

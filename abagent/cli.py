@@ -712,6 +712,17 @@ def maintain_second(args, api: Api, h, cards, plan, opps,
         state["pass_expiry"] = exp
     second.assert_second(api, args.arena_type_id, args.second_deck_id, log=log)
 
+    # DANGER, and the reason this is off by default.
+    #
+    # There is exactly ONE rental slot per account, and on ReviewAccount the
+    # work is split: cycle asserts the slot and keeps the Double Entry Pass
+    # alive (above), while abagent-discover.service writes that same deck's
+    # CONTENTS with whatever it has discovered. Those two jobs are
+    # complementary only while this branch stays shut. Turning it on makes
+    # cycle overwrite the discoverer's deck every ten minutes, and the
+    # symptom would be a discovery that silently reverts rather than an error.
+    #
+    # If the complement is ever wanted back, stop abagent-discover first.
     if args.repick_complement if repick is None else repick:
         store = _load_or(f"history_{args.arena}.json")
         recs = history.deck_records(store, min_appearances=3, window=24)[:6]
