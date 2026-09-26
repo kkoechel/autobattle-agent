@@ -1071,6 +1071,52 @@ def cmd_explore(args, api: Api) -> int:
         print(f"explore: {len(mutants)} mutations of the top "
               f"{len(top)} decks, {len(archs)} tag archetypes")
         archs = mutants + archs
+    # Decks composed from MEASURED card value, one per theme the combo sweep
+    # has covered. This is the generator meant to produce something new:
+    # archetype.affinity() ranks by tag overlap, a lexical proxy that made
+    # decks screening 4-10 of 24, while these rank by what each card actually
+    # measured against a blank in that theme's own shell.
+    try:
+        from . import combo as _combo
+        cstore = _combo.load(os.path.join(VAR, "combos.json"))
+        measured = _combo.measured_archetypes(cstore, catalog, meta["decks"])
+        added = 0
+        for a in measured:
+            key = tuple(sorted(collections.Counter(a.cards).items()))
+            if key in seen:
+                continue
+            seen.add(key)
+            archs.append(a)
+            added += 1
+        if added:
+            print(f"explore: {added} measured archetypes from "
+                  f"{len(cstore.get('themes') or {})} swept themes")
+    except Exception as e:                       # a missing store is normal
+        print(f"explore: no measured archetypes ({e})")
+
+    # ── novelty gate ──────────────────────────────────────────────────────
+    # A high rank reached by cloning the deck above it is not worth having.
+    # Candidates too close to a deck we do not own are dropped BEFORE they are
+    # screened, which also saves the simulation. Our own decks are excluded
+    # from the comparison on purpose: mutating a stranger's list is copying,
+    # mutating our own is iterating, and only the first is the problem.
+    if args.max_overlap > 0:
+        from . import novelty
+        ours = {args.deck_id, args.second_deck_id}
+        fresh, copies = [], []
+        for a in archs:
+            n, who = novelty.nearest(a.cards, meta["decks"], ours)
+            if n <= args.max_overlap:
+                fresh.append(a)
+            else:
+                copies.append((n, a, who))
+        if copies:
+            worst = max(copies, key=lambda c: c[0])
+            print(f"explore: dropped {len(copies)} candidate(s) as copies "
+                  f"(worst {worst[0]}/100 vs "
+                  f"'{str((worst[2] or {}).get('deck_name'))[:22]}')")
+        archs = fresh
+
     if not archs:
         print("explore: no archetypes from this slice")
         _save("explore.json", state)
@@ -1119,7 +1165,26 @@ def cmd_explore(args, api: Api) -> int:
     # the FOCUS and the next cycles mutate the focus itself rather than moving
     # on. Small swaps this time -- the deck already works, so the question is
     # what improves it, not what replaces it.
+    # Evict a focus that is itself a copy.
+    #
+    # The gate above stops NEW copies entering; it says nothing about one that
+    # is already installed, and the incumbent is exactly where a copy does its
+    # damage -- it holds the slot, it screens well because it inherited a
+    # tuned list, and nothing novel out-screens it for a long time. Iron Fury
+    # sat at rank 1 sharing 97 of 100 cards with the deck at rank 2. Holding
+    # that is the outcome we decided was not worth having, so it goes even
+    # though it is winning.
     focus = state.get("focus")
+    if focus and args.max_overlap > 0 and focus.get("cards"):
+        from . import novelty
+        n, who = novelty.nearest(focus["cards"], meta["decks"],
+                                 {args.deck_id, args.second_deck_id})
+        if n > args.max_overlap:
+            print(f"explore: evicting focus '{focus.get('name')}' -- {n}/100 "
+                  f"shared with '{str((who or {}).get('deck_name'))[:22]}'. "
+                  f"A rank held by copying is not worth holding.")
+            state["focus"] = None
+            focus = None
     if focus:
         from .archetype import mutate
         rng = random.Random(int(time.time()))
@@ -1207,7 +1272,7 @@ def cmd_explore(args, api: Api) -> int:
     for w, i in ranked:
         if ident(archs[i]) in seen_ids or w < floor:
             continue
-        pick = (w, i, name_for(archs[i].theme, archs[i].seed_name))
+        pick = (w, i, name_for(archs[i].theme, archs[i].seed_name, archs[i].cards))
         break
 
     if not pick:
@@ -1320,7 +1385,7 @@ def cmd_beat(args, api: Api) -> int:
         key = tuple(sorted(collections.Counter(a.cards).items()))
         if key not in seen:
             seen.add(key)
-            cands.append((name_for(a.theme, a.seed_name), a.cards, a.plan))
+            cands.append((name_for(a.theme, a.seed_name, a.cards), a.cards, a.plan))
     for d in meta["decks"]:
         if d.get("deck_id") != args.target:
             cands.append((f"[field] {d['deck_name'][:22]}", d["cards"],
@@ -1594,6 +1659,11 @@ def main(argv=None) -> int:
     y.set_defaults(fn=cmd_cycle)
 
     e = sub.add_parser("explore")
+    e.add_argument("--max-overlap", type=int, default=50,
+                   help="reject a candidate sharing more than this many cards "
+                        "with any deck we do not own; 0 disables. 50 sits "
+                        "above the 90th percentile of real pairwise overlap "
+                        "in a live cohort and below the duplicates")
     e.add_argument("--second-deck-id", type=int,
                    default=int(os.environ.get("ABAGENT_SECOND_DECK_ID") or 0) or None)
     e.add_argument("--slice", type=int, default=40)
@@ -1601,8 +1671,16 @@ def main(argv=None) -> int:
                    help="treat cards added this recently as priority seeds")
     e.add_argument("--validate-seeds", type=int, default=161)
     e.add_argument("--outage-tolerance", type=int, default=3)
-    e.add_argument("--mutate", action="store_true", default=True,
-                   help="mutate top decks with unplayed cards (primary source)")
+    # OFF by default since 2026-09-26. This mutated the FIELD's top decks,
+    # which is how the agents ended up holding ranks 1 and 2 with lists
+    # sharing 97 of 100 cards. Every deck it produces is ~95 cards of
+    # somebody else's work, so the novelty gate now rejects all of it and
+    # generating it is pure waste. Slow iteration on our OWN deck still
+    # happens, in the refine step, which is the part that was never the
+    # problem. Pass --mutate to bring it back.
+    e.add_argument("--mutate", action="store_true", default=False,
+                   help="mutate the FIELD's top decks; output is normally "
+                        "rejected by --max-overlap")
     e.add_argument("--no-mutate", dest="mutate", action="store_false")
     e.add_argument("--mutate-from", type=int, default=8,
                    help="how many top decks to use as shells")

@@ -1,0 +1,38 @@
+[Unit]
+Description=AutoBattle card-interaction sweep — one theme per run
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=abagent
+Group=abagent
+WorkingDirectory=/opt/abagent
+EnvironmentFile=/etc/abagent-explore.env
+
+# Shares the explorer's cache: it reads the same cards.json and meta, and
+# writes combos.json, which is exactly what that explorer then builds from.
+Environment=ABAGENT_VAR=/opt/abagent/var-explore
+
+# Writes no deck and touches no slot. It only measures, so it can run
+# alongside everything else without coordination.
+ExecStart=/usr/bin/python3 -u -m abagent.cli --arena pure --deck-id ${ABAGENT_DECK_ID} combo
+
+# Lowest priority of anything here. It is the least urgent work on the box and
+# the only job with no deadline at all.
+Nice=19
+CPUWeight=5
+IOWeight=5
+
+MemoryHigh=400M
+MemoryMax=600M
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/abagent/var-explore /opt/abagent/bin
+TimeoutStartSec=1500
+
+[Install]
+WantedBy=multi-user.target

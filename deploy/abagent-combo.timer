@@ -1,0 +1,18 @@
+[Unit]
+Description=AutoBattle card-interaction sweep, every 20 minutes
+
+[Timer]
+# Every 20 minutes at :12, :32, :52 -- off the explorers (:05/:35) and the
+# competitor (:06/:10). One theme per run at 20-130 seconds each, so the ~55
+# buildable tags are covered in about a day and then re-measured on rotation.
+#
+# It exists to fill combos.json, which is what the explorer composes its
+# measured archetypes from. Until a theme has been swept, there is nothing
+# for the generator to build with, so early cadence matters more than it
+# will once the store is populated.
+OnCalendar=*:12/20
+AccuracySec=30s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

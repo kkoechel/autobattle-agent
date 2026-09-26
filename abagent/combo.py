@@ -324,7 +324,9 @@ def record(store: dict, rep: ThemeReport, keep_combos: int = 8) -> dict:
     """
     store.setdefault("themes", {})[rep.tag] = {
         "shell_seed": rep.shell_seed,
-        "singles": [[r.card_id, r.name, round(r.delta, 2)] for r in rep.singles[:12]],
+        # Twenty, not twelve: compose() fills 75 slots from these, and a
+        # 12-card list runs out and falls back to blanks.
+        "singles": [[r.card_id, r.name, round(r.delta, 2)] for r in rep.singles[:20]],
         "measured_pairs": len(rep.combos),
         "confirmed": [[c.a, c.b, round(c.synergy, 2), round(c.t, 2)]
                       for c in rep.confirmed],
@@ -351,3 +353,103 @@ def next_theme(store: dict, catalog: dict[int, dict]) -> str:
             return t
     order = themes(catalog)
     return order[0] if order else ""
+
+
+def compose(store: dict, tag: str, catalog: dict[int, dict],
+            meta_decks: list[dict], size: int = 100, staple_slots: int = 25):
+    """Build a deck for a theme from MEASURED card value, not tag overlap.
+
+    This is the replacement for archetype.affinity(). Instead of ranking the
+    theme's cards by how many tags they share with a seed -- a lexical proxy
+    that produced decks screening 4-10 of 24 -- it ranks them by what each one
+    actually measured against a blank card in that theme's own shell.
+
+    Cards that measured at or below zero are excluded outright. They are, by
+    the measurement, worse than an empty slot; tag overlap could never tell
+    the difference and put them in anyway.
+
+    One honest caveat, because this project has made the mistake repeatedly:
+    the deltas were measured at five copies substituted into ONE slot of the
+    theme's naive shell, and they are being reused to rank cards for a
+    different deck. That is a transfer, and transfers have been wrong here
+    before -- a +17W card_order effect, a "-17W" cheapest swap. It is a much
+    closer transfer than tag overlap (same theme, same shell family) and every
+    deck built this way is screened live before it is kept, but the deltas are
+    a PRIOR, not a promise.
+    """
+    info = (store.get("themes") or {}).get(tag) or {}
+    ranked = [(int(cid), float(d)) for cid, _name, d in (info.get("singles") or [])
+              if float(d) > 0 and is_playable(catalog.get(int(cid)))]
+    if not ranked:
+        return None
+
+    limit = lambda c: int(catalog.get(c, {}).get("deck_limit") or 0)
+    picks: list[tuple[int, int]] = []
+    total = 0
+    room = size - staple_slots
+    for cid, _d in ranked:
+        if total >= room:
+            break
+        q = min(limit(cid), room - total)
+        if q > 0:
+            picks.append((cid, q))
+            total += q
+
+    for cid in archetype.staples(meta_decks, catalog, top=10):
+        if total >= size:
+            break
+        if any(cid == c for c, _ in picks):
+            continue
+        q = min(limit(cid), size - total, 15)
+        if q > 0:
+            picks.append((cid, q))
+            total += q
+
+    # Top up what we already chose before reaching for a blank: more copies of
+    # a card that MEASURED positive beats a card that measured nothing at all.
+    if total < size:
+        for i, (cid, q) in enumerate(picks):
+            if total >= size:
+                break
+            head = min(limit(cid) - q, size - total)
+            if head > 0:
+                picks[i] = (cid, q + head)
+                total += head
+    if total < size:
+        picks.append((archetype.INFINITE_FILLER, size - total))
+        total = size
+
+    cards: list[int] = []
+    for cid, q in picks:
+        cards.extend([cid] * q)
+    if len(cards) != size:
+        return None
+
+    # Play order follows the measurement too, best first -- the one part of a
+    # battle plan a generator can get right for free, and worth more than any
+    # other plan field.
+    plan = {
+        "play_priority": "card_order",
+        "card_order": [c for c, _ in picks],
+        "card_order_hold": False,
+        "energy_hold": 0,
+        "target_preference": "least_armor",
+    }
+    seed = picks[0][0]
+    return archetype.Archetype(
+        seed=seed, seed_name=f"measured {tag}",
+        cards=cards, plan=plan,
+        theme=[tag],
+        members=sorted(((c, q) for c, q in picks), key=lambda kv: -kv[1]),
+    )
+
+
+def measured_archetypes(store: dict, catalog: dict[int, dict],
+                        meta_decks: list[dict]) -> list:
+    """One composed deck per theme that has been swept."""
+    out = []
+    for tag in sorted((store.get("themes") or {}).keys()):
+        a = compose(store, tag, catalog, meta_decks)
+        if a:
+            out.append(a)
+    return out

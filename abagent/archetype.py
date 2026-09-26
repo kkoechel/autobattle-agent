@@ -263,22 +263,36 @@ TAG_WORDS: dict[str, tuple[str, str]] = {
 }
 
 
-def name_for(theme: list[str], fallback: str) -> str:
+def name_for(theme: list[str], fallback: str,
+             cards: list[int] | None = None) -> str:
     """An evocative name from the two most characteristic theme tags.
 
     Adjective from the first, noun from the second, so the name reads as a
     phrase rather than two nouns stapled together. Unknown tags fall back to
     the seed card, which is at least specific.
+
+    A short suffix derived from the card list follows, because the vocabulary
+    is ~34 words and collisions are constant rather than rare. Two entirely
+    different melee decks were both called "Iron Fury" in the same log line --
+    one evicted as a 97/100 copy and one installed at 25/100 -- which makes a
+    discovery impossible to tell from the thing it replaced. The suffix is a
+    hash of the card multiset, so the SAME deck always gets the same name and
+    a changed one always gets a new one.
     """
     known = [t for t in theme if t in TAG_WORDS]
     if not known:
-        return fallback
-    if len(known) == 1:
+        base = fallback
+    elif len(known) == 1:
         adj, noun = TAG_WORDS[known[0]]
-        return f"{adj} {noun}"
-    adj = TAG_WORDS[known[0]][0]
-    noun = TAG_WORDS[known[1]][1]
-    return f"{adj} {noun}"
+        base = f"{adj} {noun}"
+    else:
+        base = f"{TAG_WORDS[known[0]][0]} {TAG_WORDS[known[1]][1]}"
+    if not cards:
+        return base
+    import hashlib
+    h = hashlib.sha1(
+        ",".join(str(c) for c in sorted(cards)).encode()).hexdigest()[:4]
+    return f"{base} {h}"
 
 
 def mutate(cards: list[int], plan: dict, catalog: dict[int, dict],
