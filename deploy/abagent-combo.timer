@@ -10,7 +10,15 @@ Description=AutoBattle card-interaction sweep, every 20 minutes
 # measured archetypes from. Until a theme has been swept, there is nothing
 # for the generator to build with, so early cadence matters more than it
 # will once the store is populated.
-OnCalendar=*:12/20
+# DOUBLED 2026-09-26 using the time freed by halving the competitor. One
+# theme a run at ~120s, so every 10 minutes sweeps the ~55 buildable tags in
+# about 9 hours instead of 18 -- and until a theme is swept there is nothing
+# for the measured generator to build from, so early cadence is worth more
+# than it will be once the store is full.
+#
+# :12/10 stays clear of the competitor's window (:06, :26, :46 for up to
+# 260s) and of both explorers (:05/:35 and :20/:50).
+OnCalendar=*:12/10
 AccuracySec=30s
 Persistent=false
 

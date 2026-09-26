@@ -5,7 +5,17 @@ Description=AutoBattle deck agent cycle, between Standard cohorts
 # Standard closes at :04:58 and finalizes ~43s later. Firing at :06 gets a
 # freshly finalized field to train against and leaves ~9 minutes before the
 # next close. Offset from Reprisal's own */10 crons, which fire on the :00.
-OnCalendar=*:06/10
+# HALVED 2026-09-26, from every 10 minutes. This agent was 45.8% of the
+# droplet's single core on its own -- 9,887 CPU-seconds in six hours -- on a
+# box already sampling as 100% busy, and it is the agent that climbs by
+# copying, which stopped being the objective. Twenty minutes hands roughly
+# 23% of the core to the combo sweep, which is what feeds the generator that
+# builds novel decks.
+#
+# Participation is unaffected: registration is standing, so the deck enters
+# every future cohort regardless of when this runs. All that changes is that
+# an edit lands in every other cohort rather than every one.
+OnCalendar=*:06/20
 AccuracySec=15s
 Persistent=false
 
