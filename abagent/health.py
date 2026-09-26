@@ -47,18 +47,27 @@ def check_explorer(var: str, max_idle_h: float = 3.0) -> list[tuple[bool, str]]:
     except (FileNotFoundError, ValueError):
         return [(False, f"{path} missing or unreadable — explorer has no state")]
 
-    tried = st.get("tried") or {}
-    ids = st.get("tried_ids") or []
-    out.append((bool(ids) or bool(tried),
-                f"decks tried: {len(ids)} by list, {len(tried)} by name"))
-
     # The deck in the slot should change. If installed_at stops moving, the
     # agent is running and achieving nothing -- the exact failure that hid for
     # a day behind healthy-looking timers.
     age = _age_hours(st.get("installed_at"))
-    out.append((age is not None and age < max_idle_h,
+    moving = age is not None and age < max_idle_h
+    out.append((moving,
                 f"slot last changed {age:.1f}h ago" if age is not None
                 else "slot has never been changed"))
+
+    # An accumulation count, not a movement one, so it is only a failure when
+    # the slot is ALSO stale. The history is legitimately empty right after a
+    # deliberate reset -- clearing the copy-era floor wipes it -- and a check
+    # that cries wolf then is worse than no check: this agent has stalled
+    # silently five times, and the whole value of these is that a FAIL means
+    # something.
+    tried = st.get("tried") or {}
+    ids = st.get("tried_ids") or []
+    have = bool(ids) or bool(tried)
+    out.append((have or moving,
+                f"decks tried: {len(ids)} by list, {len(tried)} by name"
+                + ("" if have else " (history reset; slot still moving)")))
 
     # A falling best score means the floor is not holding.
     best = float(st.get("best_screen") or 0)
