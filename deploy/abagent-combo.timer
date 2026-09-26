@@ -18,7 +18,12 @@ Description=AutoBattle card-interaction sweep, every 20 minutes
 #
 # :12/10 stays clear of the competitor's window (:06, :26, :46 for up to
 # 260s) and of both explorers (:05/:35 and :20/:50).
-OnCalendar=*:12/10
+# BACK TO HOURLY 2026-09-26, once all 55 themes had been swept. The 10-minute
+# cadence existed to get through the vocabulary once, and it did that in about
+# four hours. Re-measuring a theme is worth far less than the first pass, so
+# holding 20% of a saturated single core for it is not, and that 17% is what
+# pays for the four bot agents.
+OnCalendar=*:12
 AccuracySec=30s
 Persistent=false
 

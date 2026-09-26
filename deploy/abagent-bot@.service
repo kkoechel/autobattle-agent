@@ -1,0 +1,47 @@
+[Unit]
+Description=AutoBattle bot agent %i — novel-deck discovery on its own account
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=abagent
+Group=abagent
+WorkingDirectory=/opt/abagent
+
+# One env file and one cache dir per agent. They share the code tree, the
+# validator binary and the combo store's findings, but nothing mutable:
+# separate accounts, separate decks, separate histories.
+EnvironmentFile=/etc/abagent-%i.env
+EnvironmentFile=/etc/abagent-%i.flags
+Environment=ABAGENT_VAR=/opt/abagent/var-%i
+
+# No --second-deck-id: these accounts own exactly one deck and no Double
+# Entry Pass, so the experiment IS the primary deck. --register asserts the
+# standing arena registration the provisioner deliberately left off, so a
+# placeholder deck never reached a live cohort before the agent wrote to it.
+# $ABAGENT_FLAGS, not ${ABAGENT_FLAGS}. systemd splits the first on
+# whitespace into separate arguments and passes the second as ONE argument,
+# so the braced form hands argparse a single token containing every flag and
+# the service dies with "unrecognized arguments".
+ExecStart=/usr/bin/python3 -u -m abagent.cli --arena pure --deck-id ${ABAGENT_DECK_ID} \
+  explore --register $ABAGENT_FLAGS
+
+# Below the two original agents, which are below the live games. These are
+# the most expendable work on a box that samples at 86% busy.
+Nice=18
+CPUWeight=8
+IOWeight=8
+
+MemoryHigh=400M
+MemoryMax=600M
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/abagent/var-%i /opt/abagent/bin
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target

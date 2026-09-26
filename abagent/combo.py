@@ -445,10 +445,27 @@ def compose(store: dict, tag: str, catalog: dict[int, dict],
 
 
 def measured_archetypes(store: dict, catalog: dict[int, dict],
-                        meta_decks: list[dict]) -> list:
-    """One composed deck per theme that has been swept."""
+                        meta_decks: list[dict],
+                        mod: int = 1, rem: int = 0) -> list:
+    """One composed deck per theme that has been swept.
+
+    Partitioned by theme, because compose() is deterministic: every agent
+    sharing this store would otherwise build the identical "measured mill"
+    deck, and all but the first would be thrown out by the novelty gate as
+    duplicates of each other. Partitioning is what makes several agents
+    explore several things rather than one thing several times.
+
+    Round-robin over the sorted tags, not a hash of them. Hashing keeps an
+    agent's set stable as new themes are swept, which is the nicer property --
+    but measured on the real 54-tag vocabulary it splits 15/13/9/17, so one
+    agent would permanently own nearly twice another's share. Round-robin
+    gives 14/14/13/13 and only reshuffles while the sweep is still finding
+    new themes, which is a few hours once and then never again.
+    """
     out = []
-    for tag in sorted((store.get("themes") or {}).keys()):
+    for i, tag in enumerate(sorted((store.get("themes") or {}).keys())):
+        if mod > 1 and i % mod != rem:
+            continue
         a = compose(store, tag, catalog, meta_decks)
         if a:
             out.append(a)

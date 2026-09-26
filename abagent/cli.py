@@ -985,6 +985,32 @@ def cmd_explore(args, api: Api) -> int:
     clear_outage()
     cat_list = _load("cards.json")
     catalog = {int(c["id"]): c for c in cat_list}
+
+    # Which deck this explorer writes.
+    #
+    # The original agents write a RENTAL slot and never touch the account's
+    # primary, because that primary belongs to a person and holds the
+    # placement -- and the placement is what makes a failed experiment free,
+    # since the Double Entry Pass pays only the better-placing entry.
+    #
+    # The bot agents are the opposite case: the account exists only to run the
+    # experiment, owns exactly one deck, and has no pass. There is nothing to
+    # protect and nothing to pay for, so the experiment IS the primary deck.
+    slot_id = args.second_deck_id or args.deck_id
+    owns_primary = not args.second_deck_id
+
+    # Registration is standing -- one POST puts the deck in every future
+    # cohort -- but the provisioner deliberately did not register these
+    # accounts, so that a placeholder deck would never reach a live cohort
+    # before the agent had written anything. That makes the FIRST write the
+    # right moment, and re-asserting it is cheap and idempotent.
+    if owns_primary and args.register:
+        try:
+            r = api.register(args.deck_id, arena=args.arena)
+            print(f"explore: standing registration for {args.deck_id} "
+                  f"in {args.arena} -> {json.dumps(r)[:120]}")
+        except ApiError as e:
+            print(f"explore: could not register ({e})")
     meta = _load(f"meta_{args.arena}.json")
     h = Harness(VALIDATOR, cat_list, workdir=VAR)
 
@@ -1090,7 +1116,9 @@ def cmd_explore(args, api: Api) -> int:
     try:
         from . import combo as _combo
         cstore = _combo.load(os.path.join(VAR, "combos.json"))
-        measured = _combo.measured_archetypes(cstore, catalog, meta["decks"])
+        measured = _combo.measured_archetypes(cstore, catalog, meta["decks"],
+                                              mod=args.theme_mod,
+                                              rem=args.theme_rem)
         added = 0
         for a in measured:
             key = tuple(sorted(collections.Counter(a.cards).items()))
@@ -1113,7 +1141,7 @@ def cmd_explore(args, api: Api) -> int:
     # mutating our own is iterating, and only the first is the problem.
     if args.max_overlap > 0:
         from . import novelty
-        ours = {args.deck_id, args.second_deck_id}
+        ours = {args.deck_id, slot_id}
         fresh, copies = [], []
         for a in archs:
             n, who = novelty.nearest(a.cards, meta["decks"], ours)
@@ -1147,7 +1175,7 @@ def cmd_explore(args, api: Api) -> int:
             # gave it away.
             since = str(state.get("installed_at") or "")
             rows = [r for r in api.results(arena=args.arena,
-                                           deck_id=args.second_deck_id,
+                                           deck_id=slot_id,
                                            limit=12)["results"]
                     if not since or r["closes_at"] > since]
             if rows:
@@ -1163,9 +1191,9 @@ def cmd_explore(args, api: Api) -> int:
         except ApiError:
             pass
 
-    incumbent = api.deck(args.second_deck_id)
+    incumbent = api.deck(slot_id)
     inc_cards, inc_plan = expand(incumbent), (incumbent.get("battle_plan") or {})
-    allopp = opponents_from_meta(meta, exclude_deck_ids={args.deck_id, args.second_deck_id})
+    allopp = opponents_from_meta(meta, exclude_deck_ids={args.deck_id, slot_id})
     screen = allopp[::max(1, len(allopp) // 24)][:24]
     block = [args.rng_base + i for i in range(21)]
 
@@ -1187,7 +1215,7 @@ def cmd_explore(args, api: Api) -> int:
     # though it is winning.
     focus = state.get("focus")
     from . import novelty
-    ours = {args.deck_id, args.second_deck_id}
+    ours = {args.deck_id, slot_id}
     if focus and args.max_overlap > 0 and focus.get("cards"):
         n, who = novelty.nearest(focus["cards"], meta["decks"], ours)
         if n > args.max_overlap:
@@ -1247,7 +1275,7 @@ def cmd_explore(args, api: Api) -> int:
                               "stale": 0,
                               "history": (focus.get("history") or []) + [nm]})
                 counts = collections.Counter(c)
-                api.update_deck(args.second_deck_id, name=focus["name"][:80],
+                api.update_deck(slot_id, name=focus["name"][:80],
                                 cards=[{"card_id": k, "quantity": v}
                                        for k, v in sorted(counts.items())],
                                 battle_plan=p)
@@ -1323,14 +1351,14 @@ def cmd_explore(args, api: Api) -> int:
         bb = state.get("best_deck")
         if (bb and bb.get("cards") and args.max_overlap > 0
                 and not novelty.is_novel(bb["cards"], meta["decks"],
-                                         {args.deck_id, args.second_deck_id},
+                                         {args.deck_id, slot_id},
                                          args.max_overlap)):
             print("explore: best-ever deck is a copy; not restoring it")
             state["best_deck"] = None
             bb = None
         if bb and inc.wins < best_ever * args.floor_frac:
             counts = collections.Counter(bb["cards"])
-            api.update_deck(args.second_deck_id, name=bb["name"][:80],
+            api.update_deck(slot_id, name=bb["name"][:80],
                             cards=[{"card_id": c, "quantity": q}
                                    for c, q in sorted(counts.items())],
                             battle_plan=bb["plan"])
@@ -1352,7 +1380,7 @@ def cmd_explore(args, api: Api) -> int:
     w, i, nm = pick
     best = archs[i]
     counts = collections.Counter(best.cards)
-    api.update_deck(args.second_deck_id, name=nm[:80],
+    api.update_deck(slot_id, name=nm[:80],
                     cards=[{"card_id": c, "quantity": q} for c, q in sorted(counts.items())],
                     battle_plan=best.plan)
     tried.setdefault(nm, {})["screen_wins"] = round(w, 1)
@@ -1707,6 +1735,15 @@ def main(argv=None) -> int:
     y.set_defaults(fn=cmd_cycle)
 
     e = sub.add_parser("explore")
+    e.add_argument("--theme-mod", type=int, default=1,
+                   help="partition measured archetypes across agents; "
+                        "compose() is deterministic, so without this every "
+                        "agent builds the same deck and all but one are "
+                        "rejected as duplicates")
+    e.add_argument("--theme-rem", type=int, default=0)
+    e.add_argument("--register", action="store_true", default=False,
+                   help="assert a standing arena registration for the deck "
+                        "this agent owns; only meaningful without a rental slot")
     e.add_argument("--max-overlap", type=int, default=50,
                    help="reject a candidate sharing more than this many cards "
                         "with any deck we do not own; 0 disables. 50 sits "

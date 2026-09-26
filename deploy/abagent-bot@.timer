@@ -1,0 +1,18 @@
+[Unit]
+Description=AutoBattle bot agent %i, every 30 minutes
+
+[Timer]
+# 30 minutes, same as the original explorers, and for the same reason: these
+# are cohort-bound, not CPU-bound. A cohort finalizes about every 10 minutes,
+# so 30 gives each deck ~3 live cohorts before the slot can rotate. Running
+# twice as often would halve that to 1.5 -- too few to tell a good deck from
+# a lucky one, which is the only thing the live results are for.
+#
+# OnCalendar is set per-instance by the drop-in, so the four stagger across
+# the half hour instead of contending for the single core at the same second.
+OnCalendar=*:00/30
+AccuracySec=30s
+Persistent=false
+
+[Install]
+WantedBy=timers.target
