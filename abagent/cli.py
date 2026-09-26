@@ -1374,6 +1374,86 @@ def cmd_beat(args, api: Api) -> int:
     return 0
 
 
+
+def cmd_combo(args, api: Api) -> int:
+    """Measure one theme's card interactions and bank what survives.
+
+    One theme per run, rotating: a 12-card shortlist is 66 pairs, which at 24
+    opponents and 5 cohorts is about 90 seconds -- comfortably inside a
+    half-hourly timer, and cheap enough that the whole tag vocabulary gets
+    swept in a couple of days rather than never.
+
+    This writes no deck and touches no slot. It produces the one thing both
+    generators lacked: evidence about which cards need each other, as opposed
+    to which cards share a word.
+    """
+    from . import combo
+
+    try:
+        cmd_fetch(args, api)
+    except ApiError as e:
+        return tolerate_outage(args, e)
+    clear_outage()
+
+    cat_list = _load("cards.json")
+    meta = _load(f"meta_{args.arena}.json")
+    # The FULL card dicts, not card_info_map(): that keeps only subtype,
+    # supertype and tags, so is_playable() sees no deck_limit and rejects
+    # every card in the catalogue. The pool came back empty and the sweep
+    # reported "no legal shell" for a theme with 37 cards in it.
+    catalog = {int(c["id"]): c for c in cat_list}
+    h = Harness(VALIDATOR, cat_list, workdir=VAR)
+
+    store_path = os.path.join(VAR, "combos.json")
+    store = combo.load(store_path)
+    tag = args.tag or combo.next_theme(store, catalog)
+    if not tag:
+        print("combo: no themes with enough cards")
+        return 0
+
+    allopp = opponents_from_meta(meta, exclude_deck_ids={args.deck_id})
+    if not allopp:
+        print("combo: no opponents in the meta snapshot")
+        return 0
+    screen = allopp[::max(1, len(allopp) // args.opponents)][:args.opponents]
+    seeds = [args.rng_base + i for i in range(args.seeds)]
+
+    swept = combo.sweep(h, catalog, meta["decks"], tag, screen, seeds,
+                        shortlist=args.shortlist)
+    rep = swept[0] if swept else None
+    if rep is None:
+        # Still mark it seen, or next_theme() hands back the same dead tag
+        # every run and the sweep never advances past it.
+        store.setdefault("themes", {})[tag] = {"unbuildable": True}
+        combo.save(store_path, store)
+        return 0
+
+    print(f"\ncombo: '{tag}' best singles")
+    for r in rep.singles[:6]:
+        print(f"   {r}")
+
+    shortlisted = [(c.a, c.b) for c in rep.combos[:args.confirm]]
+    print(f"\ncombo: {sum(1 for c in rep.combos if c.synergy > 0)} of "
+          f"{len(rep.combos)} pairs screened above additive; confirming the "
+          f"top {len(shortlisted)}")
+
+    _, built, cut = swept
+    cseeds = [args.rng_base + 500_000 + i for i in range(args.confirm_seeds)]
+    rep.confirmed = combo.confirm(h, catalog, built, cut, screen, shortlisted,
+                                  cseeds)
+    for c in rep.confirmed:
+        print(f"   {c}")
+    kept = [c for c in rep.confirmed if c.real]
+    print(f"combo: {len(kept)} pair(s) survived the interaction test")
+
+    combo.record(store, rep)
+    combo.save(store_path, store)
+    print(f"\ncombo: banked '{tag}'; store now holds "
+          f"{len(store.get('combos') or [])} pairs across "
+          f"{len(store.get('themes') or {})} themes")
+    return 0
+
+
 def cmd_health(args, api: Api) -> int:
     """Assert the agents are still making progress, not merely running.
 
@@ -1549,6 +1629,23 @@ def main(argv=None) -> int:
     b.add_argument("--confirm", type=int, default=6)
     b.add_argument("--rng-base", type=int, default=3300)
     b.set_defaults(fn=cmd_beat)
+
+    cb = sub.add_parser("combo")
+    cb.add_argument("--tag", default=None,
+                    help="theme to sweep; default is the next unmeasured one")
+    cb.add_argument("--opponents", type=int, default=24)
+    cb.add_argument("--seeds", type=int, default=5,
+                    help="cohorts per arm; the sweep RANKS, it does not accept")
+    cb.add_argument("--shortlist", type=int, default=12,
+                    help="singles carried into the pair test (12 -> 66 pairs)")
+    cb.add_argument("--confirm", type=int, default=6,
+                    help="pairs carried from the screen into the real test")
+    cb.add_argument("--confirm-seeds", type=int, default=61,
+                    help="cohorts for the interaction test; synergy is a "
+                         "difference of differences and carries ~sqrt(3) the "
+                         "error of one arm, so 5 cannot resolve it")
+    cb.add_argument("--rng-base", type=int, default=9_000_000)
+    cb.set_defaults(fn=cmd_combo)
 
     hc = sub.add_parser("health")
     hc.add_argument("--max-idle", type=float, default=3.0,
