@@ -290,6 +290,12 @@ def name_for(theme: list[str], fallback: str,
     if not cards:
         return base
     import hashlib
+    import re
+    # Strip any suffix we added earlier before adding a new one. Renaming
+    # happens on every refinement and the fallback is usually the deck's
+    # CURRENT name, so without this a deck accretes a new hash each cycle and
+    # ends up as "Iron Fury a1b2 c3d4 e5f6".
+    base = re.sub(r"(?: [0-9a-f]{4})+$", "", base).strip() or fallback
     h = hashlib.sha1(
         ",".join(str(c) for c in sorted(cards)).encode()).hexdigest()[:4]
     return f"{base} {h}"

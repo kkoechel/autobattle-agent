@@ -1175,16 +1175,33 @@ def cmd_explore(args, api: Api) -> int:
     # that is the outcome we decided was not worth having, so it goes even
     # though it is winning.
     focus = state.get("focus")
+    from . import novelty
+    ours = {args.deck_id, args.second_deck_id}
     if focus and args.max_overlap > 0 and focus.get("cards"):
-        from . import novelty
-        n, who = novelty.nearest(focus["cards"], meta["decks"],
-                                 {args.deck_id, args.second_deck_id})
+        n, who = novelty.nearest(focus["cards"], meta["decks"], ours)
         if n > args.max_overlap:
             print(f"explore: evicting focus '{focus.get('name')}' -- {n}/100 "
                   f"shared with '{str((who or {}).get('deck_name'))[:22]}'. "
                   f"A rank held by copying is not worth holding.")
             state["focus"] = None
             focus = None
+            # Forget the copy era entirely, not just the deck.
+            #
+            # The rotation floor is max(every tried screen_wins, best_screen,
+            # incumbent) * floor_frac, and those numbers were earned by
+            # inheriting tuned lists: 22.4 against novel decks that screen
+            # 16-20. Evicting the deck while keeping its score left a floor
+            # nothing legal could clear, so the explorer refined one deck for
+            # hours and rotated to none of the nine archetypes it was building
+            # every run. Discovery stopped and looked exactly like progress.
+            state["best_screen"] = 0
+            state["tried"] = {}
+            state["tried_ids"] = []
+            bd = state.get("best_deck") or {}
+            if bd.get("cards") and not novelty.is_novel(
+                    bd["cards"], meta["decks"], ours, args.max_overlap):
+                state["best_deck"] = None
+            print("explore: cleared the copy-era floor and history")
     if focus:
         from .archetype import mutate
         rng = random.Random(int(time.time()))
@@ -1207,6 +1224,14 @@ def cmd_explore(args, api: Api) -> int:
             if best_i is not None:
                 c, p, log = kids[best_i]
                 nm = catalog.get(log[0][1], {}).get("name", "?")
+                # Rename on every refinement. The name carries a hash of the
+                # card list, so a deck that changed gets a name that changed --
+                # otherwise the gallery shows the same "Iron Fury" for hours
+                # while the list underneath it moves, and a player watching
+                # from outside cannot tell iteration from a stall. That is
+                # precisely how this looked stalled while it was working.
+                focus["name"] = name_for(focus.get("theme") or [],
+                                         focus.get("name", "deck"), c)
                 focus.update({"cards": c, "plan": p, "screen": round(best_w, 1),
                               "stale": 0,
                               "history": (focus.get("history") or []) + [nm]})
@@ -1279,7 +1304,19 @@ def cmd_explore(args, api: Api) -> int:
         # Holding means holding whatever happens to be loaded, which after a
         # bad rotation is a bad deck. Fall back to the best list ever found
         # and refine that instead of sitting on a 4-win pile.
+        #
+        # Gated: the best list ever found may predate the novelty rule, and
+        # restoring it would quietly undo an eviction by the back door --
+        # the deck with the highest screen is exactly the one most likely to
+        # be somebody else's.
         bb = state.get("best_deck")
+        if (bb and bb.get("cards") and args.max_overlap > 0
+                and not novelty.is_novel(bb["cards"], meta["decks"],
+                                         {args.deck_id, args.second_deck_id},
+                                         args.max_overlap)):
+            print("explore: best-ever deck is a copy; not restoring it")
+            state["best_deck"] = None
+            bb = None
         if bb and inc.wins < best_ever * args.floor_frac:
             counts = collections.Counter(bb["cards"])
             api.update_deck(args.second_deck_id, name=bb["name"][:80],
