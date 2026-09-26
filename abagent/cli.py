@@ -1157,6 +1157,23 @@ def cmd_explore(args, api: Api) -> int:
     except Exception as e:                       # a missing store is normal
         print(f"explore: no measured archetypes ({e})")
 
+    # ── tutor closure ─────────────────────────────────────────────────────
+    # Applied to EVERY generator at one point, rather than inside each: tag
+    # archetypes, measured archetypes, combo clusters and mutations can all
+    # pick up a tutor, and none of them reads effects_json. Runs before the
+    # novelty gate because it changes the card list, and overlap has to be
+    # measured on the deck we would actually ship.
+    from .archetype import ensure_tutor_targets
+    fixed = 0
+    for a in archs:
+        c2, p2 = ensure_tutor_targets(a.cards, a.plan, catalog)
+        if c2 is not a.cards:
+            a.cards, a.plan = c2, p2
+            a.members = sorted(collections.Counter(c2).items(), key=lambda kv: -kv[1])
+            fixed += 1
+    if fixed:
+        print(f"explore: tutor closure filled targets in {fixed} deck(s)")
+
     # ── novelty gate ──────────────────────────────────────────────────────
     # A high rank reached by cloning the deck above it is not worth having.
     # Candidates too close to a deck we do not own are dropped BEFORE they are

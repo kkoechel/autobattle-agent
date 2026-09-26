@@ -370,3 +370,140 @@ def mutate(cards: list[int], plan: dict, catalog: dict[int, dict],
     p = dict(plan)
     p["card_order"] = neworder
     return out, p, log
+
+
+def _tutor_targets(card: dict) -> list[tuple[int, int]]:
+    """(card_id, amount) this card searches the LIBRARY for, by name.
+
+    Only `tutor`. `create_token_copy` also names a card_id -- 71 cards use it
+    against the tutor's 16 -- but a token is created from the definition, not
+    drawn from your deck, so the definition only has to reach the ENGINE, which
+    it does because the payload carries the whole catalogue. Including token
+    definitions as deck slots would burn fifteen cards on something that is
+    never drawn.
+    """
+    import json as _json
+    ej = card.get("effects_json")
+    if isinstance(ej, str):
+        try:
+            ej = _json.loads(ej)
+        except ValueError:
+            return []
+    out: list[tuple[int, int]] = []
+
+    def walk(o):
+        if isinstance(o, dict):
+            if o.get("type") == "tutor" and isinstance(o.get("card_id"), int):
+                out.append((o["card_id"], max(1, int(o.get("amount") or 1))))
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+
+    walk(ej or {})
+    return out
+
+
+def ensure_tutor_targets(cards: list[int], plan: dict, catalog: dict[int, dict],
+                         log=None) -> tuple[list[int], dict]:
+    """Put the card a tutor searches for into the deck that runs the tutor.
+
+    A tutor whose target is absent is a blank. Deck 51580 shipped with Last
+    Scholar of Gghulbb and no Gghulbb, Larval Stage, so its whole payoff --
+    "when removed from play, search your library for Gghulbb and put it into
+    play" -- did nothing at all. No generator could notice: affinity() matches
+    tags, compose() ranks measured singles, and neither reads effects_json.
+
+    The targets that matter are the ones no generator would ever pick on its
+    own. Gghulbb costs 18 and Starry-Eyed Horror of Ay costs 13; a curve-aware
+    builder excludes them on sight, which is exactly why a card exists to cheat
+    them into play.
+
+    So they go in at the MINIMUM the tutor needs and LAST in the play order.
+    They are there to be found, not cast: an 18-energy card played off the top
+    is a brick, and adding one to the front of the order would cost more than
+    the tutor gains. Slots come from the deck's own lowest-priority cards.
+
+    Iterated to a fixed point, since a tutored card may itself tutor.
+
+    WHAT THIS IS WORTH, measured rather than assumed: on deck 51580 at 78
+    opponents x 301 cohorts, +0.02 wins, t=0.04. Nothing. A 61-cohort run
+    first said +0.93 at t=0.85 and that was noise.
+
+    It is kept anyway, and not as a disguised win. Last Scholar of Gghulbb is
+    a 1-of whose tutor fires only when it leaves play, and the card it fetches
+    costs 18 -- the mechanism is genuinely broken and the magnitude is still
+    nil, because one card in a hundred decided across 78 opponents cannot move
+    an aggregate. What it buys is a deck that means what it says: a human
+    reading the gallery sees a tutor with its payoff rather than a card doing
+    nothing, and these decks are meant to be interesting to look at, not only
+    to win. It measured free, so that costs nothing.
+
+    Where it could actually matter is a deck running several copies of a
+    tutor. Most multi-copy tutors fetch Ancient Power Station, which nearly
+    every deck already runs, so they are satisfied by accident today.
+    """
+    cur = list(cards)
+    order = list(plan.get("card_order") or [])
+    added: list[tuple[int, int]] = []
+
+    for _ in range(4):                       # fixed point; depth is 1 today
+        have = set(cur)
+        want: dict[int, int] = {}
+        for cid in have:
+            for tgt, amount in _tutor_targets(catalog.get(cid) or {}):
+                if tgt in have or tgt == cid:
+                    continue
+                if not is_playable(catalog.get(tgt)):
+                    continue
+                lim = int(catalog.get(tgt, {}).get("deck_limit") or 0)
+                n = min(amount, lim)
+                if n > 0:
+                    want[tgt] = max(want.get(tgt, 0), n)
+        if not want:
+            break
+
+        # Slots come from the back of the play order, the cards this deck
+        # itself ranked last -- the same prior every other cut here uses.
+        rank = {c: i for i, c in enumerate(order)}
+        counts: dict[int, int] = {}
+        for c in cur:
+            counts[c] = counts.get(c, 0) + 1
+        spare = sorted(counts, key=lambda c: -rank.get(c, 10_000))
+
+        for tgt, n in sorted(want.items()):
+            need = n
+            for victim in spare:
+                if need <= 0:
+                    break
+                if victim == tgt or counts.get(victim, 0) <= 0:
+                    continue
+                take = min(need, counts[victim])
+                counts[victim] -= take
+                need -= take
+            if need > 0:                     # nothing left to give up
+                continue
+            counts[tgt] = counts.get(tgt, 0) + n
+            added.append((tgt, n))
+            if tgt not in order:
+                order.append(tgt)            # last: found, not cast
+
+        cur = []
+        for c, q in sorted(counts.items()):
+            cur.extend([c] * q)
+        order = [c for c in order if counts.get(c, 0) > 0]
+        for c in counts:
+            if c not in order:
+                order.append(c)
+
+    if not added:
+        return cards, plan
+    if len(cur) != len(cards):               # never ship a wrong-sized deck
+        return cards, plan
+    if log:
+        nm = lambda c: (catalog.get(c, {}).get("name") or f"#{c}")
+        log("tutor closure: added " + ", ".join(f"{n}x {nm(t)}" for t, n in added))
+    new_plan = dict(plan)
+    new_plan["card_order"] = order
+    return cur, new_plan
