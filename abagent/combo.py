@@ -395,34 +395,9 @@ def compose(store: dict, tag: str, catalog: dict[int, dict],
             picks.append((cid, q))
             total += q
 
-    for cid in archetype.staples(meta_decks, catalog, top=10):
-        if total >= size:
-            break
-        if any(cid == c for c, _ in picks):
-            continue
-        q = min(limit(cid), size - total, 15)
-        if q > 0:
-            picks.append((cid, q))
-            total += q
-
-    # Top up what we already chose before reaching for a blank: more copies of
-    # a card that MEASURED positive beats a card that measured nothing at all.
-    if total < size:
-        for i, (cid, q) in enumerate(picks):
-            if total >= size:
-                break
-            head = min(limit(cid) - q, size - total)
-            if head > 0:
-                picks[i] = (cid, q + head)
-                total += head
-    if total < size:
-        picks.append((archetype.INFINITE_FILLER, size - total))
-        total = size
-
-    cards: list[int] = []
-    for cid, q in picks:
-        cards.extend([cid] * q)
-    if len(cards) != size:
+    picks, total = _fill(picks, total, catalog, meta_decks, size)
+    cards = _flatten(picks, size)
+    if cards is None:
         return None
 
     # Play order follows the measurement too, best first -- the one part of a
@@ -467,6 +442,164 @@ def measured_archetypes(store: dict, catalog: dict[int, dict],
         if mod > 1 and i % mod != rem:
             continue
         a = compose(store, tag, catalog, meta_decks)
+        if a:
+            out.append(a)
+    return out
+
+
+def _fill(picks: list[tuple[int, int]], total: int, catalog: dict[int, dict],
+          meta_decks: list[dict], size: int) -> tuple[list[tuple[int, int]], int]:
+    """Staples, then top-ups, then a blank only if genuinely out of options."""
+    limit = lambda c: int(catalog.get(c, {}).get("deck_limit") or 0)
+    for cid in archetype.staples(meta_decks, catalog, top=10):
+        if total >= size:
+            break
+        if any(cid == c for c, _ in picks):
+            continue
+        q = min(limit(cid), size - total, 15)
+        if q > 0:
+            picks.append((cid, q))
+            total += q
+
+    # Top up what we already chose before reaching for a blank: more copies of
+    # a card that MEASURED positive beats a card that measured nothing at all.
+    if total < size:
+        for i, (cid, q) in enumerate(picks):
+            if total >= size:
+                break
+            head = min(limit(cid) - q, size - total)
+            if head > 0:
+                picks[i] = (cid, q + head)
+                total += head
+    if total < size:
+        picks.append((archetype.INFINITE_FILLER, size - total))
+        total = size
+    return picks, total
+
+
+def _flatten(picks: list[tuple[int, int]], size: int) -> list[int] | None:
+    cards: list[int] = []
+    for cid, q in picks:
+        cards.extend([cid] * q)
+    return cards if len(cards) == size else None
+
+
+def clusters(store: dict, min_partners: int = 1) -> list[tuple[int, str, list[tuple[int, str, float]]]]:
+    """Confirmed pairs grouped into hubs: a card and everything it works with.
+
+    The pairs are not scattered. Of 36 confirmed across 55 themes, Enemy Hive
+    appears in seven, Eccentric Tutor and Raindrop Shaman in four each -- so
+    the useful unit is a hub and its partners, not a pair.
+
+    Returns (hub_id, hub_name, [(partner_id, partner_name, synergy)...]),
+    hubs with the most partners first.
+    """
+    by_hub: dict[int, dict] = {}
+    for c in (store.get("combos") or []):
+        for me, mine, them, theirs in ((c["a"], c["a_name"], c["b"], c["b_name"]),
+                                       (c["b"], c["b_name"], c["a"], c["a_name"])):
+            e = by_hub.setdefault(me, {"name": mine, "tag": c.get("tag", ""),
+                                       "partners": {}})
+            prev = e["partners"].get(them)
+            if prev is None or c["synergy"] > prev[1]:
+                e["partners"][them] = (theirs, float(c["synergy"]))
+    out = []
+    for hub, e in by_hub.items():
+        ps = sorted(((pid, nm, syn) for pid, (nm, syn) in e["partners"].items()),
+                    key=lambda t: (-t[2], t[0]))
+        if len(ps) >= min_partners:
+            out.append((hub, e["name"], ps, e["tag"]))
+    out.sort(key=lambda t: (-len(t[2]), -sum(p[2] for p in t[2]), t[0]))
+    return [(h, n, ps) for h, n, ps, _t in out]
+
+
+def compose_from_cluster(store: dict, hub: int, partners: list[tuple[int, str, float]],
+                         catalog: dict[int, dict], meta_decks: list[dict],
+                         size: int = 100, engine_cap: int = 60):
+    """Build a deck AROUND a measured combo, rather than around good singles.
+
+    compose() ranks cards by what each is worth on its own, which cannot see
+    that two cards need each other -- the entire reason the pair sweep exists.
+    This puts the hub and everything it has confirmed synergy with in first,
+    at full copies, and fills the rest from the theme's best singles.
+
+    The assumption worth stating: pairwise super-additivity does NOT
+    necessarily compose. A+B and A+C both beating their parts says nothing
+    about A+B+C, which may just be three cards competing for the same energy.
+    The engine is capped at 60 cards so a deck is never entirely bet on that,
+    and every deck built here is screened before it is kept. This generates a
+    hypothesis; the screen decides.
+    """
+    limit = lambda c: int(catalog.get(c, {}).get("deck_limit") or 0)
+    if not is_playable(catalog.get(hub)):
+        return None
+
+    picks: list[tuple[int, int]] = [(hub, limit(hub))]
+    total = limit(hub)
+    used = {hub}
+    for pid, _nm, _syn in partners:
+        if total >= engine_cap or pid in used or not is_playable(catalog.get(pid)):
+            continue
+        q = min(limit(pid), engine_cap - total)
+        if q > 0:
+            picks.append((pid, q))
+            total += q
+            used.add(pid)
+    if len(picks) < 2:
+        return None
+
+    # Then the best-measured singles from any theme the hub's cards belong to,
+    # so the engine has support rather than only staples around it.
+    tags = {t for c in used for t in (catalog.get(c, {}).get("tags") or [])}
+    ranked: list[tuple[int, float]] = []
+    for tag, info in (store.get("themes") or {}).items():
+        if tag not in tags:
+            continue
+        for cid, _n, d in (info.get("singles") or []):
+            if float(d) > 0 and int(cid) not in used:
+                ranked.append((int(cid), float(d)))
+    ranked.sort(key=lambda t: (-t[1], t[0]))
+    room = size - 25
+    for cid, _d in ranked:
+        if total >= room:
+            break
+        if cid in used or not is_playable(catalog.get(cid)):
+            continue
+        q = min(limit(cid), room - total)
+        if q > 0:
+            picks.append((cid, q))
+            total += q
+            used.add(cid)
+
+    picks, total = _fill(picks, total, catalog, meta_decks, size)
+    cards = _flatten(picks, size)
+    if cards is None:
+        return None
+
+    plan = {
+        "play_priority": "card_order",
+        "card_order": [c for c, _ in picks],
+        "card_order_hold": False,
+        "energy_hold": 0,
+        "target_preference": "least_armor",
+    }
+    hub_name = catalog.get(hub, {}).get("name", f"#{hub}")
+    return archetype.Archetype(
+        seed=hub, seed_name=f"combo {hub_name}",
+        cards=cards, plan=plan,
+        theme=sorted(tags & set((store.get("themes") or {}).keys()))[:2],
+        members=sorted(picks, key=lambda kv: -kv[1]),
+    )
+
+
+def combo_archetypes(store: dict, catalog: dict[int, dict], meta_decks: list[dict],
+                     mod: int = 1, rem: int = 0, top: int = 8) -> list:
+    """One deck per combo hub, partitioned across agents like the others."""
+    out = []
+    for i, (hub, _name, partners) in enumerate(clusters(store)[:top]):
+        if mod > 1 and i % mod != rem:
+            continue
+        a = compose_from_cluster(store, hub, partners, catalog, meta_decks)
         if a:
             out.append(a)
     return out

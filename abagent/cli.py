@@ -21,6 +21,20 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # decks, histories and pass expiries, and sharing a cache directory would
 # have one silently overwriting the other's state.
 VAR = os.environ.get("ABAGENT_VAR") or os.path.join(ROOT, "var")
+
+# The interaction sweep's findings are SHARED, unlike everything else in VAR.
+#
+# Every other piece of state is per-agent by design -- different accounts,
+# decks, histories. Measurements are not: what Enemy Hive is worth next to
+# Rune Fortress does not depend on which agent asked, and one sweep costing
+# 2 minutes a theme should serve all six agents rather than each repeating it.
+#
+# Keeping it in VAR was silently wrong rather than loudly: the sweep writes
+# var-explore, so the four bot agents each looked in their own empty var- dir,
+# found nothing, and quietly fell back to the weakest generator -- the tag
+# archetypes that screen 4-10 of 24. No error, just worse decks.
+COMBO_STORE = (os.environ.get("ABAGENT_COMBOS")
+               or os.path.join(ROOT, "shared", "combos.json"))
 BIN = os.path.join(ROOT, "bin")
 VALIDATOR = os.path.join(BIN, "validate_linux_amd64")
 
@@ -1115,10 +1129,20 @@ def cmd_explore(args, api: Api) -> int:
     # measured against a blank in that theme's own shell.
     try:
         from . import combo as _combo
-        cstore = _combo.load(os.path.join(VAR, "combos.json"))
+        cstore = _combo.load(COMBO_STORE)
         measured = _combo.measured_archetypes(cstore, catalog, meta["decks"],
                                               mod=args.theme_mod,
                                               rem=args.theme_rem)
+        # Decks built AROUND a confirmed combo, which is the one thing neither
+        # other generator can do: affinity() sees a shared word, compose()
+        # sees what a card is worth alone, and only the pair sweep can see
+        # that two cards need each other.
+        combos = _combo.combo_archetypes(cstore, catalog, meta["decks"],
+                                         mod=args.theme_mod, rem=args.theme_rem)
+        if combos:
+            print(f"explore: {len(combos)} combo archetypes — "
+                  + ", ".join(a.seed_name[6:28] for a in combos[:4]))
+        measured = combos + measured
         added = 0
         for a in measured:
             key = tuple(sorted(collections.Counter(a.cards).items()))
@@ -1545,7 +1569,7 @@ def cmd_combo(args, api: Api) -> int:
     catalog = {int(c["id"]): c for c in cat_list}
     h = Harness(VALIDATOR, cat_list, workdir=VAR)
 
-    store_path = os.path.join(VAR, "combos.json")
+    store_path = COMBO_STORE
     store = combo.load(store_path)
     tag = args.tag or combo.next_theme(store, catalog)
     if not tag:

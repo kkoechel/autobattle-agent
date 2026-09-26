@@ -31,7 +31,7 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=/opt/abagent/var-explore /opt/abagent/bin
+ReadWritePaths=/opt/abagent/var-explore /opt/abagent/shared /opt/abagent/bin
 TimeoutStartSec=1500
 
 [Install]
