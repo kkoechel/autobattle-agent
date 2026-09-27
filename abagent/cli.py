@@ -990,7 +990,8 @@ def cmd_explore(args, api: Api) -> int:
     import hashlib
     import statistics
 
-    from .archetype import generate, name_for, recent_seeds, theme_of
+    from .archetype import (ensure_tutor_targets, generate, name_for,
+                            recent_seeds, theme_of)
 
     try:
         cmd_fetch(args, api)
@@ -1012,6 +1013,31 @@ def cmd_explore(args, api: Api) -> int:
     # protect and nothing to pay for, so the experiment IS the primary deck.
     slot_id = args.second_deck_id or args.deck_id
     owns_primary = not args.second_deck_id
+
+    def install(deck_id: int, name: str, cards: list[int], plan: dict):
+        """Write a deck, closing its tutors first. Returns what was written.
+
+        Every write goes through here, because closing only the ROTATION
+        candidates was not enough and the gap was invisible. Refinement adds
+        cards too -- ember's log reads "refined Thrifty Bargain 730c 18.2W ->
+        18.9W (+the Eye of Ay)", which added a tutor whose target was then
+        never included, reproducing the exact bug one cycle after it was
+        fixed.
+
+        It also repairs the worse half of that fix. Targets are placed LAST in
+        the play order so an 18-energy card is never cast off the top -- and
+        cuts are taken from the back of the play order, so the next
+        refinement removed the target again. Closing at the write point means
+        a deck is correct whenever it is shipped, whatever the last step did
+        to it.
+        """
+        cards, plan = ensure_tutor_targets(cards, plan, catalog, log=print)
+        counts = collections.Counter(cards)
+        api.update_deck(deck_id, name=name[:80],
+                        cards=[{"card_id": k, "quantity": v}
+                               for k, v in sorted(counts.items())],
+                        battle_plan=plan)
+        return cards, plan
 
     # Registration is standing -- one POST puts the deck in every future
     # cohort -- but the provisioner deliberately did not register these
@@ -1163,7 +1189,6 @@ def cmd_explore(args, api: Api) -> int:
     # pick up a tutor, and none of them reads effects_json. Runs before the
     # novelty gate because it changes the card list, and overlap has to be
     # measured on the deck we would actually ship.
-    from .archetype import ensure_tutor_targets
     fixed = 0
     for a in archs:
         c2, p2 = ensure_tutor_targets(a.cards, a.plan, catalog)
@@ -1233,6 +1258,25 @@ def cmd_explore(args, api: Api) -> int:
             pass
 
     incumbent = api.deck(slot_id)
+
+    # Repair whatever is already installed, before anything else looks at it.
+    #
+    # install() closes tutors on the way out, so a deck is correct whenever it
+    # is written -- but a cycle that neither refines nor rotates writes
+    # nothing, and a deck broken before this code existed stays broken for as
+    # long as it keeps being good enough to hold its slot. Two of six agent
+    # decks were in exactly that state. Checking the incumbent here costs one
+    # comparison and makes the invariant continuous rather than eventual.
+    _inc_cards = expand(incumbent)
+    _inc_plan = incumbent.get("battle_plan") or {}
+    _fixed_cards, _fixed_plan = ensure_tutor_targets(_inc_cards, _inc_plan, catalog)
+    if _fixed_cards is not _inc_cards:
+        print("explore: repairing the installed deck's tutors")
+        install(slot_id, incumbent.get("name") or "deck", _fixed_cards, _fixed_plan)
+        incumbent = api.deck(slot_id)
+        f = state.get("focus")
+        if f and f.get("cards"):
+            f["cards"], f["plan"] = _fixed_cards, _fixed_plan
     inc_cards, inc_plan = expand(incumbent), (incumbent.get("battle_plan") or {})
     allopp = opponents_from_meta(meta, exclude_deck_ids={args.deck_id, slot_id})
     screen = allopp[::max(1, len(allopp) // 24)][:24]
@@ -1315,11 +1359,8 @@ def cmd_explore(args, api: Api) -> int:
                 focus.update({"cards": c, "plan": p, "screen": round(best_w, 1),
                               "stale": 0,
                               "history": (focus.get("history") or []) + [nm]})
-                counts = collections.Counter(c)
-                api.update_deck(slot_id, name=focus["name"][:80],
-                                cards=[{"card_id": k, "quantity": v}
-                                       for k, v in sorted(counts.items())],
-                                battle_plan=p)
+                c, p = install(slot_id, focus["name"], c, p)
+                focus["cards"], focus["plan"] = c, p
                 if best_w > float(state.get("best_screen") or 0):
                     state["best_screen"] = round(best_w, 1)
                     state["best_deck"] = {"name": focus["name"], "cards": c,
@@ -1398,11 +1439,8 @@ def cmd_explore(args, api: Api) -> int:
             state["best_deck"] = None
             bb = None
         if bb and inc.wins < best_ever * args.floor_frac:
-            counts = collections.Counter(bb["cards"])
-            api.update_deck(slot_id, name=bb["name"][:80],
-                            cards=[{"card_id": c, "quantity": q}
-                                   for c, q in sorted(counts.items())],
-                            battle_plan=bb["plan"])
+            bb["cards"], bb["plan"] = install(slot_id, bb["name"],
+                                              bb["cards"], bb["plan"])
             state["current"] = bb["name"]
             state["installed_at"] = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
             state["focus"] = {"name": bb["name"], "cards": bb["cards"],
@@ -1420,10 +1458,7 @@ def cmd_explore(args, api: Api) -> int:
 
     w, i, nm = pick
     best = archs[i]
-    counts = collections.Counter(best.cards)
-    api.update_deck(slot_id, name=nm[:80],
-                    cards=[{"card_id": c, "quantity": q} for c, q in sorted(counts.items())],
-                    battle_plan=best.plan)
+    best.cards, best.plan = install(slot_id, nm, best.cards, best.plan)
     tried.setdefault(nm, {})["screen_wins"] = round(w, 1)
     seen_ids.add(ident(best))
     state["tried_ids"] = sorted(seen_ids)

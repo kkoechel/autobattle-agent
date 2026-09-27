@@ -326,7 +326,19 @@ def mutate(cards: list[int], plan: dict, catalog: dict[int, dict],
     order = list(plan.get("card_order") or [])
     rank = {cid: i for i, cid in enumerate(order)}
     # Worst-ranked first, and unranked cards count as worst.
-    victims = sorted(counts, key=lambda c: -rank.get(c, 9999))
+    # Never cut a card some tutor in this deck searches for.
+    #
+    # Targets are deliberately placed LAST in the play order so an 18-energy
+    # payoff is never cast off the top -- and victims are taken from the back
+    # of that order, so without this the very next refinement removes the
+    # target again and the deck oscillates: closure adds it, mutate cuts it,
+    # closure adds it back, forever.
+    protected = set()
+    for cid in counts:
+        for tgt, _n in _tutor_targets(catalog.get(cid) or {}):
+            protected.add(tgt)
+    victims = [c for c in sorted(counts, key=lambda c: -rank.get(c, 9999))
+               if c not in protected]
     adds = [c for c in pool if c not in counts and is_playable(catalog.get(c))]
     if not adds or not victims:
         return None
@@ -466,11 +478,22 @@ def ensure_tutor_targets(cards: list[int], plan: dict, catalog: dict[int, dict],
 
         # Slots come from the back of the play order, the cards this deck
         # itself ranked last -- the same prior every other cut here uses.
+        #
+        # But never from a tutor target. Targets are appended to the BACK of
+        # the order, which is exactly where this looks for victims, so with
+        # two targets to place the second one cut the first: the log read
+        # "added 1x Warboss, 1x Yugyrf, 1x Warboss, 1x Yugyrf" as the fixed
+        # point chased itself, and the deck shipped without Warboss anyway.
         rank = {c: i for i, c in enumerate(order)}
         counts: dict[int, int] = {}
         for c in cur:
             counts[c] = counts.get(c, 0) + 1
-        spare = sorted(counts, key=lambda c: -rank.get(c, 10_000))
+        keep = set(want)
+        for cid in counts:
+            for t, _n in _tutor_targets(catalog.get(cid) or {}):
+                keep.add(t)
+        spare = [c for c in sorted(counts, key=lambda c: -rank.get(c, 10_000))
+                 if c not in keep]
 
         for tgt, n in sorted(want.items()):
             need = n
