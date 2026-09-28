@@ -991,7 +991,7 @@ def cmd_explore(args, api: Api) -> int:
     import statistics
 
     from .archetype import (ensure_tutor_targets, generate, name_for,
-                            recent_seeds, theme_of)
+                            prune_dead_clauses, recent_seeds, theme_of)
 
     try:
         cmd_fetch(args, api)
@@ -1031,6 +1031,9 @@ def cmd_explore(args, api: Api) -> int:
         a deck is correct whenever it is shipped, whatever the last step did
         to it.
         """
+        # Prune first, then close: pruning changes which tags are present, and
+        # a tutor target must survive the prune rather than be added before it.
+        cards, plan = prune_dead_clauses(cards, plan, catalog, log=print)
         cards, plan = ensure_tutor_targets(cards, plan, catalog, log=print)
         counts = collections.Counter(cards)
         api.update_deck(deck_id, name=name[:80],
@@ -1269,9 +1272,10 @@ def cmd_explore(args, api: Api) -> int:
     # comparison and makes the invariant continuous rather than eventual.
     _inc_cards = expand(incumbent)
     _inc_plan = incumbent.get("battle_plan") or {}
-    _fixed_cards, _fixed_plan = ensure_tutor_targets(_inc_cards, _inc_plan, catalog)
-    if _fixed_cards is not _inc_cards:
-        print("explore: repairing the installed deck's tutors")
+    _fixed_cards, _fixed_plan = prune_dead_clauses(_inc_cards, _inc_plan, catalog)
+    _fixed_cards, _fixed_plan = ensure_tutor_targets(_fixed_cards, _fixed_plan, catalog)
+    if _fixed_cards != _inc_cards:
+        print("explore: repairing the installed deck")
         install(slot_id, incumbent.get("name") or "deck", _fixed_cards, _fixed_plan)
         incumbent = api.deck(slot_id)
         f = state.get("focus")

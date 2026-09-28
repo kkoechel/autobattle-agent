@@ -530,3 +530,193 @@ def ensure_tutor_targets(cards: list[int], plan: dict, catalog: dict[int, dict],
     new_plan = dict(plan)
     new_plan["card_order"] = order
     return cur, new_plan
+
+
+# Effects that WANT the tag on the other side of the table. A card that
+# destroys every [bee] is hate for bee decks, not a bee payoff, and reading it
+# as a dependency says the opposite of the truth.
+_HOSTILE_EFFECTS = {
+    "destroy_tagged", "exile_tagged", "discard_tagged", "bounce_tagged",
+    "steal_tagged", "damage_tagged",
+}
+
+
+def _tag_deps(card: dict, catalog: dict[int, dict] | None = None) -> set[str]:
+    """Tags this card needs YOUR OWN board to supply.
+
+    Read from effects_json, because a card's own tags say what it IS and the
+    dependency says what it NEEDS. Three things are deliberately not
+    dependencies, each of which made Enemy Hive look inert in a deck where it
+    is one of the best cards:
+
+      side/target_player = opponent — Enemy Hive's cost scales with the bees
+        the OPPONENT has, which is the opposite of needing bees.
+      destroy/exile of a tag — "destroy all [bee] permanents" is hate. A deck
+        playing it wants no bees of its own.
+      tags the card creates itself — Enemy Hive makes Bee Drones every turn
+        and Greedy Dragon makes Gold Coins, so each supplies its own tag.
+
+    Without all three, pruning would have cut 10 copies of the top combo hub
+    out of two decks.
+    """
+    import json as _json
+    ej = card.get("effects_json")
+    if isinstance(ej, str):
+        try:
+            ej = _json.loads(ej)
+        except ValueError:
+            return set()
+    out: set[str] = set()
+
+    def walk(o, hostile=False):
+        if isinstance(o, dict):
+            typ = o.get("type")
+            here = hostile or (typ in _HOSTILE_EFFECTS)
+            foreign = (o.get("side") == "opponent"
+                       or o.get("target_player") == "opponent")
+            if not here and not foreign:
+                t = o.get("tag")
+                if isinstance(t, str) and t:
+                    out.add(t)
+                for k in ("tags", "only_tags"):
+                    v = o.get(k)
+                    if isinstance(v, list):
+                        out.update(x for x in v if isinstance(x, str))
+            for v in o.values():
+                walk(v, here)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v, hostile)
+
+    walk(ej or {})
+
+    # Whatever this card puts on the board itself satisfies its own needs.
+    if catalog:
+        for tok, _n in _token_defs(card):
+            out -= set(catalog.get(tok, {}).get("tags") or [])
+    return out
+
+
+def _token_defs(card: dict) -> list[tuple[int, int]]:
+    """(card_id, amount) this card creates as tokens."""
+    import json as _json
+    ej = card.get("effects_json")
+    if isinstance(ej, str):
+        try:
+            ej = _json.loads(ej)
+        except ValueError:
+            return []
+    out: list[tuple[int, int]] = []
+
+    def walk(o):
+        if isinstance(o, dict):
+            if o.get("type") == "create_token_copy" and isinstance(o.get("card_id"), int):
+                out.append((o["card_id"], max(1, int(o.get("amount") or 1))))
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+
+    walk(ej or {})
+    return out
+
+
+def dead_clause_cards(cards: list[int], catalog: dict[int, dict]) -> dict[int, set[str]]:
+    """Cards in this deck whose every tag-gated effect has no enabler here.
+
+    Deck 42179 ran 10 copies of Battlefield Engineer and no structures at all.
+    Both of its effects are gated on [structure] -- the cost reduction AND the
+    shield generation -- so ten slots, a tenth of the deck, were a vanilla
+    2-cost body. No generator could see it: affinity() reads the card's own
+    tags, which say what it IS, while the dependency lives in effects_json and
+    says what it NEEDS.
+
+    A card's own tags count towards satisfying it, because a creature that
+    buffs creatures enables itself.
+    """
+    present: set[str] = set()
+    for cid in set(cards):
+        present.update(catalog.get(cid, {}).get("tags") or [])
+    out: dict[int, set[str]] = {}
+    for cid in set(cards):
+        need = _tag_deps(catalog.get(cid) or {}, catalog)
+        if not need:
+            continue
+        missing = {t for t in need if t not in present}
+        if missing and missing == need:      # every gated effect is inert
+            out[cid] = missing
+    return out
+
+
+def prune_dead_clauses(cards: list[int], plan: dict, catalog: dict[int, dict],
+                       log=None) -> tuple[list[int], dict]:
+    """Drop cards whose gated effects are all inert, and redistribute the slots.
+
+    Measured on deck 42179 at 78 opponents x 201 cohorts, against the deck as
+    it shipped:
+
+        cut the 10 dead Engineers for more of what worked   +1.77, t=7.93
+        keep 5 and add 5 structures to turn them on         +1.53, t=6.80
+
+    Both clear the bar, and cutting wins -- so this prunes rather than
+    enables. That is a bigger effect than it sounds next to the tutor closure
+    (+0.02): a dead tutor is one card that does nothing, while ten dead
+    Engineers are ten slots competing for play priority with cards that work.
+    Dilution is cheap; opportunity cost is not.
+
+    Slots go to the deck's own highest-priority cards, up to their deck_limit
+    -- the cards this deck already decided to play first.
+    """
+    counts: dict[int, int] = {}
+    for c in cards:
+        counts[c] = counts.get(c, 0) + 1
+    dead = dead_clause_cards(cards, catalog)
+
+    # Never prune something another card needs: a tutor's target, or the only
+    # carrier of a tag something else depends on.
+    protected: set[int] = set()
+    for cid in counts:
+        for tgt, _n in _tutor_targets(catalog.get(cid) or {}):
+            protected.add(tgt)
+    for cid in counts:
+        if cid in dead:
+            continue
+        for t in _tag_deps(catalog.get(cid) or {}, catalog):
+            carriers = [c for c in counts if t in (catalog.get(c, {}).get("tags") or [])]
+            if len(carriers) <= 1:
+                protected.update(carriers)
+    dead = {c: m for c, m in dead.items() if c not in protected}
+    if not dead:
+        return cards, plan
+
+    order = list(plan.get("card_order") or [])
+    rank = {c: i for i, c in enumerate(order)}
+    freed = sum(counts[c] for c in dead)
+    for c in dead:
+        del counts[c]
+
+    # Redistribute to what this deck already plays first.
+    for cid in sorted(counts, key=lambda c: rank.get(c, 10_000)):
+        if freed <= 0:
+            break
+        head = min(int(catalog.get(cid, {}).get("deck_limit") or 0) - counts[cid], freed)
+        if head > 0:
+            counts[cid] += head
+            freed -= head
+    if freed > 0:
+        counts[INFINITE_FILLER] = counts.get(INFINITE_FILLER, 0) + freed
+        freed = 0
+
+    out: list[int] = []
+    for c, q in sorted(counts.items()):
+        out.extend([c] * q)
+    if len(out) != len(cards):
+        return cards, plan
+    if log:
+        nm = lambda c: (catalog.get(c, {}).get("name") or f"#{c}")
+        log("pruned inert: " + ", ".join(
+            f"{nm(c)} (needs {'/'.join(sorted(m))})" for c, m in dead.items()))
+    new_plan = dict(plan)
+    new_plan["card_order"] = [c for c in order if c in counts]
+    return out, new_plan
