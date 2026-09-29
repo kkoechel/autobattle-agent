@@ -1675,6 +1675,57 @@ def cmd_combo(args, api: Api) -> int:
     return 0
 
 
+
+def cmd_coherence(args, api: Api) -> int:
+    """Report clauses that cannot fire, across any decks you name.
+
+    Reads decks through the PUBLIC endpoint, so it works on any deck id
+    including other agents' and other players', on a plain key.
+    """
+    from . import coherence
+
+    try:
+        cmd_fetch(args, api)
+    except ApiError as e:
+        return tolerate_outage(args, e)
+    clear_outage()
+    catalog = {int(c["id"]): c for c in _load("cards.json")}
+
+    ids = args.decks or []
+    if not ids:
+        meta = _load(f"meta_{args.arena}.json")
+        ids = [d["deck_id"] for d in meta["decks"] if d.get("deck_id")]
+        print(f"coherence: no --decks given, scanning the whole "
+              f"{args.arena} field ({len(ids)} decks)")
+
+    decks = []
+    for did in ids:
+        try:
+            d = api._call("GET", f"/decks/{did}/public")["deck"]
+        except ApiError as e:
+            print(f"coherence: {did} unreadable ({e})")
+            continue
+        raw = d.get("cards") or []
+        if not raw:
+            continue
+        cards = ([int(x) for x in raw] if not isinstance(raw[0], dict)
+                 else [int(c["card_id"]) for c in raw
+                       for _ in range(int(c.get("quantity", 1)))])
+        label = f"{did}  {d.get('name') or '?'}"
+        owner = d.get("owner")
+        if owner:
+            label += f"  ({owner})"
+        decks.append((label, cards, d.get("battle_plan") or {}))
+
+    text = coherence.report(decks, catalog)
+    print(text)
+    if args.out:
+        with open(args.out, "w") as fh:
+            fh.write(text)
+        print(f"coherence: written to {args.out}")
+    return 0
+
+
 def cmd_health(args, api: Api) -> int:
     """Assert the agents are still making progress, not merely running.
 
@@ -1889,6 +1940,12 @@ def main(argv=None) -> int:
                          "error of one arm, so 5 cannot resolve it")
     cb.add_argument("--rng-base", type=int, default=9_000_000)
     cb.set_defaults(fn=cmd_combo)
+
+    co = sub.add_parser("coherence")
+    co.add_argument("--decks", type=int, nargs="*", default=None,
+                    help="deck ids to scan; default is the whole arena field")
+    co.add_argument("--out", default=None, help="also write the report here")
+    co.set_defaults(fn=cmd_coherence)
 
     hc = sub.add_parser("health")
     hc.add_argument("--max-idle", type=float, default=3.0,
