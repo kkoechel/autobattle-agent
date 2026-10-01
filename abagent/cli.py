@@ -991,7 +991,9 @@ def cmd_explore(args, api: Api) -> int:
     import statistics
 
     from .archetype import (ensure_tutor_targets, generate, name_for,
-                            prune_dead_clauses, recent_seeds, theme_of)
+                            prune_dead_clauses, theme_of)
+    from .archetype import recent_seeds
+    from .archetype import recent_seeds as archetype_recent
 
     try:
         cmd_fetch(args, api)
@@ -1083,14 +1085,51 @@ def cmd_explore(args, api: Api) -> int:
         print(f"explore: {len(fresh)} card(s) added in the last {args.new_days}d "
               f"take priority — {names}")
 
+    if args.only_new:
+        # A dedicated new-card agent. Seeds come only from cards added
+        # recently, with no rotation fill, because the point is to find out
+        # what a card that shipped this week can do -- not to rediscover the
+        # same established pool the other five agents already sweep.
+        slice_ = fresh[:args.slice]
+        if not slice_:
+            # Every recent card has been seeded once. Go round again rather
+            # than stop: a card tried in one shell has not been tried in
+            # every shell, the field it is screened against moves every ten
+            # minutes, and the alternative is an agent that does nothing at
+            # all between card releases -- including refining the new-card
+            # deck it already found.
+            # Rotate the window rather than re-screening the same head of the
+            # list every cycle: the point of going round again is a different
+            # combination, and screening 40 archetypes a run cost ~3 minutes
+            # of a single core that is already busy.
+            allrecent = archetype_recent(catalog, args.new_days)
+            if allrecent:
+                off = int(state.get("new_offset") or 0) % len(allrecent)
+                recycled = (allrecent + allrecent)[off:off + args.slice]
+                state["new_offset"] = (off + args.slice) % len(allrecent)
+            else:
+                recycled = []
+            if not recycled:
+                print(f"explore: nothing added in the last {args.new_days}d; "
+                      f"holding rather than falling back to old cards")
+                _save("explore.json", state)
+                return 0
+            slice_ = recycled
+            print(f"explore: all {len(recycled)} recent cards already seeded "
+                  f"once; going round again")
+        state["explored"] = sorted(set(state.get("explored") or []) | set(slice_))
+        print(f"explore: {len(slice_)} NEW seeds only "
+              + ", ".join(catalog[c]["name"] for c in slice_[:4]))
     room = max(0, args.slice - len(fresh))
     off = int(state.get("offset") or 0) % max(1, len(seeds_all))
     rotating = seeds_all[off:off + room] or seeds_all[:room]
     state["offset"] = (off + room) % max(1, len(seeds_all))
-    slice_ = (fresh + [c for c in rotating if c not in fresh])[:args.slice]
+    if not args.only_new:
+        slice_ = (fresh + [c for c in rotating if c not in fresh])[:args.slice]
     state["explored"] = sorted(done | set(slice_))
-    print(f"explore: {len(slice_)} seeds ({len(fresh)} new, "
-          f"rotation at {off} of {len(seeds_all)})")
+    if not args.only_new:
+        print(f"explore: {len(slice_)} seeds ({len(fresh)} new, "
+              f"rotation at {off} of {len(seeds_all)})")
 
     # Candidates come from two places, and the second matters more.
     #
@@ -1157,6 +1196,8 @@ def cmd_explore(args, api: Api) -> int:
     # decks screening 4-10 of 24, while these rank by what each card actually
     # measured against a blank in that theme's own shell.
     try:
+        if args.only_new:
+            raise RuntimeError("new-card agent: measured archetypes suppressed")
         from . import combo as _combo
         cstore = _combo.load(COMBO_STORE)
         measured = _combo.measured_archetypes(cstore, catalog, meta["decks"],
@@ -1211,11 +1252,15 @@ def cmd_explore(args, api: Api) -> int:
     if args.max_overlap > 0:
         from . import novelty
         ours = {args.deck_id, slot_id}
-        fresh, copies = [], []
+        # NOT `fresh` -- that name already holds the new-card seed ids a few
+        # dozen lines up, and shadowing it handed the refine step a list of
+        # Archetype objects where card ids were expected. The only symptom was
+        # "TypeError: unhashable type: 'Archetype'" from deep inside mutate().
+        novel, copies = [], []
         for a in archs:
             n, who = novelty.nearest(a.cards, meta["decks"], ours)
             if n <= args.max_overlap:
-                fresh.append(a)
+                novel.append(a)
             else:
                 copies.append((n, a, who))
         if copies:
@@ -1223,7 +1268,7 @@ def cmd_explore(args, api: Api) -> int:
             print(f"explore: dropped {len(copies)} candidate(s) as copies "
                   f"(worst {worst[0]}/100 vs "
                   f"'{str((worst[2] or {}).get('deck_name'))[:22]}')")
-        archs = fresh
+        archs = novel
 
     if not archs:
         print("explore: no archetypes from this slice")
@@ -1333,7 +1378,11 @@ def cmd_explore(args, api: Api) -> int:
     if focus:
         from .archetype import mutate
         rng = random.Random(int(time.time()))
-        pool = [c for c in seeds_all]
+        # A new-card agent refines with NEW cards too. Drawing from the
+        # general unplayed pool would quietly dilute the thing it exists to
+        # test: its first run refined a new-card deck by adding an old card,
+        # and after enough cycles the deck stops being about new cards at all.
+        pool = list(fresh) if args.only_new else [c for c in seeds_all]
         kids = []
         for _ in range(args.refine_tries):
             m = mutate(focus["cards"], focus["plan"], catalog, pool, rng,
@@ -1645,7 +1694,10 @@ def cmd_combo(args, api: Api) -> int:
     if rep is None:
         # Still mark it seen, or next_theme() hands back the same dead tag
         # every run and the sweep never advances past it.
-        store.setdefault("themes", {})[tag] = {"unbuildable": True}
+        import datetime as _dt
+        store.setdefault("themes", {})[tag] = {
+            "unbuildable": True,
+            "swept_at": _dt.datetime.utcnow().isoformat(timespec="seconds")}
         combo.save(store_path, store)
         return 0
 
@@ -1866,6 +1918,11 @@ def main(argv=None) -> int:
     y.set_defaults(fn=cmd_cycle)
 
     e = sub.add_parser("explore")
+    e.add_argument("--only-new", action="store_true", default=False,
+                   help="seed ONLY from cards added within --new-days, and "
+                        "suppress the measured and combo generators, whose "
+                        "decks contain no new cards and would out-screen "
+                        "the ones being tested")
     e.add_argument("--theme-mod", type=int, default=1,
                    help="partition measured archetypes across agents; "
                         "compose() is deterministic, so without this every "

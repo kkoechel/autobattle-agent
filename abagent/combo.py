@@ -322,7 +322,9 @@ def record(store: dict, rep: ThemeReport, keep_combos: int = 8) -> dict:
     were ordered by a statistic smaller than its own error, and letting them
     into the store would build a generator on noise.
     """
+    import datetime
     store.setdefault("themes", {})[rep.tag] = {
+        "swept_at": datetime.datetime.utcnow().isoformat(timespec="seconds"),
         "shell_seed": rep.shell_seed,
         # Twenty, not twelve: compose() fills 75 slots from these, and a
         # 12-card list runs out and falls back to blanks.
@@ -346,13 +348,52 @@ def record(store: dict, rep: ThemeReport, keep_combos: int = 8) -> dict:
 
 
 def next_theme(store: dict, catalog: dict[int, dict]) -> str:
-    """The commonest theme not yet measured; otherwise the stalest."""
-    done = set((store.get("themes") or {}).keys())
-    for t in themes(catalog):
-        if t not in done:
-            return t
+    """Unmeasured first, then themes holding a card newer than their sweep,
+    then the stalest.
+
+    The fallback used to be `themes(catalog)[0]`, which is a constant -- so
+    once the first pass finished, every run re-measured the same theme. 18 of
+    20 consecutive sweeps spent ~2 minutes each re-measuring melee, and no new
+    card could ever enter the measured pool, because its theme was never
+    looked at again. Silent, and exactly the shape of stall this agent keeps
+    producing: the service ran, exited zero, and banked a result every time.
+
+    New cards jump the queue on purpose. Nobody has built around a card that
+    shipped this morning, so its theme is where an unmeasured combination is
+    most likely to be hiding.
+    """
+    info = store.get("themes") or {}
     order = themes(catalog)
-    return order[0] if order else ""
+    if not order:
+        return ""
+
+    for t in order:
+        if t not in info:
+            return t
+
+    def swept_at(tag: str) -> str:
+        return str((info.get(tag) or {}).get("swept_at") or "")
+
+    # A theme holding a card added since it was last measured.
+    newest: dict[str, str] = {}
+    for cid, c in catalog.items():
+        if not is_playable(c):
+            continue
+        made = str(c.get("created_at") or "")[:19]
+        for tag in (c.get("tags") or []):
+            if made > newest.get(tag, ""):
+                newest[tag] = made
+    # Among themes holding a card newer than their sweep, take the STALEST,
+    # not the one with the newest card. Nearly every new creature carries
+    # [melee], so "newest card wins" hands melee almost every run and rebuilds
+    # the monoculture this replaced -- the 195-card theme would be re-censused
+    # for two minutes while the rare themes a new card might actually define
+    # never came up.
+    stale_new = [t for t in order if newest.get(t, "") > swept_at(t)]
+    if stale_new:
+        return min(stale_new, key=lambda t: (swept_at(t), t))
+
+    return min(order, key=lambda t: (swept_at(t), t))
 
 
 def compose(store: dict, tag: str, catalog: dict[int, dict],

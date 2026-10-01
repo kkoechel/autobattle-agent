@@ -10,7 +10,7 @@ decide how each one *behaves* on the ground it has.
 
 | agent | temperament | the bet |
 |---|---|---|
-| quill | restless | rotates on the slightest excuse, never settles. Tests breadth: how much of the space is worth looking at |
+| quill | **new cards only** | seeds solely from cards added in the last 14 days, with the measured and combo generators off. Tests what just shipped, before anyone has built around it. No seed partition: it should see every new card, not a quarter of them. A low floor (0.45) because a new-card deck has to be allowed to place badly — refusing to install anything that screens under the established decks is how a new card never gets tried at all |
 | ember | patient | rotates rarely, refines hard. Tests depth: how far one deck goes if you keep at it |
 | vane  | contrarian | overlap capped at 30 instead of 50. Forced further from the field than anything else we run |
 | rook  | wide net | screens twice the candidates at a low bar. Tests whether the floor is throwing away good decks |
