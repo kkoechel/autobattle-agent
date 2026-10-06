@@ -1452,6 +1452,24 @@ def cmd_explore(args, api: Api) -> int:
                 state["best_deck"] = None
             print("explore: cleared the copy-era floor and history")
 
+    # Heal a legacy name before anything writes it again. The deck was renamed
+    # through the API once; the agent's own stored name was not, so the next
+    # install() put the hex back. Cleaning the STORED name is what makes it
+    # stick.
+    if focus and focus.get("cards"):
+        from .archetype import clean_name
+        _tags = collections.Counter(
+            t for c in set(focus["cards"])
+            for t in (catalog.get(c, {}).get("tags") or []))
+        _taken = {str(d.get("deck_name") or "") for d in meta["decks"]}
+        _new = clean_name(focus.get("name") or "", [t for t, _ in _tags.most_common(12)],
+                          focus["cards"], _taken)
+        if _new and _new != focus.get("name"):
+            print(f"explore: renaming '{focus.get('name')}' -> '{_new}'")
+            focus["name"] = _new
+            state["focus"] = focus
+            install(slot_id, _new, focus["cards"], focus.get("plan") or {})
+
     block = [args.rng_base + i for i in range(21)]
 
     # Alternate card refinement with plan tuning. Both pay, and one shared

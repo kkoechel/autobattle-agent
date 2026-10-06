@@ -23,6 +23,8 @@ paid, so the primary deck keeps the placement.
 """
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, field as dfield
 
 from .moves import is_playable
@@ -787,3 +789,40 @@ def prune_dead_clauses(cards: list[int], plan: dict, catalog: dict[int, dict],
     new_plan = dict(plan)
     new_plan["card_order"] = [c for c in order if c in counts]
     return out, new_plan
+
+
+# Names this project generated before 2026-10-06, which announce a bot:
+#   "Thrifty Bargain 719e"        a hash of the card list, four hex chars
+#   "combo Herbalist's Pillar"    an internal generator label
+#   "measured giant"              likewise
+#   "Golden Hive+Warboss"         the mutate path's shell+card form
+LEGACY_HEX = re.compile(r"(?: [0-9a-f]{4})+$")
+LEGACY_LABEL = re.compile(r"^(combo|measured)\s+", re.I)
+
+
+def clean_name(name: str, theme: list[str], cards: list[int],
+               taken: set[str] | None = None) -> str:
+    """Replace a machine-looking name with one a person could have chosen.
+
+    Applied at the write boundary rather than by editing state files, because
+    the name lives in two places and only one of them was fixed the first
+    time: renaming the DECK through the API left each agent's stored
+    focus["name"] untouched, and since a refined deck now keeps its name, the
+    very next install() wrote the hex name straight back. Five of six decks
+    reverted within the hour.
+
+    Cleaning here is self-healing -- it runs every cycle until the stored name
+    is clean, and it catches legacy forms nobody remembers generating.
+    """
+    nm = (name or "").strip()
+    if not nm:
+        return name_for(theme, "deck", cards, taken)
+    if "+" in nm and len(nm.split("+")) == 2:
+        nm = nm.split("+")[1].strip() or nm
+    stripped = LEGACY_LABEL.sub("", LEGACY_HEX.sub("", nm)).strip()
+    if stripped == nm:
+        return nm                                  # already fine, leave it
+    # The bare stem is a name a dozen decks share ("Ember Ruin"), so prefer a
+    # fresh one and fall back to the stem only if nothing else is available.
+    fresh = name_for(theme, stripped or "deck", cards, taken)
+    return fresh or stripped or nm
