@@ -974,6 +974,82 @@ def cmd_cycle(args, api: Api) -> int:
     return 0
 
 
+
+def plan_round(h, api, args, state, focus, slot_id, catalog, screen, install,
+               log=print) -> bool:
+    """Tune ONE battle-plan field per cycle, rotating through the surface.
+
+    The explorers never touched the plan. Six of eight agent decks carried a
+    byte-identical hardcoded default -- card_order / energy_hold 0 /
+    least_armor -- while the two decks the competitor tunes ran ten fields.
+    Measured on one of them, a single field was worth +2.78 wins (t=6.44) and
+    two together +3.84 (t=6.97), validated on a fresh 161-cohort block.
+
+    One field a cycle, because the whole surface is ~31 variants and that is
+    ~650s of a single shared core. One field is ~45s.
+
+    Screen, then confirm on seeds nothing was selected on. Taking the best of
+    a dozen variants and reporting its screen number is the winner's curse,
+    which this project has already paid for once: a swap that "confirmed" at
+    +3.8W was worth +1.48W.
+    """
+    import random as _random
+    from . import plans
+    from .search import MIN_GAIN, paired_t
+
+    cards = focus.get("cards") or []
+    plan = dict(focus.get("plan") or {})
+    if not cards:
+        return False
+
+    fields = [f for f, _v in plans.SCALAR_FIELDS]
+    fields.append("card_order")                      # the order itself
+    i = int(state.get("plan_field_idx") or 0) % len(fields)
+    state["plan_field_idx"] = (i + 1) % len(fields)
+    field = fields[i]
+
+    rng = _random.Random(int(time.time()))
+    if field == "card_order":
+        cands = plans.promote_moves(plan, n=6, rng=rng)
+        cands += [plans.shuffle_card_order(plan, rng, swaps=2) for _ in range(3)]
+    else:
+        if not plans.is_live_field(plan, field):
+            log(f"plan: {field} is dead given the rest of the plan; skipping")
+            return False
+        values = dict(plans.SCALAR_FIELDS)[field]
+        cands = plans.neighbors(plan, field, values, cards, catalog)
+    if not cands:
+        return False
+
+    block = [args.rng_base + 700_000 + k for k in range(args.plan_seeds)]
+    batch = [("base", cards, plan)]
+    batch += [(f"v{k}", cards, p) for k, p in enumerate(cands)]
+    sc = h.evaluate(batch, screen, block)
+    base_w = sc["base"].wins
+    best_k, best_w = None, base_w
+    for k in range(len(cands)):
+        if sc[f"v{k}"].wins > best_w:
+            best_k, best_w = k, sc[f"v{k}"].wins
+    if best_k is None:
+        log(f"plan: {field} -- nothing beat the current plan on the screen")
+        return False
+
+    # Confirm on a block nothing was selected on.
+    conf = [args.rng_base + 800_000 + k for k in range(args.plan_confirm_seeds)]
+    cand = cands[best_k]
+    cs = h.evaluate([("base", cards, plan), ("cand", cards, cand)], screen, conf)
+    gain, t = paired_t(cs["cand"], cs["base"])
+    if not (gain >= MIN_GAIN and t >= 2.0):
+        log(f"plan: {field} -> {plans.describe(cand)[:40]} screened "
+            f"{best_w - base_w:+.1f} but confirmed {gain:+.2f} (t={t:+.2f}); keeping")
+        return False
+
+    focus["plan"] = cand
+    install(slot_id, focus.get("name") or "deck", cards, cand)
+    log(f"plan: {field} -> {plans.describe(cand)[:48]}  {gain:+.2f} wins, t={t:+.2f}")
+    return True
+
+
 def cmd_explore(args, api: Api) -> int:
     """Generate archetypes and rotate the best into the Double Entry slot.
 
@@ -1329,8 +1405,6 @@ def cmd_explore(args, api: Api) -> int:
     inc_cards, inc_plan = expand(incumbent), (incumbent.get("battle_plan") or {})
     allopp = opponents_from_meta(meta, exclude_deck_ids={args.deck_id, slot_id})
     screen = allopp[::max(1, len(allopp) // 24)][:24]
-    block = [args.rng_base + i for i in range(21)]
-
     # --- REFINE ---------------------------------------------------------
     # Scanning alone finds interesting decks and throws them away: rotate,
     # measure once, mark tried, never return. The point of finding a good
@@ -1375,6 +1449,26 @@ def cmd_explore(args, api: Api) -> int:
                     bd["cards"], meta["decks"], ours, args.max_overlap):
                 state["best_deck"] = None
             print("explore: cleared the copy-era floor and history")
+
+    block = [args.rng_base + i for i in range(21)]
+
+    # Alternate card refinement with plan tuning. Both pay, and one shared
+    # core cannot afford both every cycle: a card refine is ~30-60s and a plan
+    # round ~45s. Plans measured +3.84 wins on the one deck tested, the same
+    # order as a good card swap, so they get equal time rather than leftovers.
+    state["tick"] = int(state.get("tick") or 0) + 1
+    if focus and args.plan_rounds and state["tick"] % 2 == 1:
+        try:
+            if plan_round(h, api, args, state, focus, slot_id, catalog,
+                          screen, install):
+                state["focus"] = focus
+                state["installed_at"] = time.strftime("%Y-%m-%d %H:%M:%S",
+                                                      time.gmtime())
+            _save("explore.json", state)
+            return 0
+        except Exception as e:
+            print(f"plan: round failed ({e}); falling through to cards")
+
     if focus:
         from .archetype import mutate
         rng = random.Random(int(time.time()))
@@ -1918,6 +2012,13 @@ def main(argv=None) -> int:
     y.set_defaults(fn=cmd_cycle)
 
     e = sub.add_parser("explore")
+    e.add_argument("--plan-rounds", action="store_true", default=True,
+                   help="alternate card refinement with battle-plan tuning")
+    e.add_argument("--no-plan-rounds", dest="plan_rounds", action="store_false")
+    e.add_argument("--plan-seeds", type=int, default=21,
+                   help="cohorts for the plan screen")
+    e.add_argument("--plan-confirm-seeds", type=int, default=61,
+                   help="cohorts for the confirmation, on unselected seeds")
     e.add_argument("--only-new", action="store_true", default=False,
                    help="seed ONLY from cards added within --new-days, and "
                         "suppress the measured and combo generators, whose "

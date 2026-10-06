@@ -160,3 +160,39 @@ def describe(plan: dict) -> str:
     if plan.get("card_order") and is_live_field(plan, "card_order"):
         parts.append(f"card_order[{len(plan['card_order'])}]")
     return " ".join(parts) or "(engine defaults)"
+
+
+def promote_moves(plan: dict, n: int = 6, rng: random.Random | None = None) -> list[dict]:
+    """Bigger card_order moves: lift one card to the front, or reverse a block.
+
+    shuffle_card_order() makes local swaps, which repairs an order slowly --
+    and a freshly generated order needs more than that. Measured on a deck
+    refined only twice, EVERY wholesale reordering beat the generated one:
+    cheapest-first +8.2, most-copies +9.1, field-popularity +12.3, and simply
+    REVERSING it +11.1 (t=9.6 to 13.5, 79 opponents x 121 cohorts).
+
+    The generator ranks by tag affinity and appends the field's staples last,
+    so a new deck plays its theme cards before the cards the whole field
+    agrees are good. Refinement repairs this by accident, since mutate()
+    inserts each newcomer one rank earlier than the card it replaced -- the
+    gain from reordering falls to -0.1 by 9 refinements and -3.3 by 18. There
+    is no better fixed heuristic to switch to; the order has to be searched
+    per deck, which is what these moves are for.
+    """
+    order = list(plan.get("card_order") or [])
+    if len(order) < 3:
+        return []
+    out: list[dict] = []
+    rng = rng or random.Random(0)
+
+    # Promote a single card to the front -- the cheapest useful repair when
+    # one strong card is buried behind the theme.
+    for i in rng.sample(range(1, len(order)), min(n, len(order) - 1)):
+        o = order[:]
+        o.insert(0, o.pop(i))
+        out.append({**plan, "card_order": o})
+
+    out.append({**plan, "card_order": list(reversed(order))})
+    mid = len(order) // 2
+    out.append({**plan, "card_order": order[mid:] + order[:mid]})
+    return out
