@@ -452,8 +452,11 @@ def compose(store: dict, tag: str, catalog: dict[int, dict],
         "target_preference": "least_armor",
     }
     seed = picks[0][0]
+    # The seed CARD's name, not "measured <tag>". That label is an internal
+    # one and it reaches the gallery whenever the theme has no word mapping --
+    # "measured giant" names a deck as plainly machine-made as a hex suffix.
     return archetype.Archetype(
-        seed=seed, seed_name=f"measured {tag}",
+        seed=seed, seed_name=(catalog.get(seed, {}).get("name") or tag),
         cards=cards, plan=plan,
         theme=[tag],
         members=sorted(((c, q) for c, q in picks), key=lambda kv: -kv[1]),
@@ -626,7 +629,7 @@ def compose_from_cluster(store: dict, hub: int, partners: list[tuple[int, str, f
     }
     hub_name = catalog.get(hub, {}).get("name", f"#{hub}")
     return archetype.Archetype(
-        seed=hub, seed_name=f"combo {hub_name}",
+        seed=hub, seed_name=hub_name,
         cards=cards, plan=plan,
         theme=sorted(tags & set((store.get("themes") or {}).keys()))[:2],
         members=sorted(picks, key=lambda kv: -kv[1]),

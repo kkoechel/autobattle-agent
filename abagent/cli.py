@@ -1258,7 +1258,9 @@ def cmd_explore(args, api: Api) -> int:
                 seen.add(key)
                 nm = catalog.get(mlog[0][1], {}).get("name", "?")
                 mutants.append(Archetype(
-                    seed=mlog[0][1], seed_name=f"{rec.name[:14]}+{nm[:14]}",
+                    # The added card's name, not "Shell+Card" -- a plus sign
+                    # in a deck name is the same kind of tell as a hex suffix.
+                    seed=mlog[0][1], seed_name=nm,
                     cards=mcards, plan=mplan,
                     theme=theme_of(mlog[0][1], catalog),
                     members=sorted(collections.Counter(mcards).items(),
@@ -1495,14 +1497,12 @@ def cmd_explore(args, api: Api) -> int:
             if best_i is not None:
                 c, p, log = kids[best_i]
                 nm = catalog.get(log[0][1], {}).get("name", "?")
-                # Rename on every refinement. The name carries a hash of the
-                # card list, so a deck that changed gets a name that changed --
-                # otherwise the gallery shows the same "Iron Fury" for hours
-                # while the list underneath it moves, and a player watching
-                # from outside cannot tell iteration from a stall. That is
-                # precisely how this looked stalled while it was working.
-                focus["name"] = name_for(focus.get("theme") or [],
-                                         focus.get("name", "deck"), c)
+                # A refined deck KEEPS its name: it is the same deck getting
+                # better, not a different one. Renaming on every refinement
+                # was how the hex suffix earned its keep, and the suffix is
+                # what told every player on the gallery that a bot was
+                # playing. Iteration shows up in the journal and the screen
+                # numbers; it does not need to show up in the name.
                 focus.update({"cards": c, "plan": p, "screen": round(best_w, 1),
                               "stale": 0,
                               "history": (focus.get("history") or []) + [nm]})
@@ -1559,13 +1559,20 @@ def cmd_explore(args, api: Api) -> int:
             repr(sorted(collections.Counter(a.cards).items())).encode()
         ).hexdigest()[:16]
 
+    # Names already on the board -- every deck in the field, ours included.
+    # A collision resolved against reality beats one hoped away, and it is
+    # also what stops two agents landing on the same name in the same hour.
+    taken_names = {str(d.get("deck_name") or "") for d in meta["decks"]}
+    taken_names |= {str((state.get("focus") or {}).get("name") or "")}
+
     seen_ids = set(state.get("tried_ids") or [])
     ranked = sorted(((sc[f"a{i}"].wins, i) for i in range(len(archs))), reverse=True)
     pick = None
     for w, i in ranked:
         if ident(archs[i]) in seen_ids or w < floor:
             continue
-        pick = (w, i, name_for(archs[i].theme, archs[i].seed_name, archs[i].cards))
+        pick = (w, i, name_for(archs[i].theme, archs[i].seed_name,
+                               archs[i].cards, taken=taken_names))
         break
 
     if not pick:

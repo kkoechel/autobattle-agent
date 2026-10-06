@@ -225,6 +225,43 @@ def generate(seeds: list[int], catalog: dict[int, dict], meta_decks: list[dict],
 # Names come from the theme tags, so a generated deck arrives describing
 # itself. "abagent explore #47" tells a human nothing; "Rust and Ransom"
 # tells them it breaks its own relics for profit, which is what the deck does.
+# Alternatives, so a theme is not locked to one adjective and one noun. With
+# 34 of each the name space was small enough that two unrelated decks collided
+# constantly, which is what the hash suffix was papering over.
+EXTRA_ADJECTIVES: dict[str, list[str]] = {
+    "poison": ["Creeping", "Septic"], "damage": ["Scorching", "Riotous"],
+    "melee": ["Brazen", "Relentless"], "honor": ["Solemn", "Vaunted"],
+    "shield": ["Steadfast", "Warded"], "life": ["Flourishing", "Gentle"],
+    "draw": ["Patient", "Endless"], "mill": ["Quiet", "Creeping"],
+    "discard": ["Barren", "Spent"], "energy": ["Restless", "Humming"],
+    "token-copy": ["Countless", "Swarming"], "scaling": ["Mounting", "Swelling"],
+    "exile": ["Forgotten", "Silent"], "bounce": ["Rolling", "Returning"],
+    "recycle": ["Enduring", "Turning"], "structure": ["Walled", "Anchored"],
+    "relic": ["Hoarded", "Gilded"], "soldier": ["Disciplined", "Massed"],
+    "beast": ["Untamed", "Prowling"], "divine": ["Hallowed", "Luminous"],
+    "station": ["Whirring", "Geared"], "elemental": ["Howling", "Churning"],
+    "scholar": ["Quiet", "Lettered"], "utilize": ["Thrifty", "Resourceful"],
+    "drawback": ["Reckless", "Costly"], "destroy": ["Ruinous", "Breaking"],
+    "sacrifice": ["Devoted", "Willing"], "symmetric": ["Even", "Mirrored"],
+}
+
+EXTRA_NOUNS: dict[str, list[str]] = {
+    "poison": ["Bloom", "Rot"], "damage": ["Cinders", "Wrath"],
+    "melee": ["Charge", "Advance"], "honor": ["Vow", "Creed"],
+    "shield": ["Rampart", "Vigil"], "life": ["Verdure", "Mercy"],
+    "draw": ["Library", "Current"], "mill": ["Silence", "Dust"],
+    "discard": ["Hunger", "Waste"], "energy": ["Dynamo", "Tide"],
+    "token-copy": ["Multitude", "Tide"], "scaling": ["Ascent", "Groundswell"],
+    "exile": ["Absence", "Hush"], "bounce": ["Reprise", "Eddy"],
+    "recycle": ["Cycle", "Revival"], "structure": ["Redoubt", "Hold"],
+    "relic": ["Vault", "Trove"], "soldier": ["Column", "Muster"],
+    "beast": ["Pack", "Thicket"], "divine": ["Vespers", "Halo"],
+    "station": ["Works", "Foundry"], "elemental": ["Gale", "Maelstrom"],
+    "scholar": ["Treatise", "Margin"], "utilize": ["Salvage", "Yield"],
+    "drawback": ["Bargain", "Toll"], "destroy": ["Undoing", "Collapse"],
+    "sacrifice": ["Offering", "Oblation"], "symmetric": ["Balance", "Accord"],
+}
+
 TAG_WORDS: dict[str, tuple[str, str]] = {
     "poison":        ("Venom", "Blight"),
     "damage":        ("Ember", "Ruin"),
@@ -264,41 +301,71 @@ TAG_WORDS: dict[str, tuple[str, str]] = {
 
 
 def name_for(theme: list[str], fallback: str,
-             cards: list[int] | None = None) -> str:
-    """An evocative name from the two most characteristic theme tags.
+             cards: list[int] | None = None,
+             taken: set[str] | None = None) -> str:
+    """A deck name a person could have chosen.
 
-    Adjective from the first, noun from the second, so the name reads as a
-    phrase rather than two nouns stapled together. Unknown tags fall back to
-    the seed card, which is at least specific.
+    This used to append four hex characters of a hash of the card list, so a
+    refined deck got a visibly different name. kkoechel pointed out what that
+    actually communicates: "Thrifty Bargain 719e" tells every player on the
+    gallery that a bot made it. The agents are meant to be indistinguishable
+    from a person playing well, and a hex suffix is a tell.
 
-    A short suffix derived from the card list follows, because the vocabulary
-    is ~34 words and collisions are constant rather than rare. Two entirely
-    different melee decks were both called "Iron Fury" in the same log line --
-    one evicted as a 97/100 copy and one installed at 25/100 -- which makes a
-    discovery impossible to tell from the thing it replaced. The suffix is a
-    hash of the card multiset, so the SAME deck always gets the same name and
-    a changed one always gets a new one.
+    The problem the suffix solved was real -- two different decks both called
+    "Iron Fury" in one log line, a discovery you could not tell from the thing
+    it replaced. The better answer is the one kkoechel gave: a NEW deck picks a
+    new name, and a refined deck keeps its own, because it is the same deck
+    getting better rather than a different one. Progress is visible in the
+    journal and the screen numbers, which is where it belongs.
+
+    Variety instead of a hash: each theme word carries several adjectives and
+    nouns and the result is cast into one of a few phrasings, so the space is
+    thousands of names rather than 34. `taken` rules out anything already on
+    the board -- our own decks and other players' -- so collisions are
+    resolved against reality rather than hoped away.
     """
+    import hashlib
+
     known = [t for t in theme if t in TAG_WORDS]
     if not known:
-        base = fallback
-    elif len(known) == 1:
-        adj, noun = TAG_WORDS[known[0]]
-        base = f"{adj} {noun}"
+        base_adj, base_noun = None, None
     else:
-        base = f"{TAG_WORDS[known[0]][0]} {TAG_WORDS[known[1]][1]}"
-    if not cards:
-        return base
-    import hashlib
-    import re
-    # Strip any suffix we added earlier before adding a new one. Renaming
-    # happens on every refinement and the fallback is usually the deck's
-    # CURRENT name, so without this a deck accretes a new hash each cycle and
-    # ends up as "Iron Fury a1b2 c3d4 e5f6".
-    base = re.sub(r"(?: [0-9a-f]{4})+$", "", base).strip() or fallback
-    h = hashlib.sha1(
-        ",".join(str(c) for c in sorted(cards)).encode()).hexdigest()[:4]
-    return f"{base} {h}"
+        base_adj = TAG_WORDS[known[0]][0]
+        base_noun = TAG_WORDS[known[1] if len(known) > 1 else known[0]][1]
+    if not base_adj or not base_noun:
+        return fallback
+
+    adjs = [base_adj] + EXTRA_ADJECTIVES.get(known[0], [])
+    nouns = [base_noun] + EXTRA_NOUNS.get(known[-1], [])
+
+    # Deterministic, so the same deck proposes the same name first -- but the
+    # determinism is in the ORDER tried, never visible in the output.
+    h = 0
+    if cards:
+        h = int(hashlib.sha1(
+            ",".join(str(c) for c in sorted(cards)).encode()).hexdigest()[:8], 16)
+
+    # Patterns that are grammatical whatever words land in them. An earlier
+    # set included "{adj}'s {noun}" and produced "Relentless's Wrath" and
+    # "Iron's Cinders" -- a possessive needs a name, not an adjective, and a
+    # deck called that reads as generated just as loudly as a hex suffix did.
+    patterns = [
+        "{adj} {noun}",
+        "The {adj} {noun}",
+        "{noun} of the {adj}",
+        "{noun} Eternal",
+        "Rise of the {adj} {noun}",
+        "Last {noun} of the {adj}",
+    ]
+    taken = {t.lower() for t in (taken or set())}
+    for k in range(len(patterns) * len(adjs) * len(nouns)):
+        i = h + k
+        nm = patterns[i % len(patterns)].format(
+            adj=adjs[(i // len(patterns)) % len(adjs)],
+            noun=nouns[(i // (len(patterns) * len(adjs))) % len(nouns)])
+        if nm.lower() not in taken:
+            return nm
+    return fallback
 
 
 def mutate(cards: list[int], plan: dict, catalog: dict[int, dict],
