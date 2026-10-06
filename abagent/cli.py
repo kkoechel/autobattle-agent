@@ -1288,8 +1288,11 @@ def cmd_explore(args, api: Api) -> int:
         combos = _combo.combo_archetypes(cstore, catalog, meta["decks"],
                                          mod=args.theme_mod, rem=args.theme_rem)
         if combos:
+            # seed_name is the hub CARD's name now, not "combo <name>" --
+            # the old [6:] slice stripped six real characters and logged
+            # "ist's Pillar" and "ized Combinoid".
             print(f"explore: {len(combos)} combo archetypes — "
-                  + ", ".join(a.seed_name[6:28] for a in combos[:4]))
+                  + ", ".join(a.seed_name[:24] for a in combos[:4]))
         measured = combos + measured
         added = 0
         for a in measured:

@@ -1,1 +1,1 @@
-ABAGENT_FLAGS=--seed-mod 4 --seed-rem 1 --theme-mod 4 --theme-rem 1 --refine-tries 12 --refine-patience 8 --floor-frac 0.95
+ABAGENT_FLAGS=--seed-mod 4 --seed-rem 1 --theme-mod 5 --theme-rem 0 --refine-tries 12 --refine-patience 8 --floor-frac 0.95
