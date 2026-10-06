@@ -32,7 +32,13 @@ PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
 ReadWritePaths=/opt/abagent/var-explore /opt/abagent/shared /opt/abagent/bin
-TimeoutStartSec=1500
+# An hour, not 25 minutes. This job has no deadline -- it is the lowest
+# priority work on the box (Nice=19, CPUWeight=5) and is meant to be starved
+# by anything with a cohort to catch. It was killed at 1500s having used only
+# 5min of CPU, i.e. purely for waiting its turn, which turns a transient
+# contention spike into a failed unit and a false alarm. A genuine hang still
+# trips this; losing a turn no longer does.
+TimeoutStartSec=3600
 
 [Install]
 WantedBy=multi-user.target
