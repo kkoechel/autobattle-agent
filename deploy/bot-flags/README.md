@@ -11,7 +11,7 @@ decide how each one *behaves* on the ground it has.
 | agent | temperament | the bet |
 |---|---|---|
 | quill | **new cards only** | seeds solely from cards added in the last 14 days, with the measured and combo generators off. Tests what just shipped, before anyone has built around it. No seed partition: it should see every new card, not a quarter of them. A low floor (0.45) because a new-card deck has to be allowed to place badly — refusing to install anything that screens under the established decks is how a new card never gets tried at all |
-| ember | patient | rotates rarely, refines hard. Tests depth: how far one deck goes if you keep at it |
+| ember | **contender** | the one agent chasing rank 1 rather than novelty. Patient as before — 0 rotations, refines hard — plus a counter round one cycle in three that hunts its worst matchups. It keeps the 50/100 novelty cap: the deck at rank 1 is itself novel (26/100), so beating it never required copying anything |
 | vane  | contrarian | overlap capped at 30 instead of 50. Forced further from the field than anything else we run |
 | rook  | wide net | screens twice the candidates at a low bar. Tests whether the floor is throwing away good decks |
 

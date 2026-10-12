@@ -28,6 +28,19 @@ SCALAR_FIELDS: list[tuple[str, list]] = [
     # choosing from a pile, not lowest HP.
     ("cost_preference", ["random", "weakest", "strongest", "least_armor"]),
     ("discard_priority", ["random", "cheapest", "costliest", "lowest_priority"]),
+    # v4.05. A gravecast card may be played from the discard pile, and this
+    # decides whether the engine interleaves those plays with the hand, takes
+    # one side first, or never uses the pile at all. Four of the field's decks
+    # set it, including the one at rank 1 -- and our search did not know the
+    # field existed, because the surface grew when gravecast shipped and
+    # SCALAR_FIELDS did not.
+    ("gravecast_policy", ["interleaved", "hand_first", "discard_first", "never"]),
+    ("discard_gravecast_first", [True, False]),
+    # Dead for these agents today -- every deck is built with champion_id
+    # NULL -- but listed so the sweep covers them the moment one has a
+    # champion, rather than silently never testing them again.
+    ("champion_timing", ["asap", "hold"]),
+    ("champion_energy_threshold", [0, 2, 4, 6]),
     # Only live once play_priority=card_order, which is why it sits last.
     # validate.go reserves energy for card_order[0] -- the single literal top
     # entry -- unless this is explicitly false, so the default is ON and
@@ -47,7 +60,25 @@ CONDITIONAL_ON_PLAY_PRIORITY = {
 DEFAULT_PLAN: dict = {}
 
 
-def is_live_field(plan: dict, field: str) -> bool:
+# Fields that do nothing unless the DECK contains the relevant card type.
+# Testing a dead field is not a null result about strategy, it is a null
+# result about the deck, and reporting "no improvement" from one is the kind
+# of non-finding this project has chased before.
+def _deck_has_gravecast(cards, catalog) -> bool:
+    import json as _json
+    for cid in set(cards or []):
+        ej = (catalog or {}).get(cid, {}).get("effects_json")
+        if isinstance(ej, str):
+            try:
+                ej = _json.loads(ej)
+            except ValueError:
+                continue
+        if ej and "gravecast" in _json.dumps(ej):
+            return True
+    return False
+
+
+def is_live_field(plan: dict, field: str, cards=None, catalog=None) -> bool:
     """False when a field cannot affect play given the rest of the plan --
     e.g. energy_hold_scope with energy_hold 0, or card_order without
     play_priority=card_order. Skipping dead fields keeps the search honest:
@@ -58,6 +89,11 @@ def is_live_field(plan: dict, field: str) -> bool:
         return False
     if field == "energy_hold_scope" and not plan.get("energy_hold"):
         return False
+    if field in ("gravecast_policy", "discard_gravecast_first"):
+        if cards is not None and not _deck_has_gravecast(cards, catalog):
+            return False
+    if field in ("champion_timing", "champion_energy_threshold"):
+        return False          # every deck these agents build has no champion
     return True
 
 

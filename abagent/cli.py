@@ -1013,7 +1013,7 @@ def plan_round(h, api, args, state, focus, slot_id, catalog, screen, install,
         cands = plans.promote_moves(plan, n=6, rng=rng)
         cands += [plans.shuffle_card_order(plan, rng, swaps=2) for _ in range(3)]
     else:
-        if not plans.is_live_field(plan, field):
+        if not plans.is_live_field(plan, field, cards, catalog):
             log(f"plan: {field} is dead given the rest of the plan; skipping")
             return False
         values = dict(plans.SCALAR_FIELDS)[field]
@@ -1413,7 +1413,23 @@ def cmd_explore(args, api: Api) -> int:
             f["cards"], f["plan"] = _fixed_cards, _fixed_plan
     inc_cards, inc_plan = expand(incumbent), (incumbent.get("battle_plan") or {})
     allopp = opponents_from_meta(meta, exclude_deck_ids={args.deck_id, slot_id})
-    screen = allopp[::max(1, len(allopp) // 24)][:24]
+    # A stratified stride spans the field's whole strength range, which is
+    # what a novelty search wants: a deck has to be broadly good, not good
+    # against one tier.
+    #
+    # A CONTENDER wants the opposite. Rank is total wins, and everyone beats
+    # the bottom of the field -- what separates rank 1 from rank 9 is the
+    # handful of hard matchups at the top. GET /meta returns decks in
+    # finishing order, so the head of the list IS the top. Screening there
+    # optimises the difference rather than the average, and it is why a
+    # single-card counter kept measuring +0.3: the candidates were being
+    # ranked on a field where the decisive matchups are one slot in twenty.
+    if args.contend:
+        screen = allopp[:24]
+        print(f"contend: screening against the top {len(screen)} decks, "
+              f"not a stratified sample")
+    else:
+        screen = allopp[::max(1, len(allopp) // 24)][:24]
     # --- REFINE ---------------------------------------------------------
     # Scanning alone finds interesting decks and throws them away: rotate,
     # measure once, mark tried, never return. The point of finding a good
@@ -1478,6 +1494,42 @@ def cmd_explore(args, api: Api) -> int:
             install(slot_id, _new, focus["cards"], focus.get("plan") or {})
 
     block = [args.rng_base + i for i in range(21)]
+
+    # A CONTENDER agent spends one cycle in three hunting its worst matchups.
+    #
+    # The other agents maximise mean wins over the whole field, which is the
+    # right objective for finding novel decks and the wrong one for reaching
+    # rank 1. Once a deck beats most of the field its remaining upside sits in
+    # a few opponents, and against 81 of them that upside is diluted 81:1 --
+    # ember loses 94 of 121 to Novice Rabble 93 and the field average barely
+    # registers it. counter_round screens against those matchups ALONE, where
+    # the effect is undiluted, and still accepts only on total wins against
+    # the full field: a counter that wins a matchup and loses the tournament
+    # is not a counter.
+    if focus and args.contend and focus.get("cards") and state["tick"] % 3 == 2:
+        try:
+            from .search import counter_round
+            rng_c = random.Random(int(time.time()))
+            got = counter_round(h, focus["cards"], focus.get("plan") or {},
+                                allopp, catalog, rng_c,
+                                screen_seeds=args.contend_screen_seeds,
+                                validate_seeds=args.contend_validate_seeds,
+                                samples=args.contend_samples,
+                                extra_pool=seeds_all)
+            if got:
+                c2, p2, gain, t = got
+                focus["cards"], focus["plan"] = c2, p2
+                install(slot_id, focus.get("name") or "deck", c2, p2)
+                state["focus"] = focus
+                state["installed_at"] = time.strftime("%Y-%m-%d %H:%M:%S",
+                                                      time.gmtime())
+                print(f"contend: adopted a counter, {gain:+.2f} wins t={t:+.2f}")
+            else:
+                print("contend: nothing beat the deck on its worst matchups")
+            _save("explore.json", state)
+            return 0
+        except Exception as e:
+            print(f"contend: round failed ({e}); falling through")
 
     # Alternate card refinement with plan tuning. Both pay, and one shared
     # core cannot afford both every cycle: a card refine is ~30-60s and a plan
@@ -2055,6 +2107,16 @@ def main(argv=None) -> int:
     y.set_defaults(fn=cmd_cycle)
 
     e = sub.add_parser("explore")
+    e.add_argument("--contend", action="store_true", default=False,
+                   help="hunt the deck's worst matchups one cycle in three; "
+                        "this is the rank-chasing objective, not the novelty "
+                        "one, so give it to ONE agent")
+    e.add_argument("--contend-samples", type=int, default=28,
+                   help="candidates per counter round; 10 found nothing twice "
+                        "and a candidate here meets 6 opponents, not 80, so "
+                        "the screen is cheap enough to widen")
+    e.add_argument("--contend-screen-seeds", type=int, default=41)
+    e.add_argument("--contend-validate-seeds", type=int, default=121)
     e.add_argument("--plan-rounds", action="store_true", default=True,
                    help="alternate card refinement with battle-plan tuning")
     e.add_argument("--no-plan-rounds", dest="plan_rounds", action="store_false")

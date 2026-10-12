@@ -322,7 +322,7 @@ def counter_round(harness: Harness, cards: list[int], plan: dict,
                   validate_seeds: int = 161, min_t: float = 2.0,
                   focus_k: int = 6, samples: int = 10,
                   min_focus_gain: float = 0.5, min_gain: float = MIN_GAIN,
-                  log=print
+                  extra_pool: list[int] | None = None, log=print
                   ) -> tuple[list[int], dict, float, float] | None:
     """Target the few matchups that still cost us, screened against them alone.
 
@@ -342,7 +342,7 @@ def counter_round(harness: Harness, cards: list[int], plan: dict,
     wins a matchup and loses the tournament is not a counter.
     """
     from .moves import (as_counter, counter_candidates, focus_opponents,
-                        swap, swap_ranks)
+                        is_playable, swap, swap_ranks)
 
     block = _seed_block(rng, screen_seeds)
     base_full = harness.evaluate([("me", cards, plan)], opponents, block)["me"]
@@ -354,6 +354,16 @@ def counter_round(harness: Harness, cards: list[int], plan: dict,
 
     mine = as_counter(cards)
     adds = counter_candidates(mine, [o.cards for o in focus], catalog)
+    # Also the cards NOBODY plays. Mining only what the focus decks run can
+    # answer them with their own tools, which is both a copy and a limit: if
+    # the answer were already in their lists someone would be playing it.
+    # Screening is cheap here -- a candidate meets six opponents, not eighty --
+    # so the pool costs little and is where an unorthodox answer has to live.
+    if extra_pool:
+        have = set(mine)
+        adds += [(c, min(5, int(catalog.get(c, {}).get("deck_limit") or 1)))
+                 for c in extra_pool if c not in have
+                 and is_playable(catalog.get(c))]
     if not adds:
         return None
 
