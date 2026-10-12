@@ -1045,6 +1045,10 @@ def plan_round(h, api, args, state, focus, slot_id, catalog, screen, install,
         return False
 
     focus["plan"] = cand
+    # Remembered beyond this deck: these fields were validated on unselected
+    # seeds and are the best prior the next rotation has.
+    state["best_plan"] = {k: v for k, v in cand.items()
+                          if k in plans.PORTABLE_FIELDS}
     install(slot_id, focus.get("name") or "deck", cards, cand)
     log(f"plan: {field} -> {plans.describe(cand)[:48]}  {gain:+.2f} wins, t={t:+.2f}")
     return True
@@ -1633,6 +1637,12 @@ def cmd_explore(args, api: Api) -> int:
 
     w, i, nm = pick
     best = archs[i]
+    # Carry the agent's validated plan fields onto the new deck. Rotation used
+    # to reinstate the generator's default and throw away every confirmed plan
+    # change -- which is why four of six decks sat on the bare default while
+    # the logs showed eight adoptions in five days.
+    from . import plans as _plans
+    best.plan = _plans.carry_over(state.get("best_plan") or {}, best.plan)
     best.cards, best.plan = install(slot_id, nm, best.cards, best.plan)
     tried.setdefault(nm, {})["screen_wins"] = round(w, 1)
     seen_ids.add(ident(best))

@@ -196,3 +196,48 @@ def promote_moves(plan: dict, n: int = 6, rng: random.Random | None = None) -> l
     mid = len(order) // 2
     out.append({**plan, "card_order": order[mid:] + order[:mid]})
     return out
+
+
+# Plan fields that describe a STRATEGY rather than a particular card list.
+# card_order and its companions are excluded: those name specific cards or
+# tags and are meaningless against a deck that no longer contains them.
+PORTABLE_FIELDS = (
+    "play_priority", "energy_hold", "energy_hold_scope", "target_preference",
+    "self_target_preference", "cost_preference", "discard_priority",
+    "card_order_hold",
+)
+
+
+def carry_over(learned: dict, fresh: dict) -> dict:
+    """Start a newly rotated deck from what this agent already proved.
+
+    A rotation used to install the generator's hardcoded default -- card_order
+    / energy_hold 0 / least_armor -- discarding every validated plan field the
+    agent had found. Measured over five days: eight plan changes adopted, each
+    confirmed on unselected seeds at t=2.5 to 9.0, and four of six decks were
+    still on the bare default because they had rotated since. The only agent
+    carrying real plan work was the one that had not rotated at all.
+
+    Only the portable fields come across, and only where the fresh plan has
+    not set them deliberately. play_priority is the exception: it is carried
+    ONLY when the new plan can satisfy it, because card_order/type_order/
+    tag_order are silent no-ops without their companion list -- inheriting
+    "tag_order" onto a deck with no tag_order would quietly demote it to draw
+    order while claiming to be a strategy.
+    """
+    if not learned:
+        return fresh
+    out = dict(fresh)
+    for f in PORTABLE_FIELDS:
+        if f not in learned or f == "play_priority":
+            continue
+        # The learned value WINS. A freshly generated plan always carries the
+        # generator's hardcoded defaults for these fields, never a deliberate
+        # choice, so setdefault() leaves them untouched and carries nothing --
+        # which is exactly what the first version of this did.
+        out[f] = learned[f]
+    pp = learned.get("play_priority")
+    companion = COMPANION_LIST.get(pp)
+    if pp and (not companion or out.get(companion)):
+        out["play_priority"] = pp
+    return out
