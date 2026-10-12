@@ -1530,6 +1530,11 @@ def cmd_explore(args, api: Api) -> int:
                 # numbers; it does not need to show up in the name.
                 focus.update({"cards": c, "plan": p, "screen": round(best_w, 1),
                               "stale": 0,
+                              # Its own screen history, so health compares a
+                              # run against comparable runs rather than an
+                              # all-time maximum.
+                              "screens": ((focus.get("screens") or [])
+                                          + [round(best_w, 1)])[-12:],
                               "history": (focus.get("history") or []) + [nm]})
                 c, p = install(slot_id, focus["name"], c, p)
                 focus["cards"], focus["plan"] = c, p

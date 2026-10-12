@@ -69,14 +69,32 @@ def check_explorer(var: str, max_idle_h: float = 3.0) -> list[tuple[bool, str]]:
                 f"decks tried: {len(ids)} by list, {len(tried)} by name"
                 + ("" if have else " (history reset; slot still moving)")))
 
-    # A falling best score means the floor is not holding.
     best = float(st.get("best_screen") or 0)
     out.append((best > 0, f"best screen ever: {best:.1f}W"))
+
+    # Compare the focus against ITS OWN recent screens, never against
+    # best_screen.
+    #
+    # A screen is measured against whatever meta snapshot and seed block that
+    # run drew, and the two move every ten minutes: one deck logged baselines
+    # of 14.6, 11.0, 13.1 and 11.6 on four consecutive runs while every
+    # refinement between them was a valid paired gain. best_screen is the
+    # all-time MAXIMUM of that noisy quantity -- the winner's curse, now
+    # pointed at the health check -- so a single honest run loses to it and
+    # the check cries wolf. It fired on a deck that was improving.
     cur = st.get("focus") or {}
     if cur:
-        out.append((float(cur.get("screen") or 0) >= best * 0.6,
-                    f"focus '{cur.get('name')}' at {cur.get('screen')}W "
-                    f"vs best {best:.1f}W"))
+        hist = [float(x) for x in (cur.get("screens") or []) if x]
+        now = float(cur.get("screen") or 0)
+        if len(hist) >= 3:
+            import statistics
+            ref = statistics.median(hist[-6:])
+            out.append((now >= ref * 0.6,
+                        f"focus '{cur.get('name')}' at {now:.1f}W vs its own "
+                        f"recent median {ref:.1f}W"))
+        else:
+            out.append((True, f"focus '{cur.get('name')}' at {now:.1f}W "
+                              f"({len(hist)} screens recorded; need 3 to judge)"))
     return out
 
 
