@@ -1,0 +1,9 @@
+# Pauper explorer. The other half of the Pauper pair: pike attacks the leader,
+# wren looks for a deck nobody has built. Partitioned off pike by card id and
+# by theme so the two never rank the same archetypes.
+#
+# A low floor on purpose. The incumbent here will be strong early (19.0W of 22
+# from a cold archetype), and a floor measured against it would reject every
+# new idea for being worse than a deck that is already losing to AD&D.
+ABAGENT_ARENA=pauper
+ABAGENT_FLAGS=--seed-mod 2 --seed-rem 1 --theme-mod 2 --theme-rem 1 --slice 40 --floor-frac 0.60

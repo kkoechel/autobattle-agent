@@ -18,3 +18,48 @@ decide how each one *behaves* on the ground it has.
 Cross-agent novelty needs no configuration: each agent's exemption set is only
 its own deck, so every other agent's deck sits in the field and is checked at
 that agent's own overlap cap. No agent can clone another.
+
+## Second wave: the non-standard arenas (2026-10-13)
+
+The first four all play `pure` (Standard). These four do not, which is a
+different kind of experiment: Standard's 664-card pool is the one the whole
+field optimises against, and the restricted arenas are much less worked over.
+
+| agent | arena | field | legal cards | temperament |
+|---|---|---|---|---|
+| pike  | pauper | 22 | 169 | **contender** — beat the #1 deck specifically |
+| wren  | pauper | 22 | 169 | explorer, partitioned off pike |
+| sable | journeyman | 80 | 415 | explorer; the largest non-standard field |
+| flint | chaos | 29 | 664 | explorer, overlap capped at 40 |
+
+### Why these four arenas and not the other three buildable ones
+
+`legendary` has a three-deck field: placement there is almost entirely noise
+and there is nearly nothing to discover. `bot_challenge` is a 55-deck field of
+bots, so it measures how we do against the house rather than against players.
+`tournament_*` are opt-in per event, not standing.
+
+### What Pauper actually asks for
+
+Pauper's #1 on 2026-10-13 is **AD&D (FryGuy2), 21-0-0, 100%** — 100 cards, 8
+distinct, and every single one costs 1. The best shell the generators can
+build cold screens **19.0W of 22 and goes 0-3-0 against AD&D**. That is the
+same shape as ember vs Novice Rabble 93 in Standard: the leader is not a
+generally better deck, it is a matchup. Hence pike runs `--contend`, which
+screens candidates against the worst matchups alone — where the effect is
+undiluted — while still accepting only on total wins against the whole field.
+
+### Overlap caps are arena-specific
+
+`MAX_OVERLAP = 50` was calibrated on `pure`, where 664 cards are legal and the
+field's median twin shares 6. It does not transfer:
+
+| arena | legal cards | field-vs-field overlap (median / p95) | share of our candidates passing at 30 / 40 / 50 |
+|---|---|---|---|
+| pauper | 169 | 26 / 39 | 40% / 80% / 94% |
+| journeyman | 415 | 24 / 38 | 24% / 86% / 99% |
+| chaos | 664 | 15 / 32 | 77% / 96% / 99% |
+
+So Pauper and Journeyman keep the default 50 — vane's contrarian 30 would
+reject 60% and 76% of everything buildable there respectively, which is not
+originality, it is an agent that never writes. Chaos can afford 40.

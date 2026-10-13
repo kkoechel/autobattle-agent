@@ -1054,6 +1054,96 @@ def plan_round(h, api, args, state, focus, slot_id, catalog, screen, install,
     return True
 
 
+def cmd_bootstrap(args, api: Api) -> int:
+    """Install the best legal deck this arena allows, once, as a starting point.
+
+    An arena agent cannot start from what the provisioner gave it. The seeded
+    deck is a clone of a Standard list, which in Pauper or Journeyman is
+    illegal -- and abagent now withholds the arena registration while the
+    installed deck is illegal, so without this the agent would sit forever
+    refusing to enter a cohort. Explore's own rotation cannot do the job
+    either: it compares candidates against the incumbent, and the incumbent
+    would be a deck that cannot legally play.
+
+    So: build from every legal seed, screen them against the real field, and
+    install the winner. One shot, then the agent takes over.
+    """
+    import collections
+    from . import arenas
+    from .archetype import (build, ensure_tutor_targets, name_for,
+                            prune_dead_clauses)
+    from .moves import is_playable
+
+    cat_list = _load("cards.json")
+    catalog = {int(c["id"]): c for c in cat_list}
+    if args.arena in arenas.NOT_BUILDABLE:
+        raise SystemExit(f"bootstrap: '{args.arena}' decks are not freely built")
+    meta = _load(f"meta_{args.arena}.json")
+    arenas.check_against_field(meta["decks"], catalog, args.arena)
+    catalog = arenas.legal_catalog(catalog, args.arena)
+    seeds = sorted(i for i, c in catalog.items() if is_playable(c)
+                   and (c.get("rules_text") or "").strip())
+    # Honour the same seed partition the agent will run with. Two agents in one
+    # arena would otherwise bootstrap to the identical deck -- they screen the
+    # same candidates against the same field and pick the same winner -- and
+    # start life as twins, which is the exact convergence the partition and the
+    # novelty cap exist to prevent.
+    if args.seed_mod > 1:
+        seeds = [i for i in seeds if i % args.seed_mod == args.seed_rem]
+    print(f"bootstrap: {args.arena}, {len(seeds)} legal seeds, "
+          f"{len(meta['decks'])} decks in field")
+
+    cands, archs = [], {}
+    for sd in seeds:
+        a = build(sd, catalog, meta["decks"])
+        if not a or len(a.cards) != 100:
+            continue
+        bad = sorted({c for c in set(a.cards) if c not in catalog})
+        if bad:
+            print(f"  seed {sd}: generator produced illegal cards {bad[:4]}")
+            continue
+        archs[f"A{sd}"] = a
+        cands.append((f"A{sd}", a.cards, a.plan))
+    if not cands:
+        raise SystemExit("bootstrap: no legal 100-card shell could be built")
+
+    h = Harness(VALIDATOR, cat_list, workdir=VAR)
+    opps = opponents_from_meta(meta, exclude_deck_ids={args.deck_id})
+    block = [args.seed0 + i for i in range(args.seeds)]
+    scores = h.evaluate(cands, opps, block)
+    ranked = sorted(scores.items(), key=lambda kv: -kv[1].wins)
+    for lab, sc in ranked[:5]:
+        a = archs[lab]
+        print(f"  {sc.wins:5.1f}W {sc.losses:5.1f}L {sc.draws:5.1f}D  "
+              f"{a.seed_name[:30]:30} theme={','.join(a.theme[:3])}")
+    best, sc = archs[ranked[0][0]], ranked[0][1]
+
+    cards, plan = prune_dead_clauses(best.cards, best.plan, catalog, log=print)
+    cards, plan = ensure_tutor_targets(cards, plan, catalog, log=print)
+    taken = {(d.get("deck_name") or "").strip().lower() for d in meta["decks"]}
+    name = name_for(best.theme, best.seed_name, cards, taken)
+    illegal = sorted({c for c in set(cards) if c not in catalog})
+    if illegal:
+        raise SystemExit(f"bootstrap: refusing, {len(illegal)} illegal card(s)")
+    if len(cards) != 100:
+        raise SystemExit(f"bootstrap: refusing, {len(cards)} cards after repair")
+
+    print(f"bootstrap: '{name}' — {sc.wins:.1f}W of {len(opps)} "
+          f"over {args.seeds} seeds")
+    print(f"           {best.summary(catalog)}")
+    if not args.apply:
+        print("bootstrap: DRY RUN, nothing written (pass --apply)")
+        return 0
+    counts = collections.Counter(cards)
+    api.update_deck(args.deck_id, name=name[:80],
+                    cards=[{"card_id": k, "quantity": v}
+                           for k, v in sorted(counts.items())],
+                    battle_plan=plan)
+    print(f"bootstrap: wrote deck {args.deck_id}. The agent registers on its "
+          f"next cycle, now that the installed deck is legal.")
+    return 0
+
+
 def cmd_explore(args, api: Api) -> int:
     """Generate archetypes and rotate the best into the Double Entry slot.
 
@@ -1082,6 +1172,23 @@ def cmd_explore(args, api: Api) -> int:
     clear_outage()
     cat_list = _load("cards.json")
     catalog = {int(c["id"]): c for c in cat_list}
+
+    # Restrict GENERATION to what this arena will accept. Pauper is
+    # common+infinite, Journeyman is everything except common -- and a deck
+    # the site refuses is not a bad deck, it is an agent that quietly enters
+    # no cohorts at all. The harness keeps cat_list, the FULL catalogue,
+    # because opponents play cards we may not and filtering their definitions
+    # out of the payload would make their decks inert and every number here a
+    # fiction.
+    from . import arenas
+    if args.arena in arenas.NOT_BUILDABLE:
+        print(f"explore: '{args.arena}' decks are not freely built; nothing to do")
+        return 0
+    full_catalog = catalog
+    catalog = arenas.legal_catalog(catalog, args.arena)
+    if arenas.allowed_rarities(args.arena):
+        print(f"explore: {args.arena} — generating from "
+              f"{sum(1 for c in catalog.values() if is_playable(c))} legal cards")
 
     # Which deck this explorer writes.
     #
@@ -1117,6 +1224,19 @@ def cmd_explore(args, api: Api) -> int:
         # a tutor target must survive the prune rather than be added before it.
         cards, plan = prune_dead_clauses(cards, plan, catalog, log=print)
         cards, plan = ensure_tutor_targets(cards, plan, catalog, log=print)
+        # Last gate before the write. Every generator is handed the
+        # arena-filtered catalogue, so an illegal card here means a generator
+        # sourced an id from somewhere else -- the shared combo store, a
+        # carried-over state file, a hand-seeded deck. Refuse rather than
+        # repair: silently dropping cards would ship a deck nobody measured,
+        # and the site's own answer to an illegal deck is to unregister it,
+        # which looks exactly like a healthy agent entering no cohorts.
+        illegal = sorted({c for c in set(cards) if c not in catalog})
+        if illegal:
+            nm = lambda c: (full_catalog.get(c, {}).get("name") or f"#{c}")
+            raise SystemExit(
+                f"install: REFUSING to write {len(illegal)} card(s) illegal in "
+                f"{args.arena}: " + ", ".join(f"{nm(c)} ({c})" for c in illegal[:8]))
         counts = collections.Counter(cards)
         api.update_deck(deck_id, name=name[:80],
                         cards=[{"card_id": k, "quantity": v}
@@ -1129,7 +1249,29 @@ def cmd_explore(args, api: Api) -> int:
     # accounts, so that a placeholder deck would never reach a live cohort
     # before the agent had written anything. That makes the FIRST write the
     # right moment, and re-asserting it is cheap and idempotent.
-    if owns_primary and args.register:
+    def assert_registered():
+        """Claim the standing arena registration, but never for an illegal deck.
+
+        Registration is standing -- one POST puts the deck in every future
+        cohort -- and it used to run here, at the top of the cycle. In `pure`
+        that is harmless because the provisioner's placeholder clone is legal.
+        In an arena with a rarity rule it is not: the placeholder enters a live
+        cohort minutes before the first write, the site revalidates it and
+        unregisters it, and the agent spends its life looking busy while
+        entering nothing. shell/repair_illegal_bot_decks.php exists because
+        this has already happened once.
+        """
+        if not (owns_primary and args.register):
+            return
+        here = expand(api.deck(slot_id))
+        bad = sorted({c for c in set(here) if c not in catalog})
+        if bad:
+            nm = lambda c: (full_catalog.get(c, {}).get("name") or f"#{c}")
+            print(f"explore: NOT registering {args.deck_id} in {args.arena} — "
+                  f"the installed deck is illegal there "
+                  f"({', '.join(nm(c) for c in bad[:4])}). Install a legal deck "
+                  f"first; the agent will register on the cycle after that.")
+            return
         try:
             r = api.register(args.deck_id, arena=args.arena)
             print(f"explore: standing registration for {args.deck_id} "
@@ -1137,6 +1279,11 @@ def cmd_explore(args, api: Api) -> int:
         except ApiError as e:
             print(f"explore: could not register ({e})")
     meta = _load(f"meta_{args.arena}.json")
+    # Checked here, not next to legal_catalog above: meta is not loaded yet at
+    # that point. The declared rule is compared against what the arena's live
+    # field actually plays, so a rules change on the site surfaces as a log
+    # line rather than as decks the site quietly refuses.
+    arenas.check_against_field(meta["decks"], full_catalog, args.arena)
     h = Harness(VALIDATOR, cat_list, workdir=VAR)
 
     played = set()
@@ -1412,6 +1559,7 @@ def cmd_explore(args, api: Api) -> int:
         if f and f.get("cards"):
             f["cards"], f["plan"] = _fixed_cards, _fixed_plan
     inc_cards, inc_plan = expand(incumbent), (incumbent.get("battle_plan") or {})
+    assert_registered()
     allopp = opponents_from_meta(meta, exclude_deck_ids={args.deck_id, slot_id})
     # A stratified stride spans the field's whole strength range, which is
     # what a novelty search wants: a deck has to be broadly good, not good
@@ -2005,6 +2153,14 @@ def main(argv=None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("fetch").set_defaults(fn=cmd_fetch)
+
+    bs = sub.add_parser("bootstrap")
+    bs.add_argument("--apply", action="store_true", default=False)
+    bs.add_argument("--seeds", type=int, default=7)
+    bs.add_argument("--seed0", type=int, default=90001)
+    bs.add_argument("--seed-mod", type=int, default=1)
+    bs.add_argument("--seed-rem", type=int, default=0)
+    bs.set_defaults(fn=cmd_bootstrap)
 
     b = sub.add_parser("baseline")
     b.add_argument("--seeds", type=int, default=21)

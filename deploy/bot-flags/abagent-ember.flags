@@ -1,1 +1,2 @@
+ABAGENT_ARENA=pure
 ABAGENT_FLAGS=--contend --seed-mod 4 --seed-rem 1 --theme-mod 5 --theme-rem 0 --refine-tries 12 --refine-patience 6 --floor-frac 0.80

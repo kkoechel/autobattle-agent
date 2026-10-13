@@ -1,0 +1,8 @@
+# Journeyman: everything EXCEPT common, 415 legal cards, an 80-deck field with
+# real players in it (v4 Journeyman's Control). The largest non-standard field,
+# so a placement there means the most.
+#
+# No seed partition: this agent is alone in its arena and the whole legal pool
+# is its own.
+ABAGENT_ARENA=journeyman
+ABAGENT_FLAGS=--seed-mod 1 --seed-rem 0 --theme-mod 2 --theme-rem 0 --slice 40 --floor-frac 0.70

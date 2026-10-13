@@ -24,7 +24,12 @@ Environment=ABAGENT_VAR=/opt/abagent/var-%i
 # whitespace into separate arguments and passes the second as ONE argument,
 # so the braced form hands argparse a single token containing every flag and
 # the service dies with "unrecognized arguments".
-ExecStart=/usr/bin/python3 -u -m abagent.cli --arena pure --deck-id ${ABAGENT_DECK_ID} \
+# ABAGENT_ARENA comes from the flags file. It is NOT defaulted here: an agent
+# pointed at the wrong arena builds decks the site refuses, and systemd
+# expands an unset ${VAR} to nothing, which makes argparse read the next token
+# ("explore") as the arena and die loudly. Loud is the behaviour we want --
+# the silent version of this mistake is an agent entering no cohorts at all.
+ExecStart=/usr/bin/python3 -u -m abagent.cli --arena ${ABAGENT_ARENA} --deck-id ${ABAGENT_DECK_ID} \
   explore --register $ABAGENT_FLAGS
 
 # Below the two original agents, which are below the live games. These are

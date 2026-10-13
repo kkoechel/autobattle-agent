@@ -1,0 +1,9 @@
+# Chaos: no rarity rule at all, so the full 664-card pool -- but the copy limit
+# is what makes it a different game. Field decks there run up to 89 copies of
+# one card, against 35 in Pauper and Journeyman, which rewards shapes that are
+# illegal everywhere else.
+#
+# max-overlap tightened to 40 because it can afford it: 96% of what we can
+# build in Chaos already passes at 40, against 80% in Pauper.
+ABAGENT_ARENA=chaos
+ABAGENT_FLAGS=--seed-mod 1 --seed-rem 0 --theme-mod 2 --theme-rem 1 --slice 40 --max-overlap 40 --floor-frac 0.70

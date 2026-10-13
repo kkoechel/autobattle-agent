@@ -1,0 +1,16 @@
+# Pauper contender. Target: the #1 deck, not the field average.
+#
+# As of 2026-10-13 Pauper's #1 is AD&D (FryGuy2) at 21-0-0 -- 100 cards, 8
+# distinct, every one costing 1. Our best generated Pauper shell screens 19.0W
+# of 22 and goes 0-3-0 against it specifically, which is the same shape as
+# ember vs Novice Rabble 93: the leader is not a better deck, it is a counter.
+# So the upside here is concentrated in ONE matchup and diluted 22:1 in the
+# field average. counter_round screens against the worst matchups alone, where
+# the effect is visible, and still accepts only on total field wins.
+#
+# max-overlap is left at the default 50. Pauper legalises 169 cards against
+# pure's 664, so decks there overlap much more by construction -- the field's
+# own median twin shares 26 and its p95 shares 39. Tightening to 30 would
+# reject 60% of everything we can build; 50 still sits above the field's p95.
+ABAGENT_ARENA=pauper
+ABAGENT_FLAGS=--contend --contend-samples 28 --seed-mod 2 --seed-rem 0 --theme-mod 2 --theme-rem 0 --refine-tries 12 --refine-patience 6 --floor-frac 0.80

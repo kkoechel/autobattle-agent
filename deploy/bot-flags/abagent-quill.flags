@@ -1,1 +1,2 @@
+ABAGENT_ARENA=pure
 ABAGENT_FLAGS=--only-new --new-days 14 --slice 16 --seed-mod 1 --seed-rem 0 --theme-mod 4 --theme-rem 0 --refine-patience 2 --floor-frac 0.60
