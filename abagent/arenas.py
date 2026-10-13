@@ -137,3 +137,30 @@ def deck_fits(cards: list[int], catalog: dict[int, dict], slug: str) -> bool:
         if c is not None and c.get("rarity") not in allow:
             return False
     return True
+
+
+def illegal_cards(cards: list[int], catalog: dict[int, dict],
+                  slug: str) -> list[int]:
+    """Which of these cards this arena's rarity rule forbids.
+
+    Deliberately NOT "which cards are missing from the legal catalogue".
+    Membership conflates two different things: a rarity the arena disallows,
+    and a card the catalogue simply does not know about. In a restricted arena
+    those look the same, but in `pure` -- where nothing is filtered -- the only
+    way to be absent is to be unknown, so a membership test would refuse to
+    write a perfectly legal Standard deck the moment one card was retired
+    between the fetch and the write. That is a wedge, not a guard.
+
+    An unknown card is therefore treated as not-provably-illegal, matching
+    deck_fits(): the site's own deck_meets_rules() is the authority and
+    rejects it cleanly, whereas guessing "illegal" here fails silently.
+    """
+    allow = allowed_rarities(slug)
+    if allow is None:
+        return []
+    bad = []
+    for cid in sorted(set(cards)):
+        c = catalog.get(cid)
+        if c is not None and c.get("rarity") not in allow:
+            bad.append(cid)
+    return bad

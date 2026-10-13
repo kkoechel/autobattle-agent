@@ -1134,6 +1134,11 @@ def cmd_bootstrap(args, api: Api) -> int:
         raise SystemExit(f"bootstrap: '{args.arena}' decks are not freely built")
     meta = _load(f"meta_{args.arena}.json")
     arenas.check_against_field(meta["decks"], catalog, args.arena)
+    # Keep the unfiltered map for the legality assertions below. Checking
+    # against the FILTERED catalogue would be vacuous: a disallowed card is
+    # absent from it, illegal_cards() treats an absent card as unknown rather
+    # than illegal, and the check would then pass for every deck forever.
+    full_catalog = catalog
     catalog = arenas.legal_catalog(catalog, args.arena)
     seeds = sorted(i for i, c in catalog.items() if is_playable(c)
                    and (c.get("rules_text") or "").strip())
@@ -1152,7 +1157,7 @@ def cmd_bootstrap(args, api: Api) -> int:
         a = build(sd, catalog, meta["decks"])
         if not a or len(a.cards) != 100:
             continue
-        bad = sorted({c for c in set(a.cards) if c not in catalog})
+        bad = arenas.illegal_cards(a.cards, full_catalog, args.arena)
         if bad:
             print(f"  seed {sd}: generator produced illegal cards {bad[:4]}")
             continue
@@ -1176,7 +1181,7 @@ def cmd_bootstrap(args, api: Api) -> int:
     cards, plan = ensure_tutor_targets(cards, plan, catalog, log=print)
     taken = {(d.get("deck_name") or "").strip().lower() for d in meta["decks"]}
     name = name_for(best.theme, best.seed_name, cards, taken)
-    illegal = sorted({c for c in set(cards) if c not in catalog})
+    illegal = arenas.illegal_cards(cards, full_catalog, args.arena)
     if illegal:
         raise SystemExit(f"bootstrap: refusing, {len(illegal)} illegal card(s)")
     if len(cards) != 100:
@@ -1290,7 +1295,7 @@ def cmd_explore(args, api: Api) -> int:
         # repair: silently dropping cards would ship a deck nobody measured,
         # and the site's own answer to an illegal deck is to unregister it,
         # which looks exactly like a healthy agent entering no cohorts.
-        illegal = sorted({c for c in set(cards) if c not in catalog})
+        illegal = arenas.illegal_cards(cards, full_catalog, args.arena)
         if illegal:
             nm = lambda c: (full_catalog.get(c, {}).get("name") or f"#{c}")
             raise SystemExit(
@@ -1323,7 +1328,7 @@ def cmd_explore(args, api: Api) -> int:
         if not (owns_primary and args.register):
             return
         here = expand(api.deck(slot_id))
-        bad = sorted({c for c in set(here) if c not in catalog})
+        bad = arenas.illegal_cards(here, full_catalog, args.arena)
         if bad:
             nm = lambda c: (full_catalog.get(c, {}).get("name") or f"#{c}")
             print(f"explore: NOT registering {args.deck_id} in {args.arena} — "
@@ -1616,7 +1621,7 @@ def cmd_explore(args, api: Api) -> int:
     # legal deck in the slot. That is a wedge, not a safeguard. So: skip the
     # repair, clear the floor that rotation has to clear, and let this cycle's
     # own candidates take an empty slot.
-    _inc_illegal = sorted({c for c in set(_inc_cards) if c not in catalog})
+    _inc_illegal = arenas.illegal_cards(_inc_cards, full_catalog, args.arena)
     if _inc_illegal:
         nm = lambda c: (full_catalog.get(c, {}).get("name") or f"#{c}")
         print(f"explore: the installed deck is illegal in {args.arena} "
