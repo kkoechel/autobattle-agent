@@ -1,0 +1,32 @@
+[Unit]
+Description=AutoBattle agent %i — enter the daily tournaments
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=abagent
+Group=abagent
+WorkingDirectory=/opt/abagent
+EnvironmentFile=/etc/abagent-%i.env
+Environment=ABAGENT_VAR=/opt/abagent/var-%i
+
+# --arena is unused by this subcommand but the parser requires one, so it is
+# left at the default rather than read from the flags file: a tournament entry
+# is decided by the DECK's rarities, not by the arena the agent explores.
+ExecStart=/usr/bin/python3 -u -m abagent.cli --deck-id ${ABAGENT_DECK_ID} \
+  tournaments --apply
+
+# Three HTTP POSTs. Costs nothing, so it does not need to be niced below the
+# explorers -- but it must never be the reason a cycle misses its window.
+Nice=15
+TimeoutStartSec=180
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/abagent/var-%i
+
+[Install]
+WantedBy=multi-user.target

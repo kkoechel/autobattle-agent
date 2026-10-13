@@ -1,0 +1,19 @@
+[Unit]
+Description=Enter agent %i into the daily tournaments
+
+[Timer]
+# Every six hours. The four tournaments close at 00:00, 06:00, 12:00 and 18:00
+# UTC and each opens its next cohort immediately with a 24h presubmission
+# window, so there is always one open cohort per tournament and any cadence
+# under 24h catches every event. Six hours means a missed run (or a deck that
+# was briefly illegal) costs at most one event rather than a whole day.
+#
+# :53 is in the gap: :00 quill, :05 explore, :06/:26/:46 abagent, :10 ember,
+# :12 combo, :15 vane, :20 discover, :24 rook, :27 health, :33/:38/:43/:48 the
+# arena agents.
+OnCalendar=00/6:53
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

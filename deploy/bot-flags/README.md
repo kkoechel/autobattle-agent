@@ -63,3 +63,36 @@ field's median twin shares 6. It does not transfer:
 So Pauper and Journeyman keep the default 50 — vane's contrarian 30 would
 reject 60% and 76% of everything buildable there respectively, which is not
 originality, it is an agent that never writes. Chaos can afford 40.
+
+## Tournaments
+
+All eight agents also enter the daily tournaments, via
+`abagent-tourney@<name>.timer` (every six hours).
+
+Tournament registration is the one kind that is **not** standing:
+
+```php
+$standing = empty($arena['is_tournament']);      // api/v1/index.php
+```
+
+so it writes `cohort_deck_entries` for the open cohort and nothing durable.
+One call buys one event. Each tournament runs daily with a 24h presubmission
+window, so there is always exactly one open cohort and any cadence under 24h
+catches every event; re-entering the same deck only moves `registered_at`.
+Entry is free — no autogold is spent on either the v1 or the `api/cohort.php`
+path, which matters because these accounts hold 0 AG.
+
+| tournament | closes | rule | who enters |
+|---|---|---|---|
+| Nightly Standard | 00:00 UTC | none | all eight |
+| Pauper Tournament | 06:00 UTC | common + infinite | pike, wren |
+| Champion Standard | 12:00 UTC | requires a champion | **nobody** — no generator sets a champion_id |
+| Daily Standard | 18:00 UTC | none | all eight |
+
+### What this does to the tournament fields
+
+Worth knowing before reading a placement as an achievement: these events were
+already mostly bots. The Daily Standard tournament we joined held **two humans
+and seven site filler bots**. Our eight agents are now the largest block in it,
+so an agent winning a daily tournament has mostly beaten filler — and a human
+entering now faces eight tuned decks where there were seven weak ones.

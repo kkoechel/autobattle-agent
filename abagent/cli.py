@@ -1054,6 +1054,60 @@ def plan_round(h, api, args, state, focus, slot_id, catalog, screen, install,
     return True
 
 
+def cmd_tournaments(args, api: Api) -> int:
+    """Enter this agent's deck into every daily tournament it is legal for.
+
+    Tournaments are the one arena family where registration is NOT standing:
+
+        $standing = empty($arena['is_tournament']);      api/v1/index.php
+
+    A tournament registration writes cohort_deck_entries for the open cohort
+    and nothing durable, so one call buys one event and this has to run again
+    for the next one. Each tournament has a 24h presubmission window, so there
+    is always exactly one open cohort, and re-entering the same deck only moves
+    registered_at. That makes a plain repeating timer the whole mechanism --
+    no state, nothing to reconcile.
+
+    Entry is free: no autogold is spent in POST /cohort/register or in
+    api/cohort.php's own path. These accounts hold 0 AG and could not pay one.
+    """
+    from . import arenas
+
+    catalog = {int(c["id"]): c for c in _load("cards.json")}
+    deck = api.deck(args.deck_id)
+    cards = expand(deck)
+    name = deck.get("name") or f"deck {args.deck_id}"
+    print(f"tournaments: '{name}' (deck {args.deck_id}, {len(cards)} cards)")
+
+    entered, skipped, refused = 0, 0, 0
+    for slug in arenas.TOURNAMENTS:
+        if not arenas.deck_fits(cards, catalog, slug):
+            allow = ",".join(sorted(arenas.tournament_rarities(slug) or []))
+            print(f"  skip  {slug} — deck is not {allow}")
+            skipped += 1
+            continue
+        if not args.apply:
+            print(f"  would enter {slug}")
+            continue
+        try:
+            r = api.register(args.deck_id, arena=slug)
+            when = r.get("closes_at") or "?"
+            print(f"  enter {slug} — cohort {r.get('cohort_id')} closes {when}")
+            entered += 1
+        except ApiError as e:
+            # A 400 here is the site's deck_meets_rules disagreeing with our
+            # declaration, which is information worth reading, not noise.
+            print(f"  REFUSED {slug} — {e}")
+            refused += 1
+    for slug, why in arenas.TOURNAMENTS_SKIPPED.items():
+        print(f"  skip  {slug} — {why}")
+    if not args.apply:
+        print("tournaments: DRY RUN (pass --apply)")
+        return 0
+    print(f"tournaments: entered {entered}, skipped {skipped}, refused {refused}")
+    return 1 if refused else 0
+
+
 def cmd_bootstrap(args, api: Api) -> int:
     """Install the best legal deck this arena allows, once, as a starting point.
 
@@ -1181,6 +1235,11 @@ def cmd_explore(args, api: Api) -> int:
     # out of the payload would make their decks inert and every number here a
     # fiction.
     from . import arenas
+    # Imported here, not 100 lines down where it used to be: the log line below
+    # needs it, and a function-local import makes the name local to the WHOLE
+    # function, so reading it earlier is an unbound local rather than a
+    # fallback to the module scope.
+    from .moves import is_playable
     if args.arena in arenas.NOT_BUILDABLE:
         print(f"explore: '{args.arena}' decks are not freely built; nothing to do")
         return 0
@@ -1289,7 +1348,6 @@ def cmd_explore(args, api: Api) -> int:
     played = set()
     for d in meta["decks"]:
         played |= set(d["cards"])
-    from .moves import is_playable
     seeds_all = sorted(i for i, c in catalog.items()
                        if i not in played and is_playable(c)
                        and (c.get("rules_text") or "").strip())
@@ -1549,9 +1607,30 @@ def cmd_explore(args, api: Api) -> int:
     # comparison and makes the invariant continuous rather than eventual.
     _inc_cards = expand(incumbent)
     _inc_plan = incumbent.get("battle_plan") or {}
+
+    # An incumbent that cannot legally play this arena is not a deck to repair,
+    # it is a deck to replace. A new arena agent starts on the provisioner's
+    # Standard clone, and `bootstrap` is the intended way past that -- but if
+    # it has not been run, repairing here would call install(), hit its
+    # legality guard and kill the cycle BEFORE rotation got the chance to put a
+    # legal deck in the slot. That is a wedge, not a safeguard. So: skip the
+    # repair, clear the floor that rotation has to clear, and let this cycle's
+    # own candidates take an empty slot.
+    _inc_illegal = sorted({c for c in set(_inc_cards) if c not in catalog})
+    if _inc_illegal:
+        nm = lambda c: (full_catalog.get(c, {}).get("name") or f"#{c}")
+        print(f"explore: the installed deck is illegal in {args.arena} "
+              f"({len(_inc_illegal)} card(s), e.g. "
+              f"{', '.join(nm(c) for c in _inc_illegal[:3])}) — treating the "
+              f"slot as empty so this cycle can replace it")
+        state["focus"] = None
+        state["best_screen"] = 0
+        state["tried"] = {}
+        state["tried_ids"] = []
+
     _fixed_cards, _fixed_plan = prune_dead_clauses(_inc_cards, _inc_plan, catalog)
     _fixed_cards, _fixed_plan = ensure_tutor_targets(_fixed_cards, _fixed_plan, catalog)
-    if _fixed_cards != _inc_cards:
+    if _fixed_cards != _inc_cards and not _inc_illegal:
         print("explore: repairing the installed deck")
         install(slot_id, incumbent.get("name") or "deck", _fixed_cards, _fixed_plan)
         incumbent = api.deck(slot_id)
@@ -2123,16 +2202,25 @@ def cmd_health(args, api: Api) -> int:
     thing none of them reported was that nothing was changing.
     """
     from . import health
+    import glob
     checks = []
-    for label, var in (("competitor (var)", os.path.join(ROOT, "var")),
-                       ("explorer (var-explore)", os.path.join(ROOT, "var-explore")),
-                       ("discovery (var-discover)", os.path.join(ROOT, "var-discover"))):
-        if not os.path.isdir(var):
+    comp = os.path.join(ROOT, "var")
+    if os.path.isdir(comp):
+        checks.append(("competitor (var)", health.check_competitor(comp)))
+
+    # Every var-* directory, discovered rather than listed. This used to name
+    # three agents explicitly and there are ten now -- the four Standard bot
+    # agents were never checked at all, which defeats the point of a monitor
+    # whose whole reason for existing is that four stalls in a row were caught
+    # by a human and by none of the timers, exit codes or logs.
+    #
+    # cards.json is the marker of a real agent: `fetch` writes it, so every
+    # provisioned agent has one, and a scratch directory does not.
+    for var in sorted(glob.glob(os.path.join(ROOT, "var-*"))):
+        if not os.path.isfile(os.path.join(var, "cards.json")):
             continue
-        if "var-" in var:
-            checks.append((label, health.check_explorer(var, args.max_idle)))
-        else:
-            checks.append((label, health.check_competitor(var)))
+        checks.append((os.path.basename(var),
+                       health.check_explorer(var, args.max_idle)))
     return health.report(checks)
 
 
@@ -2153,6 +2241,10 @@ def main(argv=None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("fetch").set_defaults(fn=cmd_fetch)
+
+    tn = sub.add_parser("tournaments")
+    tn.add_argument("--apply", action="store_true", default=False)
+    tn.set_defaults(fn=cmd_tournaments)
 
     bs = sub.add_parser("bootstrap")
     bs.add_argument("--apply", action="store_true", default=False)

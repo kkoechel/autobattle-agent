@@ -82,3 +82,58 @@ def check_against_field(meta_decks: list[dict], catalog: dict[int, dict],
             f"excludes — the declaration in arenas.py is out of date")
         return False
     return True
+
+
+# ---------------------------------------------------------------------------
+# Tournaments
+#
+# Four daily tournaments, each with a 24h presubmission window, so there is
+# always exactly one open cohort to enter. Entry is free -- no autogold is
+# spent anywhere in POST /cohort/register or api/cohort.php -- but it is
+# explicitly NOT standing:
+#
+#     $standing = empty($arena['is_tournament']);
+#
+# so a tournament writes cohort_deck_entries and never user_arena_decks. One
+# registration buys one event, which is why this has to be re-run rather than
+# asserted once. Re-registering the same deck is idempotent (ON DUPLICATE KEY
+# UPDATE registered_at).
+#
+# The v1 API has no route that lists arenas, so these are declared, and the
+# authority on whether a deck may enter stays the site's own deck_meets_rules()
+# -- we skip what we can prove illegal and let a 400 answer the rest.
+TOURNAMENTS: dict[str, set[str] | None] = {
+    "tournament_standard": None,                      # rules {}
+    "tournament_nightly_standard_tournament": None,   # rules []
+    "tournament_pauper_tournament": {"common", "infinite"},
+}
+
+# requires_champion, and no generator ever sets a champion_id -- plans.py
+# treats the champion fields as permanently dead. Listing it with a reason
+# beats leaving a reader to wonder whether it was forgotten.
+TOURNAMENTS_SKIPPED = {
+    "tournament_champion_standard_tournament":
+        "requires a champion; the generators never set one",
+}
+
+
+def tournament_rarities(slug: str) -> set[str] | None:
+    return TOURNAMENTS.get(slug)
+
+
+def deck_fits(cards: list[int], catalog: dict[int, dict], slug: str) -> bool:
+    """Does this card list satisfy the rarity rule we have declared for `slug`?
+
+    Only the rarity rule. singleton and allowed_card_ids are not used by any
+    tournament we enter, and a card the catalogue does not know is treated as
+    a fit rather than a miss: guessing "illegal" would silently skip an event
+    over a stale cards.json, and the site rejects it cleanly anyway.
+    """
+    allow = TOURNAMENTS.get(slug)
+    if allow is None:
+        return True
+    for cid in set(cards):
+        c = catalog.get(cid)
+        if c is not None and c.get("rarity") not in allow:
+            return False
+    return True
