@@ -1411,9 +1411,19 @@ def cmd_explore(args, api: Api) -> int:
         print(f"explore: {len(slice_)} NEW seeds only "
               + ", ".join(catalog[c]["name"] for c in slice_[:4]))
     room = max(0, args.slice - len(fresh))
-    off = int(state.get("offset") or 0) % max(1, len(seeds_all))
-    rotating = seeds_all[off:off + room] or seeds_all[:room]
-    state["offset"] = (off + room) % max(1, len(seeds_all))
+    # Wrap, the way the --only-new path already does. A plain
+    # seeds_all[off:off+room] TRUNCATES at the end of the list instead of
+    # continuing from the front, so an agent whose offset lands near the end
+    # screens a sliver: vane logged "2 seeds (0 new, rotation at 40 of 42)"
+    # where it had asked for 40, and after the novelty gate dropped 6 of those
+    # candidates as copies it had nothing left to try at all. The offset also
+    # advanced by `room` rather than by what was actually taken, so the
+    # bookkeeping drifted away from the reality every time it happened.
+    n_seeds = max(1, len(seeds_all))
+    off = int(state.get("offset") or 0) % n_seeds
+    take = min(room, len(seeds_all))
+    rotating = (seeds_all + seeds_all)[off:off + take]
+    state["offset"] = (off + take) % n_seeds
     if not args.only_new:
         slice_ = (fresh + [c for c in rotating if c not in fresh])[:args.slice]
     state["explored"] = sorted(done | set(slice_))
@@ -1701,11 +1711,42 @@ def cmd_explore(args, api: Api) -> int:
             state["best_screen"] = 0
             state["tried"] = {}
             state["tried_ids"] = []
+            # The LOCAL copy as well, not just the stored one. `tried` is read
+            # out of state ~100 lines above this, so clearing only state[] was
+            # undone at the end of the very same cycle when the local was
+            # written back -- and the floor it was supposed to drop never
+            # moved. vane printed "cleared the copy-era floor and history" and
+            # then sat on a 15.0W floor derived from 'Golden Ruin 880d', a
+            # name from the hex-suffix era, for four hours. A success message
+            # covering for the exact failure it claims to fix.
+            tried.clear()
             bd = state.get("best_deck") or {}
             if bd.get("cards") and not novelty.is_novel(
                     bd["cards"], meta["decks"], ours, args.max_overlap):
                 state["best_deck"] = None
             print("explore: cleared the copy-era floor and history")
+
+    # The same clearing, for an agent already past the eviction.
+    #
+    # The block above needs a focus, so once it has set focus=None it can
+    # never fire again -- and if its clearing did not take effect (it did not:
+    # the local `tried` was written back over it), nothing ever retried. The
+    # state that leaves behind is specific and recognisable: no focus, an
+    # installed deck that is somebody else's, and a history still holding the
+    # scores that deck earned. Recognise it and finish the job.
+    if (not focus and args.max_overlap > 0 and inc_cards
+            and (state.get("tried") or state.get("best_screen"))
+            and not novelty.is_novel(inc_cards, meta["decks"], ours,
+                                     args.max_overlap)):
+        n2, who2 = novelty.nearest(inc_cards, meta["decks"], ours)
+        print(f"explore: no focus, and the installed deck still shares "
+              f"{n2}/100 with '{str((who2 or {}).get('deck_name'))[:22]}' — "
+              f"clearing the copy-era floor so anything novel can take the slot")
+        state["best_screen"] = 0
+        state["tried"] = {}
+        state["tried_ids"] = []
+        state["best_deck"] = None
+        tried.clear()
 
     # Heal a legacy name before anything writes it again. The deck was renamed
     # through the API once; the agent's own stored name was not, so the next
@@ -1797,11 +1838,14 @@ def cmd_explore(args, api: Api) -> int:
         if kids:
             b = [("__focus__", focus["cards"], focus["plan"])]
             b += [(f"k{i}", c, p) for i, (c, p, _) in enumerate(kids)]
-            sc = h.evaluate(b, screen, block)
+            sc = h.evaluate(b, screen, block, drop_crashers=True, log=print)
+            if "__focus__" not in sc:
+                raise SystemExit("explore: the INSTALLED deck crashes the "
+                                 "engine; refusing to guess around that")
             base = sc.pop("__focus__")
             best_i, best_w = None, base.wins
             for i in range(len(kids)):
-                if sc[f"k{i}"].wins > best_w:
+                if f"k{i}" in sc and sc[f"k{i}"].wins > best_w:
                     best_i, best_w = i, sc[f"k{i}"].wins
             if best_i is not None:
                 c, p, log = kids[best_i]
@@ -1851,7 +1895,13 @@ def cmd_explore(args, api: Api) -> int:
     # --- SCAN -----------------------------------------------------------
     batch = [("__inc__", inc_cards, inc_plan)]
     batch += [(f"a{i}", a.cards, a.plan) for i, a in enumerate(archs)]
-    sc = h.evaluate(batch, screen, block)
+    # drop_crashers: one generated deck that panics the engine used to take the
+    # entire cycle with it, and the agent then did nothing until a human
+    # noticed. The offender is bisected out, named in the log and skipped.
+    sc = h.evaluate(batch, screen, block, drop_crashers=True, log=print)
+    if "__inc__" not in sc:
+        raise SystemExit("explore: the INSTALLED deck crashes the engine; "
+                         "refusing to score anything against it")
     inc = sc.pop("__inc__")
 
     # The floor is anchored to the BEST deck ever screened, not to the
@@ -1859,8 +1909,41 @@ def cmd_explore(args, api: Api) -> int:
     # bottom: every slightly-worse pick lowered the bar for the next one, and
     # over a day the screens fell from 16-20 wins to 4-9 while the live
     # results sank to rank 30.
-    best_ever = max([float(v.get("screen_wins") or 0) for v in tried.values()]
-                    + [float(state.get("best_screen") or 0), inc.wins])
+    # Anchored only on things that can be CHECKED and cleared.
+    #
+    # tried[name]["screen_wins"] used to be in this max() too, and it is a bare
+    # number with no card list attached -- so there is no way to ask whether
+    # the deck that earned it was a copy, and no way for an eviction to
+    # invalidate it. vane's floor was still being set by 'Golden Ruin 880d', a
+    # deck from the hex-suffix era that no longer exists in any form, and
+    # nothing could ever retire it. best_screen and best_deck carry a card
+    # list, are novelty-checked, and are cleared on eviction; the incumbent is
+    # right there to re-measure. Those are the legitimate anchors. `tried`
+    # keeps its real job, which is the already-tried blacklist in tried_ids.
+    anchors = [float(state.get("best_screen") or 0)]
+    # ...but NOT to an incumbent that is itself a copy.
+    #
+    # Eviction clears best_screen and the tried history precisely so the copy
+    # era stops setting the bar -- and then the bar was set anyway, by the
+    # evicted deck, because it is still the installed deck and inc.wins is the
+    # third input to this max(). vane evicted a deck for sharing 40/100 with
+    # another player's, cleared everything, and was then told to find
+    # something scoring 75% of that same deck before it could replace it.
+    # It held the copy for four hours instead.
+    #
+    # A deck we are not allowed to keep is not a standard to measure against,
+    # so it does not get a vote here. Derived from the deck rather than from a
+    # flag, so it heals itself the moment a legitimate deck is installed.
+    inc_is_copy = bool(
+        args.max_overlap > 0 and inc_cards
+        and not novelty.is_novel(inc_cards, meta["decks"],
+                                 {args.deck_id, slot_id}, args.max_overlap))
+    if not inc_is_copy:
+        anchors.append(inc.wins)
+    elif not any(a > 0 for a in anchors):
+        print("explore: the installed deck is a copy, so it does not set the "
+              "floor — anything novel this cycle beats holding it")
+    best_ever = max(anchors)
     floor = best_ever * args.floor_frac
 
     # Identity is the CARD LIST, not the name. name_for() draws on ~34 tag
@@ -1880,7 +1963,12 @@ def cmd_explore(args, api: Api) -> int:
     taken_names |= {str((state.get("focus") or {}).get("name") or "")}
 
     seen_ids = set(state.get("tried_ids") or [])
-    ranked = sorted(((sc[f"a{i}"].wins, i) for i in range(len(archs))), reverse=True)
+    ranked = sorted(((sc[f"a{i}"].wins, i) for i in range(len(archs))
+                     if f"a{i}" in sc), reverse=True)
+    if h.engine_failures:
+        print(f"explore: {len(h.engine_failures)} candidate(s) crashed the "
+              f"engine and were skipped: "
+              + "; ".join(f"{lab} {msg}" for lab, msg in h.engine_failures[:3]))
     pick = None
     for w, i in ranked:
         if ident(archs[i]) in seen_ids or w < floor:
@@ -1918,8 +2006,10 @@ def cmd_explore(args, api: Api) -> int:
                   f"restoring best known '{bb['name']}' "
                   f"({bb.get('screen')}W) and refining it")
         else:
-            print(f"explore: nothing new above the {floor:.1f}W floor "
-                  f"({len(seen_ids)} decks tried); holding")
+            best_seen = max((w for w, _ in ranked), default=0.0)
+            print(f"explore: nothing new above the {floor:.1f}W floor — "
+                  f"screened {len(ranked)} candidate(s), best {best_seen:.1f}W, "
+                  f"{len(seen_ids)} already in history; holding")
         state["tried"] = tried
         _save("explore.json", state)
         return 0

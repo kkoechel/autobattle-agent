@@ -105,9 +105,12 @@ class Harness:
         self.validator = validator
         self.cards = cards_map(catalog)
         self.workdir = workdir
+        # (label, panic line) for every candidate the engine died on.
+        self.engine_failures: list[tuple[str, str]] = []
 
     def evaluate(self, candidates: list[tuple[str, list[int], dict]],
-                 opponents: list[Opponent], seeds: list[int]) -> dict[str, Score]:
+                 opponents: list[Opponent], seeds: list[int],
+                 drop_crashers: bool = False, log=None) -> dict[str, Score]:
         """Score many candidates in ONE validator invocation.
 
         candidates: (label, card_id list with repeats, battle_plan)
@@ -116,6 +119,41 @@ class Harness:
         cost, so folding K candidates into one payload amortizes both. Slots
         are cheap; matches are the only thing that scales.
         """
+        if not drop_crashers:
+            return self._evaluate(candidates, opponents, seeds)
+        try:
+            return self._evaluate(candidates, opponents, seeds)
+        except RuntimeError as e:
+            if "panic" not in str(e):
+                raise
+            say = log or (lambda m: None)
+            if len(candidates) == 1:
+                # Isolated. Drop it and say which deck did it -- a generated
+                # deck that crashes the engine is a bug worth reporting, not
+                # noise to swallow.
+                lab = candidates[0][0]
+                first = next((ln for ln in str(e).splitlines()
+                              if "panic:" in ln), "panic")
+                self.engine_failures.append((lab, first.strip()))
+                say(f"harness: candidate '{lab}' CRASHES THE ENGINE "
+                    f"({first.strip()}); dropped")
+                return {}
+            # Bisect. One candidate out of forty used to take the whole cycle
+            # down with it, which is how an agent sits idle for hours over a
+            # single bad deck. Costs log2(n) extra passes, and only when a
+            # panic actually happens.
+            mid = len(candidates) // 2
+            out = self._evaluate_or_drop(candidates[:mid], opponents, seeds, log)
+            out.update(self._evaluate_or_drop(candidates[mid:], opponents,
+                                              seeds, log))
+            return out
+
+    def _evaluate_or_drop(self, candidates, opponents, seeds, log):
+        return self.evaluate(candidates, opponents, seeds,
+                             drop_crashers=True, log=log)
+
+    def _evaluate(self, candidates: list[tuple[str, list[int], dict]],
+                  opponents: list[Opponent], seeds: list[int]) -> dict[str, Score]:
         if not candidates or not opponents or not seeds:
             raise ValueError("need candidates, opponents and seeds")
 
@@ -195,12 +233,20 @@ class Harness:
                                          delete=False) as fh:
             json.dump(payload, fh)
             path = fh.name
+        keep = False
         try:
             proc = subprocess.run([self.validator, "--local-payload", path],
                                   capture_output=True, text=True)
             if proc.returncode != 0:
+                # Keep the payload when the engine dies. It used to be removed
+                # in `finally` whatever happened, which meant an engine panic
+                # left a stack trace in the journal and nothing to reproduce it
+                # with -- and the panic is the only artefact that can be handed
+                # to whoever fixes validate.go.
+                keep = True
                 raise RuntimeError(f"validator exited {proc.returncode}: "
-                                   f"{proc.stderr[-2000:]}")
+                                   f"{proc.stderr[-2000:]}\npayload kept at {path}")
             return json.loads(proc.stdout)
         finally:
-            os.unlink(path)
+            if not keep:
+                os.unlink(path)
