@@ -17,6 +17,7 @@ import os
 import statistics
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass, field
 
 # Engine payloads want the subtype under 'card_type', and tag effects match
@@ -107,6 +108,34 @@ class Harness:
         self.workdir = workdir
         # (label, panic line) for every candidate the engine died on.
         self.engine_failures: list[tuple[str, str]] = []
+        self._sweep_stale_payloads()
+
+    def _sweep_stale_payloads(self, max_age_h: float = 6.0) -> None:
+        """Remove payload temp files a previous run could not clean up.
+
+        _run() unlinks its payload in a `finally`, which does not run when the
+        process is SIGTERMed -- and systemd does exactly that at
+        TimeoutStartSec, in the middle of a simulation, routinely. 32 files and
+        49MB had accumulated in var-explore going back three weeks before
+        anyone looked. Age-based so it never races a payload another agent is
+        using right now; each agent has its own workdir anyway.
+        """
+        if not self.workdir:
+            return
+        cutoff = time.time() - max_age_h * 3600
+        try:
+            names = os.listdir(self.workdir)
+        except OSError:
+            return
+        for n in names:
+            if not (n.startswith("tmp") and n.endswith(".json")):
+                continue
+            f = os.path.join(self.workdir, n)
+            try:
+                if os.path.getmtime(f) < cutoff:
+                    os.unlink(f)
+            except OSError:
+                pass
 
     def evaluate(self, candidates: list[tuple[str, list[int], dict]],
                  opponents: list[Opponent], seeds: list[int],
