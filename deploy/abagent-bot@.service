@@ -46,7 +46,7 @@ PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
 ReadWritePaths=/opt/abagent/var-%i /opt/abagent/bin
-TimeoutStartSec=900
+TimeoutStartSec=1500
 
 [Install]
 WantedBy=multi-user.target

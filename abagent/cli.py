@@ -1362,6 +1362,20 @@ def cmd_explore(args, api: Api) -> int:
     if args.seed_mod > 1:
         seeds_all = [i for i in seeds_all if i % args.seed_mod == args.seed_rem]
     state = _load_or("explore.json")
+    # Advance the cycle counter HERE, before anything that can return.
+    #
+    # It used to be incremented between the contend branch and the plan
+    # branch, and contend returns 0 whether or not it finds a counter -- so
+    # the moment tick % 3 == 2 came up, the tick stopped advancing and the
+    # agent ran a counter round every cycle forever, never refining and never
+    # rotating. ember sat at tick=317 for 23.6 hours doing nothing but
+    # counter rounds against a matchup nothing beats, and I first read that as
+    # a patient contender holding a good deck. pike was locked the same way
+    # within two cycles of being created.
+    #
+    # Every early return in this function now advances it, which is what a
+    # cycle counter has to mean for "one cycle in three" to be true.
+    state["tick"] = int(state.get("tick") or 0) + 1
     done = set(state.get("explored") or [])
 
     # New cards jump the queue. One that shipped this morning has never been
@@ -1808,7 +1822,6 @@ def cmd_explore(args, api: Api) -> int:
     # core cannot afford both every cycle: a card refine is ~30-60s and a plan
     # round ~45s. Plans measured +3.84 wins on the one deck tested, the same
     # order as a good card swap, so they get equal time rather than leftovers.
-    state["tick"] = int(state.get("tick") or 0) + 1
     if focus and args.plan_rounds and state["tick"] % 2 == 1:
         try:
             if plan_round(h, api, args, state, focus, slot_id, catalog,
@@ -1829,68 +1842,106 @@ def cmd_explore(args, api: Api) -> int:
         # test: its first run refined a new-card deck by adding an old card,
         # and after enough cycles the deck stops being about new cards at all.
         pool = list(fresh) if args.only_new else [c for c in seeds_all]
-        kids = []
-        for _ in range(args.refine_tries):
-            m = mutate(focus["cards"], focus["plan"], catalog, pool, rng,
-                       swaps=1)
-            if m:
-                kids.append(m)
-        if kids:
-            b = [("__focus__", focus["cards"], focus["plan"])]
+        # Climb for as many generations as the budget allows, not one.
+        #
+        # A successful refine used to `return 0` immediately, so a cycle could
+        # buy at most ONE improvement and a twelve-generation climb took
+        # twelve cycles -- twelve hours for an hourly agent. Measured in
+        # Pauper on 2026-10-14: a dedicated climb went 17.1W -> 21.1W over
+        # sixteen generations (confirmed 20.7W on 121 unseen seeds) and
+        # plateaued at generation twelve, against 19.4W for the best deck
+        # built cold. The DEPTH was the whole difference, and the agents had
+        # no way to reach it. refine_gens defaults to 1, so nothing changes
+        # for an agent that is not asked to climb.
+        t_climb = time.time()
+        gen, first_w, best_w = 0, None, None
+        cur_c, cur_p = focus["cards"], focus["plan"]
+        added: list[str] = []
+        stop = ""
+        while gen < max(1, args.refine_gens):
+            kids = []
+            for _ in range(args.refine_tries):
+                m = mutate(cur_c, cur_p, catalog, pool, rng, swaps=1)
+                if m:
+                    kids.append(m)
+            if not kids:
+                stop = "no mutation available"
+                break
+            b = [("__focus__", cur_c, cur_p)]
             b += [(f"k{i}", c, p) for i, (c, p, _) in enumerate(kids)]
             sc = h.evaluate(b, screen, block, drop_crashers=True, log=print)
             if "__focus__" not in sc:
                 raise SystemExit("explore: the INSTALLED deck crashes the "
                                  "engine; refusing to guess around that")
             base = sc.pop("__focus__")
-            best_i, best_w = None, base.wins
+            if first_w is None:
+                first_w = base.wins
+            pick_i, pick_w = None, base.wins
             for i in range(len(kids)):
-                if f"k{i}" in sc and sc[f"k{i}"].wins > best_w:
-                    best_i, best_w = i, sc[f"k{i}"].wins
-            if best_i is not None:
-                c, p, log = kids[best_i]
-                nm = catalog.get(log[0][1], {}).get("name", "?")
-                # A refined deck KEEPS its name: it is the same deck getting
-                # better, not a different one. Renaming on every refinement
-                # was how the hex suffix earned its keep, and the suffix is
-                # what told every player on the gallery that a bot was
-                # playing. Iteration shows up in the journal and the screen
-                # numbers; it does not need to show up in the name.
-                focus.update({"cards": c, "plan": p, "screen": round(best_w, 1),
-                              "stale": 0,
-                              # Its own screen history, so health compares a
-                              # run against comparable runs rather than an
-                              # all-time maximum.
-                              "screens": ((focus.get("screens") or [])
-                                          + [round(best_w, 1)])[-12:],
-                              "history": (focus.get("history") or []) + [nm]})
-                c, p = install(slot_id, focus["name"], c, p)
-                focus["cards"], focus["plan"] = c, p
-                if best_w > float(state.get("best_screen") or 0):
-                    state["best_screen"] = round(best_w, 1)
-                    state["best_deck"] = {"name": focus["name"], "cards": c,
-                                          "plan": p, "screen": round(best_w, 1)}
-                print(f"explore: refined {focus['name']} "
-                      f"{base.wins:.1f}W -> {best_w:.1f}W (+{nm})")
-                state["installed_at"] = time.strftime("%Y-%m-%d %H:%M:%S",
-                                                      time.gmtime())
-                state["focus"] = focus
-                state["tried"] = tried
-                _save("explore.json", state)
-                return 0
-            focus["stale"] = int(focus.get("stale") or 0) + 1
-            print(f"explore: {focus['name']} not improved "
-                  f"({focus['stale']}/{args.refine_patience}), best "
-                  f"{focus.get('screen')}W")
-            if focus["stale"] < args.refine_patience:
-                state["focus"] = focus
-                state["tried"] = tried
-                _save("explore.json", state)
-                return 0
-            print(f"explore: banking {focus['name']} at {focus.get('screen')}W "
-                  f"after {len(focus.get('history') or [])} refinements; scanning again")
-            tried.setdefault(focus["name"], {})["refined_to"] = focus.get("screen")
-            state["focus"] = None
+                if f"k{i}" in sc and sc[f"k{i}"].wins > pick_w:
+                    pick_i, pick_w = i, sc[f"k{i}"].wins
+            if pick_i is None:
+                stop = "no improvement"
+                break
+            cur_c, cur_p, lg = kids[pick_i]
+            best_w = pick_w
+            added.append(catalog.get(lg[0][1], {}).get("name", "?"))
+            gen += 1
+            if args.refine_gens > 1:
+                print(f"explore: climb gen {gen}: {base.wins:.1f}W -> "
+                      f"{pick_w:.1f}W (+{added[-1]})")
+            if time.time() - t_climb > args.refine_budget:
+                stop = f"budget ({args.refine_budget}s)"
+                break
+
+        if gen > 0:
+            # A refined deck KEEPS its name: it is the same deck getting
+            # better, not a different one. Renaming on every refinement was
+            # how the hex suffix earned its keep, and the suffix is what told
+            # every player on the gallery that a bot was playing. Iteration
+            # shows up in the journal and the screen numbers; it does not need
+            # to show up in the name.
+            focus.update({"cards": cur_c, "plan": cur_p,
+                          "screen": round(best_w, 1), "stale": 0,
+                          # Its own screen history, so health compares a run
+                          # against comparable runs rather than an all-time
+                          # maximum.
+                          "screens": ((focus.get("screens") or [])
+                                      + [round(best_w, 1)])[-12:],
+                          "history": (focus.get("history") or []) + added})
+            # Installed once, at the end. The intermediate decks are steps,
+            # not decisions, and every install is an API write against a deck
+            # that is in live cohorts.
+            cur_c, cur_p = install(slot_id, focus["name"], cur_c, cur_p)
+            focus["cards"], focus["plan"] = cur_c, cur_p
+            if best_w > float(state.get("best_screen") or 0):
+                state["best_screen"] = round(best_w, 1)
+                state["best_deck"] = {"name": focus["name"], "cards": cur_c,
+                                      "plan": cur_p, "screen": round(best_w, 1)}
+            print(f"explore: refined {focus['name']} {first_w:.1f}W -> "
+                  f"{best_w:.1f}W over {gen} generation(s) "
+                  f"(+{', '.join(added)})"
+                  + (f"; stopped on {stop}" if stop else ""))
+            state["installed_at"] = time.strftime("%Y-%m-%d %H:%M:%S",
+                                                  time.gmtime())
+            state["focus"] = focus
+            state["tried"] = tried
+            _save("explore.json", state)
+            return 0
+
+        focus["stale"] = int(focus.get("stale") or 0) + 1
+        print(f"explore: {focus['name']} not improved "
+              f"({focus['stale']}/{args.refine_patience}), best "
+              f"{focus.get('screen')}W")
+        if focus["stale"] < args.refine_patience:
+            state["focus"] = focus
+            state["tried"] = tried
+            _save("explore.json", state)
+            return 0
+        print(f"explore: banking {focus['name']} at {focus.get('screen')}W "
+              f"after {len(focus.get('history') or [])} refinements; scanning again")
+        tried.setdefault(focus["name"], {})["refined_to"] = focus.get("screen")
+        state["focus"] = None
 
     # --- SCAN -----------------------------------------------------------
     batch = [("__inc__", inc_cards, inc_plan)]
@@ -2450,6 +2501,11 @@ def main(argv=None) -> int:
     y.set_defaults(fn=cmd_cycle)
 
     e = sub.add_parser("explore")
+    e.add_argument("--refine-gens", type=int, default=1,
+                   help="generations to climb in ONE cycle (1 = the old "
+                        "behaviour: a successful refine ends the cycle)")
+    e.add_argument("--refine-budget", type=float, default=240.0,
+                   help="wall-clock seconds to spend climbing in one cycle")
     e.add_argument("--contend", action="store_true", default=False,
                    help="hunt the deck's worst matchups one cycle in three; "
                         "this is the rank-chasing objective, not the novelty "

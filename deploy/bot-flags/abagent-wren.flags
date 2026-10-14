@@ -6,4 +6,4 @@
 # from a cold archetype), and a floor measured against it would reject every
 # new idea for being worse than a deck that is already losing to AD&D.
 ABAGENT_ARENA=pauper
-ABAGENT_FLAGS=--seed-mod 2 --seed-rem 1 --theme-mod 2 --theme-rem 1 --slice 40 --floor-frac 0.60
+ABAGENT_FLAGS=--refine-gens 6 --refine-budget 240 --seed-mod 2 --seed-rem 1 --theme-mod 2 --theme-rem 1 --slice 40 --floor-frac 0.60
