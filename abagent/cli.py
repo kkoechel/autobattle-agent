@@ -215,9 +215,30 @@ def cmd_fetch(args, api: Api) -> int:
         if got != want_sum:
             print(f"FATAL sha256 mismatch: {got} != {want_sum}", file=sys.stderr)
             return 1
-        with open(VALIDATOR, "wb") as fh:
-            fh.write(blob)
-        os.chmod(VALIDATOR, 0o755)
+        # Write beside it and rename, never open the live path for writing.
+        #
+        # open(VALIDATOR, "wb") truncates the file in place, and Linux refuses
+        # that with ETXTBSY while ANY process is executing it. With ten agents
+        # on one box a version bump means several of them try to replace the
+        # binary while the others are mid-simulation, and four units failed
+        # that way on the v4.24 bump:
+        #
+        #   OSError: [Errno 26] Text file busy: bin/validate_linux_amd64
+        #
+        # os.replace() is an atomic rename onto the same filesystem: a process
+        # already running the old binary keeps its inode and finishes
+        # normally, and a process starting afterwards gets the new one. The
+        # checksum is verified above, so whichever agent wins the race writes
+        # identical bytes.
+        tmp = VALIDATOR + f".new.{os.getpid()}"
+        try:
+            with open(tmp, "wb") as fh:
+                fh.write(blob)
+            os.chmod(tmp, 0o755)
+            os.replace(tmp, VALIDATOR)
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
         print(f"validator v{want} verified ({len(blob)} bytes)")
     else:
         print(f"validator v{have} already current")
