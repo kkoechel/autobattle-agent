@@ -848,6 +848,24 @@ def cmd_cycle(args, api: Api) -> int:
     # then silently skips firings because systemd will not schedule a service
     # that is still active.
     hard = t0 + args.cycle_max
+    # Every stall escalation is guarded by "now + stage_reserve < hard", so a
+    # stage can only ever be entered before (cycle_max - stage_reserve)
+    # seconds have elapsed -- while the search itself is allowed to run until
+    # `budget`. If budget is not comfortably under that, the search finishes
+    # too late to enter ANY escalation and the whole ladder is dead code.
+    #
+    # That is not hypothetical. With budget=260, cycle_max=420 and
+    # stage_reserve=200 the window closed at 220s and the shortest cycle ever
+    # observed was 260s: counter_round started ZERO times in 7 days across 504
+    # cycles, and so did the re-base and the complement re-pick. The defaults
+    # had the same defect (budget 420, cycle_max 420). Arithmetic that
+    # silently disables three stages deserves to say so out loud.
+    if args.budget + args.stage_reserve >= args.cycle_max:
+        print(f"cycle: WARNING budget={args.budget} + stage_reserve="
+              f"{args.stage_reserve} >= cycle_max={args.cycle_max} — no stall "
+              f"escalation (deepen, counter round, re-base) can ever be "
+              f"entered. Raise --cycle-max to at least "
+              f"{args.budget + args.stage_reserve + 60}.")
     rng = random.Random(int(t0))
 
     # Play order and card list FIRST. The scalar surface is close to
@@ -2530,7 +2548,7 @@ def main(argv=None) -> int:
     y.add_argument("--deepen-mutations", type=int, default=14)
     y.add_argument("--deepen-screen", type=int, default=24,
                    help="opponents in the per-generation screen")
-    y.add_argument("--deepen-budget", type=float, default=300.0)
+    y.add_argument("--deepen-budget", type=float, default=180.0)
     y.add_argument("--arena-type-id", type=int, default=1)
     y.add_argument("--pass-min-days", type=int, default=10)
     y.add_argument("--complement-seeds", type=int, default=61)
@@ -2552,7 +2570,7 @@ def main(argv=None) -> int:
                    help="time a slow stage needs to FINISH, not just to start")
     y.add_argument("--outage-tolerance", type=int, default=3,
                    help="consecutive upstream failures before failing loudly")
-    y.add_argument("--cycle-max", type=int, default=420,
+    y.add_argument("--cycle-max", type=int, default=900,
                    help="hard wall-clock ceiling for the entire cycle")
     y.add_argument("--slow-every", type=int, default=3600,
                    help="seconds between re-base / complement re-pick attempts")
