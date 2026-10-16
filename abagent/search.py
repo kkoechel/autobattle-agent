@@ -426,3 +426,90 @@ def counter_round(harness: Harness, cards: list[int], plan: dict,
         return (new_cards, new_plan, gain, t)
     log(f"counter: rejected -- {gain:+.1f}W t={t:.1f} across the full field")
     return None
+
+
+def deepen(harness: Harness, cards: list[int], plan: dict,
+           opponents: list[Opponent], catalog: dict[int, dict],
+           rng: random.Random, screen: list[Opponent] | None = None,
+           gens: int = 8, mutations: int = 14, screen_seeds: int = 21,
+           validate_seeds: int = 161, min_t: float = 2.0,
+           min_gain: float = MIN_GAIN, pool: list[int] | None = None,
+           deadline: float | None = None,
+           log=print) -> tuple[list[int], dict, float, float] | None:
+    """Take a SEQUENCE of small steps, then charge the whole sequence the gate.
+
+    optimise() accepts a swap only when that ONE swap clears min_gain and
+    min_t, so it cannot walk a staircase: 458 of Golden Hive's last 502
+    searches ended "round1: nothing confirmed" while the deck sat unchanged
+    for a week. A deck near a local optimum rarely has a single +0.4W swap
+    left in it; it has several +0.1W ones.
+
+    The explore agents got this on 2026-10-14 and it was the whole difference
+    there -- 19.4W for the best deck built cold against 20.7W for the same
+    search climbed sixteen generations, confirmed on 121 unseen seeds.
+
+    The acceptance bar is NOT lowered. Each generation is chosen on a cheap
+    screen, which is a search heuristic and nothing more; the cumulative
+    change then faces the full field at validate_seeds on seeds it has never
+    been scored against, paired against the deck it would replace. A staircase
+    that only climbs on the screen it was selected by fails here, which is the
+    point -- selecting on a screen and then reporting that screen is how a
+    winner's curse gets installed.
+
+    Returns (cards, plan, gain, t) or None.
+    """
+    from .archetype import mutate
+    from .moves import is_playable
+
+    # mutate() iterates the pool, so it cannot be None -- and it only proposes
+    # cards NOT already in the deck, which is exactly right here: the cheapest
+    # win available is swapping a blank for something that does anything.
+    if pool is None:
+        pool = [c for c, d in catalog.items()
+                if is_playable(d) and (d.get("rules_text") or "").strip()]
+    screen = screen or opponents
+    sblock = _seed_block(rng, screen_seeds)
+    cur, curp, steps = list(cards), dict(plan), []
+
+    for g in range(1, gens + 1):
+        if deadline and time.time() > deadline:
+            log(f"deepen: deadline reached after {len(steps)} step(s)")
+            break
+        kids = [m for m in (mutate(cur, curp, catalog, pool, rng, swaps=1)
+                            for _ in range(mutations)) if m]
+        if not kids:
+            log("deepen: no mutation available")
+            break
+        batch = [("__cur__", cur, curp)]
+        batch += [(f"k{i}", c, p) for i, (c, p, _) in enumerate(kids)]
+        sc = harness.evaluate(batch, screen, sblock, drop_crashers=True, log=log)
+        if "__cur__" not in sc:
+            log("deepen: the current deck crashes the engine; stopping")
+            return None
+        cw = sc["__cur__"].wins
+        live = [i for i in range(len(kids)) if f"k{i}" in sc]
+        if not live:
+            break
+        i = max(live, key=lambda i: sc[f"k{i}"].wins)
+        if sc[f"k{i}"].wins <= cw:
+            log(f"deepen: gen {g} found nothing above {cw:.2f}W on the screen")
+            break
+        cur, curp, lg = kids[i]
+        steps.append((catalog.get(lg[0][1], {}).get("name") or "?"))
+        log(f"deepen: gen {g} {cw:.2f}W -> {sc[f'k{i}'].wins:.2f}W (+{steps[-1]})")
+
+    if not steps:
+        return None
+
+    vblock = _seed_block(rng, validate_seeds)
+    chk = harness.evaluate([("keep", cards, plan), ("try", cur, curp)],
+                           opponents, vblock, drop_crashers=True, log=log)
+    if "keep" not in chk or "try" not in chk:
+        log("deepen: could not validate (engine failure); discarding")
+        return None
+    gain, t = paired_t(chk["try"], chk["keep"])
+    ok = accept(gain, t, min_t, min_gain)
+    log(f"deepen: {len(steps)} step(s) -> {gain:+.2f}W t={t:+.2f} on "
+        f"{validate_seeds} unseen seeds vs the full field — "
+        f"{'accepted' if ok else 'rejected'} ({', '.join(steps)})")
+    return (cur, curp, gain, t) if ok else None

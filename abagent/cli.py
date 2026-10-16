@@ -14,7 +14,7 @@ from .api import Api, ApiError
 from . import history, second
 from .harness import Harness, Opponent, opponents_from_meta
 from .plans import card_order_from_deck, describe
-from .search import climb, counter_round, optimise
+from .search import climb, counter_round, deepen, optimise
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Each agent instance gets its own var/: the two accounts have different
@@ -884,6 +884,40 @@ def cmd_cycle(args, api: Api) -> int:
     # in a 161-seed full-field validation that alone runs ~2.5 minutes, so it
     # needs room to COMPLETE, not merely to start. Checking only "is there time
     # left" is how a ceiling gets overshot by the length of its last stage.
+    # Stalled, and the first thing to try is a STAIRCASE.
+    #
+    # optimise() above accepts a swap only when that one swap clears min_gain
+    # and min_t, so a deck near a local optimum -- which rarely has a single
+    # +0.4W move left, but often has several +0.1W ones -- reports "nothing
+    # confirmed" forever. Golden Hive did exactly that for 458 of its last 502
+    # searches while sitting unchanged for a week. deepen() walks several
+    # cheap steps and then charges the WHOLE walk the ordinary gate on unseen
+    # seeds, so the bar is unchanged and only the step size is.
+    if (not confirmed and args.deepen_gens > 0
+            and time.time() + args.stage_reserve < hard):
+        stride = max(1, len(opps) // max(1, args.deepen_screen))
+        dscreen = opps[::stride][:args.deepen_screen]
+        got = deepen(h, cards, plan, opps, catalog, rng, screen=dscreen,
+                     gens=args.deepen_gens, mutations=args.deepen_mutations,
+                     screen_seeds=args.sweep_seeds,
+                     validate_seeds=args.validate_seeds,
+                     min_t=args.min_t, min_gain=args.min_gain,
+                     deadline=min(hard - args.stage_reserve,
+                                  time.time() + args.deepen_budget))
+        if got:
+            cards, plan, gain, t = got
+            countsd: dict[int, int] = {}
+            for cid in cards:
+                countsd[cid] = countsd.get(cid, 0) + 1
+            api.update_deck(args.deck_id,
+                            cards=[{"card_id": c, "quantity": q}
+                                   for c, q in sorted(countsd.items())],
+                            battle_plan=plan)
+            print(f"cycle: deepen accepted {gain:+.1f}W t={t:.1f}")
+            register_when_targetable(api, args.arena, args.deck_id,
+                                     wait_limit=args.register_wait)
+            return 0
+
     if (not confirmed and time.time() + args.stage_reserve < hard
             and time.time() < deadline + args.rebase_grace):
         # Stalled. Before changing basin, try the cheaper thing: attack the
@@ -2490,6 +2524,13 @@ def main(argv=None) -> int:
     y.add_argument("--second-deck-id", type=int,
                    default=int(os.environ.get("ABAGENT_SECOND_DECK_ID") or 0) or None,
                    help="deck held in the Double Entry Pass slot")
+    y.add_argument("--deepen-gens", type=int, default=0,
+                   help="stall escalation: climb N cheap steps, then charge "
+                        "the whole staircase the normal gate (0 = off)")
+    y.add_argument("--deepen-mutations", type=int, default=14)
+    y.add_argument("--deepen-screen", type=int, default=24,
+                   help="opponents in the per-generation screen")
+    y.add_argument("--deepen-budget", type=float, default=300.0)
     y.add_argument("--arena-type-id", type=int, default=1)
     y.add_argument("--pass-min-days", type=int, default=10)
     y.add_argument("--complement-seeds", type=int, default=61)
