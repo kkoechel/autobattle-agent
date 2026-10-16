@@ -17,6 +17,19 @@ EnvironmentFile=/etc/abagent.env
 # keeps the Double Entry Pass alive. Enabling the complement makes cycle
 # overwrite a discovered deck every ten minutes, and it would look like the
 # discovery reverting on its own rather than like a conflict.
+# Deliberately NO --deepen-gens here. It was measured on this exact deck on
+# 2026-10-16 and did not pay: a 10-generation climb produced 2 steps worth
+# +0.26W at t=+0.99, well under the gate, and it stalled at generation 3
+# because the screen is saturated -- Golden Hive takes 19.4 of 24 screen
+# opponents, so most matchups are auto-wins and further gains are invisible
+# there. Spending the stall window on it would starve the counter round,
+# which screens the LOSING matchups alone and is the right tool for a deck
+# whose remaining upside is concentrated in a handful of opponents.
+#
+# cycle_max is left at its new 900 default so the escalations are reachable
+# at all: with the old 420 and --budget 260 the entry window shut at 220s
+# elapsed while the shortest cycle ever recorded was 260s, and counter_round
+# started zero times in 504 cycles over 7 days.
 ExecStart=/usr/bin/python3 -u -m abagent.cli --arena pure --deck-id ${ABAGENT_DECK_ID} cycle --budget 260 --second-deck-id ${ABAGENT_SECOND_DECK_ID}
 
 # subgames-nyc1 is a 1-vCPU box also serving live Reprisal, Ossuary, Mage Wars

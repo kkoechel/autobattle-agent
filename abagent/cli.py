@@ -936,6 +936,26 @@ def cmd_cycle(args, api: Api) -> int:
                                      wait_limit=args.register_wait)
             return 0
 
+    # Why the escalation did or did not run, every time. The gates below are
+    # two independent clocks, and when one of them shuts the stage is simply
+    # not entered -- silently. counter_round started ZERO times in 504 cycles
+    # and nothing in the log said so; it had to be inferred from a zero count
+    # a week later. A skipped stage should announce itself.
+    if not confirmed:
+        el = time.time() - t0
+        by_hard = el + args.stage_reserve >= args.cycle_max
+        by_grace = time.time() >= deadline + args.rebase_grace
+        if by_hard or by_grace:
+            why = []
+            if by_hard:
+                why.append(f"cycle_max ({el:.0f}s + reserve {args.stage_reserve}"
+                           f" >= {args.cycle_max})")
+            if by_grace:
+                why.append(f"rebase_grace ({el:.0f}s >= budget {args.budget}"
+                           f" + grace {args.rebase_grace})")
+            print(f"cycle: stalled, but the escalations are out of time — "
+                  f"blocked by {' and '.join(why)}")
+
     if (not confirmed and time.time() + args.stage_reserve < hard
             and time.time() < deadline + args.rebase_grace):
         # Stalled. Before changing basin, try the cheaper thing: attack the
@@ -2564,7 +2584,7 @@ def main(argv=None) -> int:
                    help="cohorts of standings to keep for judging decks")
     y.add_argument("--rebase-min", type=float, default=3.0,
                    help="wins a field deck must beat ours by to re-base")
-    y.add_argument("--rebase-grace", type=int, default=240,
+    y.add_argument("--rebase-grace", type=int, default=600,
                    help="seconds past the search deadline a re-base may still use")
     y.add_argument("--stage-reserve", type=int, default=200,
                    help="time a slow stage needs to FINISH, not just to start")
