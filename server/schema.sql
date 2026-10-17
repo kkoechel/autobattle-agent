@@ -55,6 +55,13 @@ CREATE TABLE IF NOT EXISTS results (
   PRIMARY KEY (round_id, player_id),
   KEY idx_player (player_id),
   CONSTRAINT fk_res_round FOREIGN KEY (round_id) REFERENCES rounds(id)
+    ON DELETE CASCADE,
+  -- Results must die with their player. Without this, removing an account
+  -- left its rows behind pointing at nothing: the standings query inner-joins
+  -- players so the row disappeared from the API, but the placements it had
+  -- already been assigned did not -- the table rendered 1..8, 10, 11 and
+  -- looked broken to everyone else.
+  CONSTRAINT fk_res_player FOREIGN KEY (player_id) REFERENCES players(id)
     ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
