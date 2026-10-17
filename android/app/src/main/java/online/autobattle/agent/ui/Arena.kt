@@ -19,6 +19,7 @@ import online.autobattle.agent.game.Compete
 import online.autobattle.agent.game.Directive
 import online.autobattle.agent.game.GameClient
 import online.autobattle.agent.game.CardInfo
+import online.autobattle.agent.game.Keyword
 import online.autobattle.agent.game.Memory
 import online.autobattle.agent.game.Training
 import online.autobattle.agent.game.TrainingService
@@ -54,6 +55,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
     var myDeck by remember { mutableStateOf<JSONObject?>(null) }
     var cardsById by remember { mutableStateOf<Map<Int, CardInfo>>(emptyMap()) }
     var showCard by remember { mutableStateOf<CardInfo?>(null) }
+    var keywords by remember { mutableStateOf<Map<String, Keyword>>(emptyMap()) }
     var showDeck by remember { mutableStateOf(false) }
     var loaded by remember { mutableStateOf(false) }
     var confirmReset by remember { mutableStateOf(false) }
@@ -122,8 +124,12 @@ fun ArenaPane(modifier: Modifier = Modifier) {
     /** The catalogue is pulled the first time a card actually needs showing. */
     suspend fun ensureNames() {
         if (cardsById.isNotEmpty()) return
-        runCatching { withContext(Dispatchers.IO) { GameClient(token).cardIndex() } }
-            .onSuccess { cardsById = it }
+        runCatching {
+            withContext(Dispatchers.IO) {
+                val c = GameClient(token)
+                c.cardIndex() to runCatching { c.keywords() }.getOrDefault(emptyMap())
+            }
+        }.onSuccess { (idx, kw) -> cardsById = idx; keywords = kw }
     }
 
     LaunchedEffect(token) { refresh() }
@@ -297,7 +303,24 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                     color = MaterialTheme.colorScheme.primary)
             }
 
-        showCard?.let { c -> CardSheet(c) { showCard = null } }
+        showCard?.let { c ->
+            // Only TOKENS are linkable by name. Matching every card name would
+            // turn ordinary words into links -- a card called "Shield" would
+            // light up half the game's text.
+            val tokens = remember(cardsById) {
+                cardsById.values
+                    .filter { it.rarity.equals("token", true) ||
+                              it.rarity.equals("manifest", true) }
+                    .associateBy { it.name.lowercase() }
+            }
+            CardSheet(
+                card = c,
+                onDismiss = { showCard = null },
+                keywords = keywords,
+                tokens = tokens,
+                onOpenCard = { showCard = it },
+            )
+        }
 
         if (confirmReset) {
             AlertDialog(

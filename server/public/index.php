@@ -233,6 +233,17 @@ if ($path === 'leaderboard' && $method === 'GET') {
 // The forked catalogue plus the ban list. Served whole: the phone needs
 // effects_json and stats_json to run the engine, so a slim variant would
 // make its decks silently inert.
+// Keyword glossary, so card text can explain itself. Tiny (11KB) and
+// changes only when the main game adds a keyword, so it rides with /cards
+// rather than earning its own round trip.
+if ($path === 'keywords' && $method === 'GET') {
+    $f = __DIR__ . '/../var/keywords.json';
+    if (!is_file($f)) fail(503, 'keyword glossary not synced yet');
+    header('Content-Type: application/json');
+    echo '{"ok":true,"keywords":' . file_get_contents($f) . '}';
+    exit;
+}
+
 if ($path === 'cards' && $method === 'GET') {
     $bans = banned_ids();
     header('Content-Type: application/json');

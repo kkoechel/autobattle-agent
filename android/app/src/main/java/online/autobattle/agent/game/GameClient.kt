@@ -87,6 +87,10 @@ class GameClient(private val token: String?, private val base: String = BASE) {
      * Form over a window of recent rounds. One round is noisy enough that a
      * player cannot tell improvement from luck by looking at it.
      */
+    /** The printed-keyword glossary, so card text can explain itself. */
+    fun keywords(): Map<String, online.autobattle.agent.game.Keyword> =
+        CardIndex.parseKeywords(call("GET", "/keywords").getJSONObject("keywords"))
+
     fun leaderboard(rounds: Int = 48): JSONArray =
         call("GET", "/leaderboard?rounds=$rounds").getJSONArray("table")
 
