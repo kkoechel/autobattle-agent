@@ -105,10 +105,12 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                             r to rev
                         }
                     }.onSuccess { (r, rev) ->
-                        note = "Submitted \"${r.name}\" (revision $rev) — " +
-                            "${"%.1f".format(r.wins)} wins of ${r.opponents} in " +
-                            "testing, picked from ${r.screened} designs and " +
-                            "improved ${r.climbed} time(s)."
+                        note = "Submitted \"${r.name}\" (revision $rev). " +
+                            "Checked on fresh matchups it won " +
+                            "${"%.1f".format(r.wins)} of ${r.opponents} — " +
+                            "picked from ${r.screened} designs, improved " +
+                            "${r.climbed} time(s). The league scores every " +
+                            "deck itself, so your standing may differ."
                         refresh()
                     }.onFailure { error = readable(it) }
                     progress = null

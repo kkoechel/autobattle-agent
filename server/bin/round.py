@@ -100,9 +100,16 @@ def main() -> int:
                          "losses": len(others), "draws": 0})
             continue
         s = sc["me"]
+        # Rounded so the three still SUM to the opponent count. Rounding each
+        # independently loses or gains one -- the first scored round recorded
+        # "1-3-3" in an 8-opponent league, which is 7 and reads as a bug.
+        # Wins and losses are rounded, and draws take the remainder, because
+        # draws are the residual quantity anyway.
+        w, l = round(s.wins), round(s.losses)
+        d = max(0, len(others) - w - l)
         rows.append({"player_id": me["player_id"], "deck_name": me["deck_name"],
-                     "revision": me["revision"], "wins": round(s.wins),
-                     "losses": round(s.losses), "draws": round(s.draws)})
+                     "revision": me["revision"], "wins": w,
+                     "losses": l, "draws": d})
         print(f"  {me['handle']:<18} {s.wins:5.1f}W {s.losses:5.1f}L "
               f"{s.draws:5.1f}D  ({me['deck_name'][:28]})")
 

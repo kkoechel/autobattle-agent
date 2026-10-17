@@ -159,7 +159,15 @@ object Compete {
         val opponents = opponentsOf(field, myHandle)
         require(opponents.isNotEmpty()) { "nobody to play against yet" }
         val meta = metaOf(field)
-        val seeds = (0 until screenSeeds).map { 7000 + it }
+        // Three DISJOINT seed blocks. The sweep picks a winner, the climb
+        // judges changes to it, and the verdict is measured on seeds neither
+        // of them saw. Overlapping them is how a winner's curse gets quoted
+        // to the player as fact: the best of 36 decks measured on 15 seeds is
+        // biased upward by the selection itself, and re-reading the same
+        // seeds confirms the bias instead of testing it. The first device run
+        // reported 3.8 wins and the server independently scored the same deck
+        // at 1.
+        val seeds = (0 until screenSeeds).map { 7_000 + it }
 
         // Banned cards are excluded HERE as well as rejected by the server.
         // Letting the generator build around a banned card would mean a long
@@ -196,7 +204,7 @@ object Compete {
         // the common case near a local optimum and costs nothing.
         var climbed = 0
         var barren = 0
-        val climbBlock = (0 until climbSeeds).map { 7000 + it }
+        val climbBlock = (0 until climbSeeds).map { 20_000 + it }
         for (g in 1..generations) {
             onProgress(Progress("Improving (round $g of $generations)", g, generations))
             val kids = ArrayList<Pair<List<Int>, JSONObject>>()
@@ -226,14 +234,12 @@ object Compete {
             climbed++
         }
 
-        // Report the deck's wins on the CLIMB block, not the coarse design
-        // sweep: if the two disagree the player should be shown the better
-        // measurement, and quoting the sweep would credit the climb with a
-        // number it never earned.
-        val finalWins = if (climbed > 0) curWins else {
-            score(cat, listOf(Deck("fin", cur, curPlan, name, null)),
-                opponents, climbBlock, workers)["fin"]?.wins ?: curWins
-        }
+        // ALWAYS re-measure, on seeds used by neither stage. Quoting the
+        // block a deck was selected on reports the selection, not the deck.
+        onProgress(Progress("Checking the result", 1, 1))
+        val verify = (0 until climbSeeds).map { 50_000 + it }
+        val finalWins = score(cat, listOf(Deck("fin", cur, curPlan, name, null)),
+            opponents, verify, workers)["fin"]?.wins ?: curWins
         return Outcome(name, cur, curPlan, finalWins, opponents.size, built.size, climbed)
     }
 }

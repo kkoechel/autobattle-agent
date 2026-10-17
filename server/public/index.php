@@ -36,9 +36,25 @@ if ($path === 'join' && $method === 'POST') {
     db()->prepare('INSERT INTO players (handle, key_hash) VALUES (?,?)')
         ->execute([$handle, hash('sha256', $token)]);
     $id = (int)db()->lastInsertId();
+
+    // Hand out a starter so the player is in the league immediately. Picked
+    // at random from the pool rather than always the best one: every new
+    // player getting the identical list would make the standings a mirror.
+    // Absent pool is not an error -- the player simply starts empty and
+    // trains from cold, which is what happened before starters existed.
+    $st = db()->query(
+        'SELECT name, cards_json, plan_json FROM starters ORDER BY RAND() LIMIT 1')->fetch();
+    $starter = null;
+    if ($st) {
+        db()->prepare(
+            'INSERT INTO decks (player_id, name, cards_json, plan_json)
+             VALUES (?,?,?,?)'
+        )->execute([$id, $st['name'], $st['cards_json'], $st['plan_json']]);
+        $starter = $st['name'];
+    }
     // Shown exactly once. Only the hash is stored.
     reply(['ok' => true, 'player_id' => $id, 'handle' => $handle,
-           'token' => $token]);
+           'token' => $token, 'starter_deck' => $starter]);
 }
 
 // ---- GET /me ------------------------------------------------------------
@@ -176,6 +192,50 @@ if ($path === 'round' && $method === 'POST') {
     reply(['ok' => true, 'round_id' => $rid, 'decks' => count($rows)]);
 }
 
+// ---- POST /starters -----------------------------------------------------
+// Replaces the starter pool wholesale. Written by bin/make_starters.py, which
+// measures candidates against the live field and keeps the ones that land
+// mid-table. Replace rather than append: a pool that only ever grows fills
+// with decks that were mid-table against a field that has since moved on.
+if ($path === 'starters' && $method === 'POST') {
+    $tok = (string)($_SERVER['HTTP_X_ADMIN_TOKEN'] ?? '');
+    $want = (string)(cfg()['admin_token'] ?? '');
+    if ($want === '' || !hash_equals($want, $tok)) fail(403, 'admin token required');
+    $rows = body()['starters'] ?? null;
+    if (!is_array($rows) || !$rows) fail(400, 'starters must be a non-empty array');
+
+    // Validated with the same function the player path uses. A starter is
+    // the one deck nobody chose, so an illegal one would be a server-authored
+    // bug that looks like the player cheated.
+    foreach ($rows as $i => $r) {
+        if ($why = deck_problem($r['cards'] ?? [])) fail(400, "starter $i: $why");
+    }
+    db()->beginTransaction();
+    try {
+        db()->exec('DELETE FROM starters');
+        $ins = db()->prepare(
+            'INSERT INTO starters (name, cards_json, plan_json, wins, opponents)
+             VALUES (?,?,?,?,?)');
+        foreach ($rows as $r) {
+            $norm = [];
+            foreach ($r['cards'] as $e) {
+                $norm[] = ['card_id' => (int)$e['card_id'],
+                           'quantity' => (int)$e['quantity']];
+            }
+            usort($norm, fn($a, $x) => $a['card_id'] <=> $x['card_id']);
+            $ins->execute([substr((string)($r['name'] ?? 'Starter'), 0, 80),
+                           json_encode($norm),
+                           json_encode($r['battle_plan'] ?? [], JSON_FORCE_OBJECT),
+                           (float)($r['wins'] ?? 0), (int)($r['opponents'] ?? 0)]);
+        }
+        db()->commit();
+    } catch (Throwable $e) {
+        db()->rollBack();
+        fail(500, 'could not store starters: ' . $e->getMessage());
+    }
+    reply(['ok' => true, 'starters' => count($rows)]);
+}
+
 // ---- GET /privacy -------------------------------------------------------
 // Served by the front controller as well as directly, so both /privacy and
 // /privacy.html work -- Play stores whichever URL is pasted into the console
@@ -193,7 +253,8 @@ if (($path === 'privacy' || $path === 'privacy.html') && $method === 'GET') {
 if ($path === 'health' && $method === 'GET') {
     reply(['ok' => true, 'cards' => count(catalogue()),
            'players' => (int)db()->query('SELECT COUNT(*) FROM players')->fetchColumn(),
-           'decks' => (int)db()->query('SELECT COUNT(*) FROM decks')->fetchColumn()]);
+           'decks' => (int)db()->query('SELECT COUNT(*) FROM decks')->fetchColumn(),
+           'starters' => (int)db()->query('SELECT COUNT(*) FROM starters')->fetchColumn()]);
 }
 
 fail(404, 'no such endpoint');

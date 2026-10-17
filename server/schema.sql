@@ -66,3 +66,26 @@ CREATE TABLE IF NOT EXISTS bans (
   banned_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   reason      VARCHAR(255) NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Starter decks handed to a new player at join.
+--
+-- A player whose first act is a cold archetype build comes last: the house
+-- agents have been iterating for days, and the first phone-built deck scored
+-- 1-3-3 against them. "Join, wait two minutes while your phone heats up,
+-- come last" is a bad first five minutes. A starter puts them mid-table from
+-- the moment they join, so training is about climbing rather than catching
+-- up, and they are in the standings before they have done anything.
+--
+-- Deliberately a POOL, not one deck: handing every new player the identical
+-- list would make the league a mirror and tell them nothing about their own
+-- choices. Measured wins are stored so the pool can be kept honest -- a
+-- starter that drifts to the top of the field is no longer a starter.
+CREATE TABLE IF NOT EXISTS starters (
+  id          INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  name        VARCHAR(80)  NOT NULL,
+  cards_json  MEDIUMTEXT   NOT NULL,
+  plan_json   MEDIUMTEXT   NOT NULL,
+  wins        DECIMAL(5,2) NOT NULL DEFAULT 0,
+  opponents   SMALLINT     NOT NULL DEFAULT 0,
+  created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
