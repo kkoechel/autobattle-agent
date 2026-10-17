@@ -47,32 +47,29 @@ private sealed interface Phase {
     ) : Phase
 }
 
+/**
+ * The app IS the Agent league.
+ *
+ * It opens straight into the arena and needs no autobattle.online account --
+ * a player joins with a handle they invent and never learns the main game
+ * exists. That is deliberate: this is a separate game, and requiring an
+ * account on another one to play it is both a pointless wall and a real
+ * hazard, because the advisor's key can rewrite a deck on the player's live
+ * account. A player of THIS game should never hold a credential that can
+ * reach the main game at all.
+ *
+ * The advisor (Chat/Findings, which does need that key) is still in the
+ * source but is not reachable from this build. It is a tool for the author of
+ * a deck on autobattle.online, not a feature of the league, and shipping it
+ * here would put that exposure in front of testers who did not ask for it.
+ */
 @Composable
 fun AgentApp() {
-    val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var phase by remember { mutableStateOf<Phase>(Phase.NeedKey) }
-    var busy by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf<String?>(null) }
-
-    // A stored key is verified on launch rather than trusted: a key can be
-    // revoked or the account banned, and discovering that at the first
-    // analysis is a worse experience than discovering it at startup.
-    LaunchedEffect(Unit) {
-        val key = Secrets.load(ctx) ?: return@LaunchedEffect
-        busy = true
-        runCatching { withContext(Dispatchers.IO) { identify(key) } }
-            .onSuccess { phase = it }
-            .onFailure { status = readable(it) }
-        busy = false
-    }
-
     Surface(Modifier.fillMaxSize()) {
         Column(
             // safeDrawingPadding, not padding alone: targetSdk 35+ draws
             // edge-to-edge by default, so without it the heading sits under
-            // the status bar clock and the composer under the gesture bar. It
-            // also covers the IME, which keeps the input visible while typing.
+            // the status bar clock and content under the gesture bar.
             Modifier.fillMaxSize()
                 .safeDrawingPadding()
                 .padding(horizontal = 18.dp)
@@ -84,60 +81,12 @@ fun AgentApp() {
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
             )
-
-            when (val p = phase) {
-                // Only this branch scrolls. The chat pane holds a LazyColumn,
-                // and a lazy list inside a scrolling parent is measured with
-                // an unbounded height, which throws at layout time.
-                is Phase.NeedKey -> Column(
-                    Modifier.verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    KeyEntry(busy) { key ->
-                        busy = true; status = null
-                        scope.launch {
-                            runCatching { withContext(Dispatchers.IO) { identify(key) } }
-                                .onSuccess { Secrets.save(ctx, key); phase = it }
-                                .onFailure { status = readable(it) }
-                            busy = false
-                        }
-                    }
-                    if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                    status?.let {
-                        Text(it, color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodyMedium)
-                    }
-                }
-
-                is Phase.Ready -> {
-                    // The chat pane is kept alive across tab switches rather
-                    // than swapped out, so a 20-second improve run is not
-                    // thrown away by looking at the journal while it works.
-                    var tab by rememberSaveable { mutableIntStateOf(0) }
-                    TabRow(selectedTabIndex = tab, containerColor = Color.Transparent) {
-                        Tab(selected = tab == 0, onClick = { tab = 0 },
-                            text = { Text("Chat") })
-                        Tab(selected = tab == 1, onClick = { tab = 1 },
-                            text = { Text("Findings") })
-                    }
-                    Box(Modifier.weight(1f)) {
-                        ChatPane(
-                            accountName = p.accountName,
-                            deckId = p.deckId,
-                            deckName = p.deckName,
-                            canWrite = p.canWrite,
-                            modifier = Modifier.fillMaxSize(),
-                            visible = tab == 0,
-                            onSignOut = { Secrets.clear(ctx); phase = Phase.NeedKey },
-                        )
-                        if (tab == 1) FindingsPane(Modifier.fillMaxSize())
-                    }
-                }
-            }
+            ArenaPane(Modifier.fillMaxSize())
         }
     }
 }
 
+@Suppress("unused")
 private fun identify(key: String): Phase.Ready {
     val api = ApiClient(key)
     val me = api.me()

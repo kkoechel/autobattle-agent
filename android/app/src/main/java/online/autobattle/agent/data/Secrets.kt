@@ -26,6 +26,17 @@ object Secrets {
 
     private const val PREFS = "abagent"
     private const val PREF_KEY = "api_key"
+
+    /**
+     * The Agent game token is a SEPARATE slot, sealed by the same Keystore
+     * key. It is a different credential for a different service with a much
+     * smaller blast radius -- it can only touch the game -- and keeping them
+     * apart means signing out of one does not destroy the other.
+     */
+    const val SLOT_GAME_TOKEN = "game_token"
+
+    /** The player's chosen handle. Not a secret, so it is stored in clear. */
+    private const val PREF_HANDLE = "game_handle"
     private const val ALIAS = "abagent_api_key"
     private const val TRANSFORM = "AES/GCM/NoPadding"
 
@@ -45,7 +56,7 @@ object Secrets {
         }.generateKey()
     }
 
-    fun save(ctx: Context, apiKey: String) {
+    fun save(ctx: Context, apiKey: String, slot: String = PREF_KEY) {
         val cipher = Cipher.getInstance(TRANSFORM).apply { init(Cipher.ENCRYPT_MODE, secretKey()) }
         val sealed = cipher.doFinal(apiKey.toByteArray())
         // The IV is generated per encryption and must be kept with the
@@ -53,12 +64,12 @@ object Secrets {
         val blob = Base64.encodeToString(cipher.iv, Base64.NO_WRAP) + ":" +
             Base64.encodeToString(sealed, Base64.NO_WRAP)
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString(PREF_KEY, blob).apply()
+            .putString(slot, blob).apply()
     }
 
-    fun load(ctx: Context): String? {
+    fun load(ctx: Context, slot: String = PREF_KEY): String? {
         val blob = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(PREF_KEY, null) ?: return null
+            .getString(slot, null) ?: return null
         return try {
             val (ivB64, dataB64) = blob.split(":", limit = 2)
             val cipher = Cipher.getInstance(TRANSFORM).apply {
@@ -76,7 +87,15 @@ object Secrets {
         }
     }
 
-    fun clear(ctx: Context) {
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(PREF_KEY).apply()
+    fun clear(ctx: Context, slot: String = PREF_KEY) {
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(slot).apply()
     }
+
+    fun saveHandle(ctx: Context, handle: String) {
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(PREF_HANDLE, handle).apply()
+    }
+
+    fun handle(ctx: Context): String? =
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(PREF_HANDLE, null)
 }
