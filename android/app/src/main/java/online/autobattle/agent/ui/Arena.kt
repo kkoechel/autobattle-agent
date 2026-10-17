@@ -15,7 +15,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import online.autobattle.agent.data.Secrets
 import online.autobattle.agent.game.Compete
+import online.autobattle.agent.game.Directive
 import online.autobattle.agent.game.GameClient
+import online.autobattle.agent.game.Questions
 import org.json.JSONObject
 
 /**
@@ -43,6 +45,9 @@ fun ArenaPane(modifier: Modifier = Modifier) {
     var names by remember { mutableStateOf<Map<Int, String>>(emptyMap()) }
     var showDeck by remember { mutableStateOf(false) }
     var loaded by remember { mutableStateOf(false) }
+    var confirmReset by remember { mutableStateOf(false) }
+    var directive by remember { mutableStateOf(Directive.load(ctx)) }
+    var asked by remember { mutableStateOf(emptySet<String>()) }
 
     // Standings and the player's own deck only. Card NAMES are a ~1MB
     // catalogue, and fetching them here made the whole screen wait on a
@@ -112,6 +117,47 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 TextButton(enabled = !busy, onClick = { scope.launch { refresh() } }) {
                     Text("Refresh")
                 }
+                TextButton(enabled = !busy, onClick = { confirmReset = true }) {
+                    Text("Start over")
+                }
+            }
+
+            // The agent asks; the player answers. This is the whole decision
+            // surface of the game, so it sits above the button rather than
+            // behind a settings icon.
+            val q = if (busy) null else
+                Questions.next(directive, handle, standings, asked)
+            if (q != null) {
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(q.text, style = MaterialTheme.typography.bodyLarge)
+                        for (c in q.choices) {
+                            OutlinedButton(
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = {
+                                    directive = c.apply(directive)
+                                    Directive.save(ctx, directive)
+                                    asked = asked + q.id
+                                }) {
+                                Column(Modifier.fillMaxWidth()) {
+                                    Text(c.label,
+                                        style = MaterialTheme.typography.bodyMedium)
+                                    Text(c.blurb,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if (!busy) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(directive.summary(), Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton(onClick = { asked = emptySet<String>() }) { Text("Re-brief") }
+                }
             }
 
             Button(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = {
@@ -120,7 +166,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                     runCatching {
                         withContext(Dispatchers.Default) {
                             val c = GameClient(token)
-                            val r = Compete.train(c, handle) { progress = it }
+                            val r = Compete.train(c, handle, directive) { progress = it }
                             progress = Compete.Progress("Submitting", 1, 1)
                             val rev = withContext(Dispatchers.IO) {
                                 c.putDeck(r.name, r.cards, r.plan)
@@ -133,7 +179,10 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                             "${"%.1f".format(r.wins)} of ${r.opponents} — " +
                             "picked from ${r.screened} designs, improved " +
                             "${r.climbed} time(s). The league scores every " +
-                            "deck itself, so your standing may differ."
+                            "deck itself, so your standing may differ." +
+                            if (r.relaxed) " (It could not avoid the field's " +
+                                "cards this time and built the best deck it " +
+                                "could instead.)" else ""
                         refresh()
                     }.onFailure { error = readable(it) }
                     progress = null
@@ -156,6 +205,32 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 Text(it, style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.primary)
             }
+
+        if (confirmReset) {
+            AlertDialog(
+                onDismissRequest = { confirmReset = false },
+                title = { Text("Start over?") },
+                text = { Text("Your agent throws away its current deck and " +
+                    "takes a fresh one. Your handle and past results are kept.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmReset = false; busy = true; error = null; note = null
+                        scope.launch {
+                            runCatching {
+                                withContext(Dispatchers.IO) { GameClient(token).resetDeck() }
+                            }.onSuccess {
+                                note = "Started over with \"${it.optString("name")}\"."
+                                asked = emptySet<String>()
+                                refresh()
+                            }.onFailure { error = readable(it) }
+                            busy = false
+                        }
+                    }) { Text("Start over") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmReset = false }) { Text("Cancel") }
+                })
+        }
 
         error?.let {
             Text(it, color = MaterialTheme.colorScheme.error,

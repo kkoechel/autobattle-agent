@@ -81,6 +81,9 @@ class GameClient(private val token: String?, private val base: String = BASE) {
 
     fun standings(): JSONObject = call("GET", "/standings")
 
+    /** Throw the current deck away and take a fresh starter. */
+    fun resetDeck(): JSONObject = call("POST", "/deck/reset", JSONObject())
+
     fun putDeck(name: String, cards: List<Int>, plan: JSONObject?): Int {
         val counts = cards.groupingBy { it }.eachCount()
         val arr = JSONArray()

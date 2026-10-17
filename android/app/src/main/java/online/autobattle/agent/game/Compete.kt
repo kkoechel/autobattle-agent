@@ -61,6 +61,13 @@ object Compete {
         return Mutate.apply(cards, plan, swaps, cat)
     }
 
+    /** Cards two decks share, counting copies. */
+    private fun shared(a: List<Int>, b: List<Int>): Int {
+        val ca = a.groupingBy { it }.eachCount()
+        val cb = b.groupingBy { it }.eachCount()
+        return ca.entries.sumOf { (k, v) -> minOf(v, cb[k] ?: 0) }
+    }
+
     data class Progress(val step: String, val done: Int, val total: Int)
 
     data class Outcome(
@@ -71,6 +78,8 @@ object Compete {
         val opponents: Int,
         val screened: Int,
         val climbed: Int,
+        /** True when an originality request could not be met this run. */
+        val relaxed: Boolean = false,
     )
 
     /** Every opponent's current deck, as the engine wants them. */
@@ -130,7 +139,8 @@ object Compete {
     fun train(
         client: GameClient,
         myHandle: String?,
-        seedCount: Int = 36,
+        directive: Directive = Directive(),
+        seedCount: Int = directive.seedCount,
         screenSeeds: Int = 15,
         // The climb gets MORE seeds than the design sweep, and they are not
         // the same job. Ranking 36 very different decks is coarse work that
@@ -142,7 +152,7 @@ object Compete {
         // screen cannot select improvements, and the plateau it reports
         // belongs to the instrument, not the deck.
         climbSeeds: Int = 31,
-        generations: Int = 6,
+        generations: Int = directive.generations,
         mutationsPerGen: Int = 10,
         // One barren generation is not a plateau. Stopping on the first
         // failure makes the whole climb a coin flip on ten random swaps.
@@ -172,10 +182,18 @@ object Compete {
         // Banned cards are excluded HERE as well as rejected by the server.
         // Letting the generator build around a banned card would mean a long
         // local search ending in a 400, which reads as a bug to the player.
-        val candidateSeeds = (0 until cardsJson.length())
+        val allSeeds = (0 until cardsJson.length())
             .map { cardsJson.getJSONObject(it).getInt("id") }
             .filter { it !in banned && cat.isPlayable(it) }
             .sorted()
+        // A theme narrows what the agent builds AROUND, not what it may use:
+        // the seed carries the theme and the rest of the deck is still chosen
+        // on merit. Narrowing the whole pool would mean 79 poison cards and
+        // nothing to support them.
+        val themed = directive.theme?.let { t ->
+            allSeeds.filter { t in cat.tags(it) }
+        }?.takeIf { it.size >= 8 }
+        val candidateSeeds = themed ?: allSeeds
         val stride = maxOf(1, candidateSeeds.size / seedCount)
         val picked = candidateSeeds.filterIndexed { i, _ -> i % stride == 0 }.take(seedCount)
 
@@ -183,13 +201,40 @@ object Compete {
         picked.forEachIndexed { i, s ->
             onProgress(Progress("Designing decks", i + 1, picked.size))
             val b = Archetype.build(s, cat, meta) ?: return@forEachIndexed
-            if (b.cards.size == 100 && b.cards.none { it in banned }) built.add(b)
+            if (b.cards.size != 100 || b.cards.any { it in banned }) return@forEachIndexed
+            // Originality is a filter on what may be SUBMITTED, applied before
+            // anything is scored: asking for something of our own and then
+            // handing back a near-copy because it tested well would make the
+            // instruction decorative.
+            val cap = directive.maxOverlap
+            if (cap != null && opponents.any { o -> shared(b.cards, o.cards) > cap }) {
+                return@forEachIndexed
+            }
+            built.add(b)
+        }
+        // Falling back is better than failing: in a small field an originality
+        // cap can reject everything, and "your agent did nothing" is a worse
+        // answer than "it could not avoid the field this time".
+        var relaxed = false
+        if (built.isEmpty() && directive.maxOverlap != null) {
+            relaxed = true
+            picked.forEach { s ->
+                val b = Archetype.build(s, cat, meta) ?: return@forEach
+                if (b.cards.size == 100 && b.cards.none { it in banned }) built.add(b)
+            }
         }
         require(built.isNotEmpty()) { "could not build a legal deck" }
 
+        // Targeting changes who the agent SELECTS against, never who it is
+        // finally judged against -- a deck built to beat one rival routinely
+        // loses ground to the rest, and the verdict has to be able to say so.
+        val selectAgainst = directive.target
+            ?.let { t -> opponents.filter { it.name == t } }
+            ?.takeIf { it.isNotEmpty() } ?: opponents
+
         onProgress(Progress("Testing ${built.size} decks", 0, 1))
         val arms = built.mapIndexed { i, b -> Deck("c$i", b.cards, b.plan, b.seedName, null) }
-        val screened = score(cat, arms, opponents, seeds, workers)
+        val screened = score(cat, arms, selectAgainst, seeds, workers)
         var bestI = arms.indices.maxByOrNull { screened["c$it"]?.wins ?: -1.0 }!!
         var cur = built[bestI].cards
         var curPlan = built[bestI].plan
@@ -218,7 +263,7 @@ object Compete {
             val gArms = ArrayList<Deck>()
             gArms.add(Deck("cur", cur, curPlan, name, null))
             kids.forEachIndexed { i, k -> gArms.add(Deck("k$i", k.first, k.second, name, null)) }
-            val s = score(cat, gArms, opponents, climbBlock, workers)
+            val s = score(cat, gArms, selectAgainst, climbBlock, workers)
             val base = s["cur"]?.wins ?: break
             val bi = kids.indices.maxByOrNull { s["k$it"]?.wins ?: -1.0 } ?: break
             val bw = s["k$bi"]?.wins ?: break
@@ -240,6 +285,7 @@ object Compete {
         val verify = (0 until climbSeeds).map { 50_000 + it }
         val finalWins = score(cat, listOf(Deck("fin", cur, curPlan, name, null)),
             opponents, verify, workers)["fin"]?.wins ?: curWins
-        return Outcome(name, cur, curPlan, finalWins, opponents.size, built.size, climbed)
+        return Outcome(name, cur, curPlan, finalWins, opponents.size, built.size,
+            climbed, relaxed)
     }
 }

@@ -111,6 +111,29 @@ if ($path === 'deck' && $method === 'PUT') {
     reply(['ok' => true, 'revision' => (int)$st->fetchColumn()]);
 }
 
+// ---- POST /deck/reset ---------------------------------------------------
+// Start over: throw the current deck away and take a fresh starter.
+//
+// Keeps the player, their handle and their results history -- this abandons
+// a line of development, it does not abandon the account. A player who has
+// driven their agent into a corner needs a way out that is not "uninstall".
+if ($path === 'deck/reset' && $method === 'POST') {
+    $p = require_player();
+    $st = db()->query(
+        'SELECT name, cards_json, plan_json FROM starters ORDER BY RAND() LIMIT 1')->fetch();
+    if (!$st) fail(503, 'no starter decks are available right now');
+    db()->prepare(
+        'INSERT INTO decks (player_id, name, cards_json, plan_json)
+         VALUES (?,?,?,?)
+         ON DUPLICATE KEY UPDATE name = VALUES(name),
+             cards_json = VALUES(cards_json), plan_json = VALUES(plan_json),
+             revision = revision + 1'
+    )->execute([$p['id'], $st['name'], $st['cards_json'], $st['plan_json']]);
+    $r = db()->prepare('SELECT revision FROM decks WHERE player_id = ?');
+    $r->execute([$p['id']]);
+    reply(['ok' => true, 'name' => $st['name'], 'revision' => (int)$r->fetchColumn()]);
+}
+
 // ---- GET /field ---------------------------------------------------------
 // Everyone's current deck, so the phone can iterate against the real
 // opposition locally instead of guessing at it.
