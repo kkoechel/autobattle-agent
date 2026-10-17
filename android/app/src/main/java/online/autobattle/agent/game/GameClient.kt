@@ -52,6 +52,17 @@ class GameClient(private val token: String?, private val base: String = BASE) {
 
     fun me(): JSONObject = call("GET", "/me")
 
+    /** Card id -> display name, for showing a deck the player can read. */
+    fun cardNames(): Map<Int, String> {
+        val (arr, _) = cards()
+        val out = HashMap<Int, String>(arr.length())
+        for (i in 0 until arr.length()) {
+            val c = arr.getJSONObject(i)
+            out[c.getInt("id")] = c.optString("name", "#${c.getInt("id")}")
+        }
+        return out
+    }
+
     /**
      * The whole catalogue plus the ban list. Served whole on purpose: the
      * engine needs effects_json and stats_json, and a slim variant would

@@ -131,3 +131,25 @@ function deck_problem(array $entries): ?string {
     if ($total !== 100) return "deck must be exactly 100 cards, got $total";
     return null;
 }
+
+
+/**
+ * When the next round will be scored, as UTC "Y-m-d H:i:s".
+ *
+ * Mirrors agentgame-round.timer's OnCalendar=*:02/15. Without this the
+ * standings look frozen -- a player trains, submits, and then stares at an
+ * unchanged table with nothing telling them a round is coming. The cadence is
+ * stated in two places, which is a real (small) duplication; the alternative
+ * is parsing systemd from PHP, and the timer moving without this changing
+ * would show a time a few minutes out rather than break anything.
+ */
+function next_round_at(): string {
+    $now = new DateTimeImmutable('now', new DateTimeZone('UTC'));
+    // Scheduled minutes are 2, 17, 32, 47. The clamp below is for minutes 0
+    // and 1, where the arithmetic would otherwise skip past :02 and promise
+    // :17 -- wrong for two minutes of every hour. Checked against all 60.
+    $m = (int)$now->format('i');
+    $next = $m < 2 ? 2 : (intdiv($m - 2, 15) + 1) * 15 + 2;
+    $base = $now->setTime((int)$now->format('H'), 0, 0);
+    return $base->modify("+$next minutes")->format('Y-m-d H:i:s');
+}

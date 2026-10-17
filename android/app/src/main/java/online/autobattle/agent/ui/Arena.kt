@@ -39,11 +39,34 @@ fun ArenaPane(modifier: Modifier = Modifier) {
     var note by remember { mutableStateOf<String?>(null) }
     var progress by remember { mutableStateOf<Compete.Progress?>(null) }
     var standings by remember { mutableStateOf<JSONObject?>(null) }
+    var myDeck by remember { mutableStateOf<JSONObject?>(null) }
+    var names by remember { mutableStateOf<Map<Int, String>>(emptyMap()) }
+    var showDeck by remember { mutableStateOf(false) }
+    var loaded by remember { mutableStateOf(false) }
 
+    // Standings and the player's own deck only. Card NAMES are a ~1MB
+    // catalogue, and fetching them here made the whole screen wait on a
+    // download it only needs if the deck list is expanded -- for twenty
+    // seconds the app showed "No round has been scored yet", which is not
+    // slow, it is wrong.
     suspend fun refresh() {
-        runCatching { withContext(Dispatchers.IO) { GameClient(token).standings() } }
-            .onSuccess { standings = it }
-            .onFailure { error = readable(it) }
+        runCatching {
+            withContext(Dispatchers.IO) {
+                val c = GameClient(token)
+                c.standings() to (if (token != null) runCatching { c.me() }.getOrNull() else null)
+            }
+        }.onSuccess { (st, mine) ->
+            standings = st
+            myDeck = mine?.optJSONObject("deck")
+        }.onFailure { error = readable(it) }
+        loaded = true
+    }
+
+    /** Names are pulled the first time the player actually opens the list. */
+    suspend fun ensureNames() {
+        if (names.isNotEmpty()) return
+        runCatching { withContext(Dispatchers.IO) { GameClient(token).cardNames() } }
+            .onSuccess { names = it }
     }
 
     LaunchedEffect(token) { refresh() }
@@ -53,9 +76,9 @@ fun ArenaPane(modifier: Modifier = Modifier) {
 
         if (token == null) {
             Text("Join the Agent league", style = MaterialTheme.typography.titleMedium)
-            Text("Pick a handle. Your agent builds a deck on this phone and " +
-                "plays it against everyone else's agents. A new round is " +
-                "scored every 15 minutes.",
+            Text("Pick a handle. Your agent designs and tests decks on this " +
+                "phone, then plays the best one against everyone else's " +
+                "agents. A new round is scored every 15 minutes.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             OutlinedTextField(
@@ -116,7 +139,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                     progress = null
                     busy = false
                 }
-            }) { Text(if (busy) "Training…" else "Train and submit a deck") }
+            }) { Text(if (busy) "Your agent is working…" else "Send your agent to work") }
 
             progress?.let { p ->
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -133,17 +156,55 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 Text(it, style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.primary)
             }
-        }
 
         error?.let {
             Text(it, color = MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodyMedium)
         }
 
+            myDeck?.let { d ->
+                HorizontalDivider()
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Your agent built: ${d.optString("name")}",
+                            style = MaterialTheme.typography.titleSmall)
+                        Text("revision ${d.optInt("revision")}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    TextButton(onClick = {
+                        showDeck = !showDeck
+                        if (showDeck) scope.launch { ensureNames() }
+                    }) { Text(if (showDeck) "Hide" else "Show cards") }
+                }
+                if (showDeck) {
+                    val cards = d.optJSONArray("cards")
+                    val entries = (0 until (cards?.length() ?: 0))
+                        .map { cards!!.getJSONObject(it) }
+                        .sortedByDescending { it.optInt("quantity") }
+                    for (e in entries) {
+                        val id = e.optInt("card_id")
+                        Row(Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text("${e.optInt("quantity")}x",
+                                style = MaterialTheme.typography.bodySmall)
+                            Text(names[id] ?: "loading…",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+        }
+
         HorizontalDivider()
         val s = standings
         val rows = s?.optJSONArray("standings")
-        if (rows == null || rows.length() == 0) {
+        if (!loaded) {
+            Text("Loading the league…",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else if (rows == null || rows.length() == 0) {
             Text("No round has been scored yet.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -151,6 +212,17 @@ fun ArenaPane(modifier: Modifier = Modifier) {
             val round = s.optJSONObject("round")
             Text("Round ${round?.optInt("id") ?: 0} — ${round?.optInt("decks") ?: 0} decks",
                 style = MaterialTheme.typography.titleSmall)
+            // Without this the table looks frozen: a player trains, submits,
+            // and then stares at an unchanged standing with nothing saying a
+            // round is coming.
+            round?.optString("next_at")?.takeIf { it.isNotBlank() }?.let { nx ->
+                // Relative, not "03:17 UTC". A player holding a phone should
+                // not have to do timezone arithmetic to find out whether it
+                // is worth waiting.
+                Text(untilRound(nx),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             for (i in 0 until rows.length()) {
                 val r = rows.getJSONObject(i)
                 val mine = r.optString("handle") == handle
@@ -174,4 +246,24 @@ fun ArenaPane(modifier: Modifier = Modifier) {
             }
         }
     }
+}
+
+
+/**
+ * "Next round in 4 min", from the server's UTC "Y-m-d H:i:s".
+ *
+ * Falls back to saying nothing useful rather than guessing if the string
+ * cannot be parsed: a wrong countdown is worse than no countdown.
+ */
+private fun untilRound(utc: String): String = try {
+    val fmt = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+        .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
+    val mins = ((fmt.parse(utc)!!.time - System.currentTimeMillis()) / 60000L).toInt()
+    when {
+        mins <= 0 -> "Next round is being scored now"
+        mins == 1 -> "Next round in about a minute"
+        else -> "Next round in about $mins minutes"
+    }
+} catch (e: Exception) {
+    "A round is scored every 15 minutes"
 }

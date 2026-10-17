@@ -60,10 +60,22 @@ if ($path === 'join' && $method === 'POST') {
 // ---- GET /me ------------------------------------------------------------
 if ($path === 'me' && $method === 'GET') {
     $p = require_player();
-    $st = db()->prepare('SELECT name, revision, updated_at FROM decks WHERE player_id = ?');
+    $st = db()->prepare(
+        'SELECT name, revision, updated_at, cards_json, plan_json
+           FROM decks WHERE player_id = ?');
     $st->execute([$p['id']]);
+    $d = $st->fetch();
+    if ($d) {
+        // The full list, not just its name. This is a deck-building game and
+        // the player could not see their own deck -- the one thing the whole
+        // app is about.
+        $d['cards'] = json_decode($d['cards_json'], true);
+        $d['battle_plan'] = json_decode($d['plan_json'], true) ?: new stdClass();
+        unset($d['cards_json'], $d['plan_json']);
+        $d['revision'] = (int)$d['revision'];
+    }
     reply(['ok' => true, 'player_id' => (int)$p['id'], 'handle' => $p['handle'],
-           'deck' => $st->fetch() ?: null]);
+           'deck' => $d ?: null]);
 }
 
 // ---- PUT /deck ----------------------------------------------------------
@@ -135,7 +147,8 @@ if ($path === 'standings' && $method === 'GET') {
     $st->execute([$rd['id']]);
     reply(['ok' => true,
            'round' => ['id' => (int)$rd['id'], 'finished_at' => $rd['finished_at'],
-                       'decks' => (int)$rd['n_decks'], 'seeds' => (int)$rd['seeds']],
+                       'decks' => (int)$rd['n_decks'], 'seeds' => (int)$rd['seeds'],
+                       'next_at' => next_round_at()],
            'standings' => $st->fetchAll()]);
 }
 
