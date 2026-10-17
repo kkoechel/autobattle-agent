@@ -18,6 +18,9 @@ import online.autobattle.agent.game.Compete
 import online.autobattle.agent.game.Directive
 import online.autobattle.agent.game.GameClient
 import online.autobattle.agent.game.Memory
+import online.autobattle.agent.game.Training
+import online.autobattle.agent.game.TrainingService
+import androidx.compose.runtime.collectAsState
 import online.autobattle.agent.game.Questions
 import org.json.JSONObject
 
@@ -37,10 +40,14 @@ fun ArenaPane(modifier: Modifier = Modifier) {
     var token by remember { mutableStateOf(Secrets.load(ctx, Secrets.SLOT_GAME_TOKEN)) }
     var handle by remember { mutableStateOf(Secrets.handle(ctx) ?: "") }
     var typed by remember { mutableStateOf("") }
-    var busy by remember { mutableStateOf(false) }
+    var uiBusy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var note by remember { mutableStateOf<String?>(null) }
-    var progress by remember { mutableStateOf<Compete.Progress?>(null) }
+    // Observed from the service, so the screen can be left and come back to
+    // a run that kept going.
+    val running by Training.running.collectAsState()
+    val progress by Training.progress.collectAsState()
+    val finished by Training.result.collectAsState()
     var standings by remember { mutableStateOf<JSONObject?>(null) }
     var myDeck by remember { mutableStateOf<JSONObject?>(null) }
     var names by remember { mutableStateOf<Map<Int, String>>(emptyMap()) }
@@ -56,6 +63,8 @@ fun ArenaPane(modifier: Modifier = Modifier) {
     // download it only needs if the deck list is expanded -- for twenty
     // seconds the app showed "No round has been scored yet", which is not
     // slow, it is wrong.
+    val busy = uiBusy || running
+
     suspend fun refresh() {
         runCatching {
             withContext(Dispatchers.IO) {
@@ -94,6 +103,29 @@ fun ArenaPane(modifier: Modifier = Modifier) {
 
     LaunchedEffect(token) { refresh() }
 
+    // A run can finish while this screen is away; picking the result up here
+    // means the outcome is shown whenever the player comes back, not only if
+    // they happened to be watching.
+    LaunchedEffect(finished) {
+        val r = finished ?: return@LaunchedEffect
+        if (r.error != null) {
+            error = r.error
+        } else if (r.outcome != null) {
+            val o = r.outcome
+            note = "Submitted \"${o.name}\" (revision ${r.revision}). " +
+                "Checked on fresh matchups it won ${"%.1f".format(o.wins)} of " +
+                "${o.opponents} — picked from ${o.screened} designs, improved " +
+                "${o.climbed} time(s). The league scores every deck itself, so " +
+                "your standing may differ." +
+                if (o.relaxed) " (It could not avoid the field's cards this time " +
+                    "and built the best deck it could instead.)" else ""
+            mem = mem.copy(barrenRuns = if (o.climbed == 0) mem.barrenRuns + 1 else 0)
+            Memory.save(ctx, mem)
+            refresh()
+        }
+        Training.clearResult()
+    }
+
     Column(modifier.verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
 
@@ -112,7 +144,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 modifier = Modifier.fillMaxWidth())
             Button(enabled = !busy && typed.trim().length >= 3,
                 onClick = {
-                    busy = true; error = null
+                    uiBusy = true; error = null
                     scope.launch {
                         runCatching {
                             withContext(Dispatchers.IO) { GameClient.join(typed.trim()) }
@@ -123,7 +155,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                             handle = it.getString("handle")
                             token = t
                         }.onFailure { error = readable(it) }
-                        busy = false
+                        uiBusy = false
                     }
                 }) { Text("Join") }
         } else {
@@ -206,36 +238,10 @@ fun ArenaPane(modifier: Modifier = Modifier) {
             }
 
             Button(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = {
-                busy = true; error = null; note = null
-                scope.launch {
-                    runCatching {
-                        withContext(Dispatchers.Default) {
-                            val c = GameClient(token)
-                            val r = Compete.train(c, handle, directive) { progress = it }
-                            progress = Compete.Progress("Submitting", 1, 1)
-                            val rev = withContext(Dispatchers.IO) {
-                                c.putDeck(r.name, r.cards, r.plan)
-                            }
-                            r to rev
-                        }
-                    }.onSuccess { (r, rev) ->
-                        mem = mem.copy(
-                            barrenRuns = if (r.climbed == 0) mem.barrenRuns + 1 else 0)
-                        Memory.save(ctx, mem)
-                        note = "Submitted \"${r.name}\" (revision $rev). " +
-                            "Checked on fresh matchups it won " +
-                            "${"%.1f".format(r.wins)} of ${r.opponents} — " +
-                            "picked from ${r.screened} designs, improved " +
-                            "${r.climbed} time(s). The league scores every " +
-                            "deck itself, so your standing may differ." +
-                            if (r.relaxed) " (It could not avoid the field's " +
-                                "cards this time and built the best deck it " +
-                                "could instead.)" else ""
-                        refresh()
-                    }.onFailure { error = readable(it) }
-                    progress = null
-                    busy = false
-                }
+                error = null; note = null
+                // Hand the work to the service and return immediately. The
+                // screen is now an observer, so leaving it is harmless.
+                TrainingService.start(ctx)
             }) { Text(if (busy) "Your agent is working…" else "Send your agent to work") }
 
             progress?.let { p ->
@@ -262,7 +268,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                     "takes a fresh one. Your handle and past results are kept.") },
                 confirmButton = {
                     TextButton(onClick = {
-                        confirmReset = false; busy = true; error = null; note = null
+                        confirmReset = false; uiBusy = true; error = null; note = null
                         scope.launch {
                             runCatching {
                                 withContext(Dispatchers.IO) { GameClient(token).resetDeck() }
@@ -274,7 +280,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                                 Directive.save(ctx, directive)
                                 refresh()
                             }.onFailure { error = readable(it) }
-                            busy = false
+                            uiBusy = false
                         }
                     }) { Text("Start over") }
                 },

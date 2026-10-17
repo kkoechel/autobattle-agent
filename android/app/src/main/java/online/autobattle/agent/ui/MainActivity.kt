@@ -1,5 +1,8 @@
 package online.autobattle.agent.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -25,8 +28,23 @@ import online.autobattle.agent.api.ApiException
 import online.autobattle.agent.data.Secrets
 
 class MainActivity : ComponentActivity() {
+    /**
+     * Asked once, on launch. The training notification is what lets the run
+     * continue while the player is in another app -- without it the work
+     * still happens but is invisible, which is exactly the thing a phone
+     * should never do with two minutes of flat-out CPU.
+     */
+    private val askNotify = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { /* declined is survivable: the service still runs, silently. */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+            askNotify.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
         setContent { AgentTheme { AgentApp() } }
     }
 }

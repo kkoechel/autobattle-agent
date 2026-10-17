@@ -4,6 +4,17 @@
     <!-- Talks only to autobattle.online. All simulation is local. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Training is 40s-2min of flat-out simulation that the player expects to
+         keep running while they use the phone for something else. Android
+         freezes background CPU work, so it needs a foreground service. The
+         notification is the contract for that: sustained background CPU is
+         allowed precisely because the user can see it and stop it. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Android 13+ requires asking before a notification can be shown, and
+         without the notification the service cannot run at all. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:label="AutoBattle Agent"
         android:icon="@mipmap/ic_launcher"
@@ -20,5 +31,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".game.TrainingService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 </manifest>
