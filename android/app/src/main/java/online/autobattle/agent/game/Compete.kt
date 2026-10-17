@@ -132,8 +132,21 @@ object Compete {
         myHandle: String?,
         seedCount: Int = 36,
         screenSeeds: Int = 15,
-        generations: Int = 8,
+        // The climb gets MORE seeds than the design sweep, and they are not
+        // the same job. Ranking 36 very different decks is coarse work that
+        // 15 seeds settles; deciding whether one swapped card helped is a
+        // far smaller effect, and at 8 opponents x 15 seeds it sits inside
+        // the noise -- the first run on a real phone reported "improved 0
+        // times" because generation 1 could not see any mutation as better.
+        // Measured the same day on the live field: a saturated or coarse
+        // screen cannot select improvements, and the plateau it reports
+        // belongs to the instrument, not the deck.
+        climbSeeds: Int = 31,
+        generations: Int = 6,
         mutationsPerGen: Int = 10,
+        // One barren generation is not a plateau. Stopping on the first
+        // failure makes the whole climb a coin flip on ten random swaps.
+        patience: Int = 2,
         workers: Int = 4,
         onProgress: (Progress) -> Unit = {},
     ): Outcome {
@@ -182,8 +195,10 @@ object Compete {
         // current deck, and stops the moment one does not. Stopping early is
         // the common case near a local optimum and costs nothing.
         var climbed = 0
+        var barren = 0
+        val climbBlock = (0 until climbSeeds).map { 7000 + it }
         for (g in 1..generations) {
-            onProgress(Progress("Improving (round $g)", g, generations))
+            onProgress(Progress("Improving (round $g of $generations)", g, generations))
             val kids = ArrayList<Pair<List<Int>, JSONObject>>()
             repeat(mutationsPerGen) {
                 val m = mutation(cur, curPlan, cat, addPool, rnd)
@@ -195,17 +210,30 @@ object Compete {
             val gArms = ArrayList<Deck>()
             gArms.add(Deck("cur", cur, curPlan, name, null))
             kids.forEachIndexed { i, k -> gArms.add(Deck("k$i", k.first, k.second, name, null)) }
-            val s = score(cat, gArms, opponents, seeds, workers)
+            val s = score(cat, gArms, opponents, climbBlock, workers)
             val base = s["cur"]?.wins ?: break
             val bi = kids.indices.maxByOrNull { s["k$it"]?.wins ?: -1.0 } ?: break
             val bw = s["k$bi"]?.wins ?: break
-            if (bw <= base) break
+            if (bw <= base) {
+                barren++
+                if (barren >= patience) break
+                continue
+            }
+            barren = 0
             cur = kids[bi].first
             curPlan = kids[bi].second
             curWins = bw
             climbed++
         }
 
-        return Outcome(name, cur, curPlan, curWins, opponents.size, built.size, climbed)
+        // Report the deck's wins on the CLIMB block, not the coarse design
+        // sweep: if the two disagree the player should be shown the better
+        // measurement, and quoting the sweep would credit the climb with a
+        // number it never earned.
+        val finalWins = if (climbed > 0) curWins else {
+            score(cat, listOf(Deck("fin", cur, curPlan, name, null)),
+                opponents, climbBlock, workers)["fin"]?.wins ?: curWins
+        }
+        return Outcome(name, cur, curPlan, finalWins, opponents.size, built.size, climbed)
     }
 }
