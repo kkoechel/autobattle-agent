@@ -193,14 +193,29 @@ object Compete {
         val themed = directive.theme?.let { t ->
             allSeeds.filter { t in cat.tags(it) }
         }?.takeIf { it.size >= 8 }
-        val candidateSeeds = themed ?: allSeeds
+        val cheap = directive.maxSeedCost?.let { mx ->
+            (themed ?: allSeeds).filter { cat.cost(it) <= mx }
+        }?.takeIf { it.size >= 8 }
+        // A card the player agreed to build around is not a preference, it
+        // is the instruction: the agent builds THAT deck and spends the whole
+        // budget making it work, rather than screening it against 35 others
+        // and quietly discarding it.
+        val candidateSeeds = when {
+            directive.seedCard != null && directive.seedCard in allSeeds ->
+                listOf(directive.seedCard)
+            cheap != null -> cheap
+            themed != null -> themed
+            else -> allSeeds
+        }
         val stride = maxOf(1, candidateSeeds.size / seedCount)
         val picked = candidateSeeds.filterIndexed { i, _ -> i % stride == 0 }.take(seedCount)
 
         val built = ArrayList<Archetype.Built>()
         picked.forEachIndexed { i, s ->
             onProgress(Progress("Designing decks", i + 1, picked.size))
-            val b = Archetype.build(s, cat, meta) ?: return@forEachIndexed
+            val b = Archetype.build(s, cat, meta,
+                stapleSlots = directive.stapleSlots, pool = directive.pool)
+                ?: return@forEachIndexed
             if (b.cards.size != 100 || b.cards.any { it in banned }) return@forEachIndexed
             // Originality is a filter on what may be SUBMITTED, applied before
             // anything is scored: asking for something of our own and then
@@ -219,7 +234,9 @@ object Compete {
         if (built.isEmpty() && directive.maxOverlap != null) {
             relaxed = true
             picked.forEach { s ->
-                val b = Archetype.build(s, cat, meta) ?: return@forEach
+                val b = Archetype.build(s, cat, meta,
+                    stapleSlots = directive.stapleSlots, pool = directive.pool)
+                    ?: return@forEach
                 if (b.cards.size == 100 && b.cards.none { it in banned }) built.add(b)
             }
         }

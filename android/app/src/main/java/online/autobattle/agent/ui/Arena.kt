@@ -17,6 +17,7 @@ import online.autobattle.agent.data.Secrets
 import online.autobattle.agent.game.Compete
 import online.autobattle.agent.game.Directive
 import online.autobattle.agent.game.GameClient
+import online.autobattle.agent.game.Memory
 import online.autobattle.agent.game.Questions
 import org.json.JSONObject
 
@@ -47,7 +48,8 @@ fun ArenaPane(modifier: Modifier = Modifier) {
     var loaded by remember { mutableStateOf(false) }
     var confirmReset by remember { mutableStateOf(false) }
     var directive by remember { mutableStateOf(Directive.load(ctx)) }
-    var asked by remember { mutableStateOf(emptySet<String>()) }
+    var mem by remember { mutableStateOf(Memory.load(ctx)) }
+    var idea by remember { mutableStateOf<JSONObject?>(null) }
 
     // Standings and the player's own deck only. Card NAMES are a ~1MB
     // catalogue, and fetching them here made the whole screen wait on a
@@ -63,7 +65,23 @@ fun ArenaPane(modifier: Modifier = Modifier) {
         }.onSuccess { (st, mine) ->
             standings = st
             myDeck = mine?.optJSONObject("deck")
+            // Remember where we stood, so next time the agent can notice it
+            // has CHANGED. This is the whole basis of the triggered
+            // questions -- without it the agent cannot tell a slip from a
+            // steady position.
+            val rows = st.optJSONArray("standings")
+            val all = (0 until (rows?.length() ?: 0)).map { rows!!.getJSONObject(it) }
+            val mineRow = all.firstOrNull { it.optString("handle") == handle }
+            val lead = all.firstOrNull { it.optString("handle") != handle }
+            mem = mem.copy(
+                lastPlacement = mineRow?.optInt("placement") ?: mem.lastPlacement,
+                lastLeader = lead?.optString("handle") ?: mem.lastLeader)
+            Memory.save(ctx, mem)
         }.onFailure { error = readable(it) }
+        if (idea == null && token != null) {
+            runCatching { withContext(Dispatchers.IO) { GameClient(token).idea() } }
+                .onSuccess { idea = it }
+        }
         loaded = true
     }
 
@@ -125,8 +143,11 @@ fun ArenaPane(modifier: Modifier = Modifier) {
             // The agent asks; the player answers. This is the whole decision
             // surface of the game, so it sits above the button rather than
             // behind a settings icon.
+            val deckIds = myDeck?.optJSONArray("cards")?.let { a ->
+                (0 until a.length()).map { a.getJSONObject(it).optInt("card_id") }.toSet()
+            } ?: emptySet()
             val q = if (busy) null else
-                Questions.next(directive, handle, standings, asked)
+                Questions.next(directive, mem, handle, standings, deckIds, idea)
             if (q != null) {
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp),
@@ -136,9 +157,30 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                             OutlinedButton(
                                 modifier = Modifier.fillMaxWidth(),
                                 onClick = {
+                                    val before = directive
                                     directive = c.apply(directive)
                                     Directive.save(ctx, directive)
-                                    asked = asked + q.id
+                                    // An answer that changed nothing is a
+                                    // decline: remember it so the same
+                                    // trigger does not ask again next
+                                    // refresh. Onboarding questions are not
+                                    // dismissible, so they just get marked
+                                    // answered either way.
+                                    val declined = directive == before && q.dismissible
+                                    mem = mem.copy(
+                                        answered = mem.answered + q.id,
+                                        dismissed = if (declined) mem.dismissed + q.id
+                                                    else mem.dismissed - q.id,
+                                        triedThemes = mem.triedThemes +
+                                            listOfNotNull(directive.theme),
+                                        lastIdeaRound = if (q.id.startsWith("idea"))
+                                            (standings?.optJSONObject("round")
+                                                ?.optInt("id") ?: 0)
+                                            else mem.lastIdeaRound,
+                                        barrenRuns = if (q.id == "stuck") 0
+                                                     else mem.barrenRuns)
+                                    Memory.save(ctx, mem)
+                                    if (q.id.startsWith("idea")) idea = null
                                 }) {
                                 Column(Modifier.fillMaxWidth()) {
                                     Text(c.label,
@@ -156,7 +198,10 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                     Text(directive.summary(), Modifier.weight(1f),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    TextButton(onClick = { asked = emptySet<String>() }) { Text("Re-brief") }
+                    TextButton(onClick = {
+                        mem = mem.copy(answered = emptySet(), dismissed = emptySet())
+                        Memory.save(ctx, mem)
+                    }) { Text("Re-brief") }
                 }
             }
 
@@ -174,6 +219,9 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                             r to rev
                         }
                     }.onSuccess { (r, rev) ->
+                        mem = mem.copy(
+                            barrenRuns = if (r.climbed == 0) mem.barrenRuns + 1 else 0)
+                        Memory.save(ctx, mem)
                         note = "Submitted \"${r.name}\" (revision $rev). " +
                             "Checked on fresh matchups it won " +
                             "${"%.1f".format(r.wins)} of ${r.opponents} — " +
@@ -220,7 +268,10 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                                 withContext(Dispatchers.IO) { GameClient(token).resetDeck() }
                             }.onSuccess {
                                 note = "Started over with \"${it.optString("name")}\"."
-                                asked = emptySet<String>()
+                                mem = Memory()
+                                Memory.save(ctx, mem)
+                                directive = Directive()
+                                Directive.save(ctx, directive)
                                 refresh()
                             }.onFailure { error = readable(it) }
                             busy = false

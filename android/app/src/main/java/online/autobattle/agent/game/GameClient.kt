@@ -81,6 +81,9 @@ class GameClient(private val token: String?, private val base: String = BASE) {
 
     fun standings(): JSONObject = call("GET", "/standings")
 
+    /** A card the agent could suggest building around, chosen server-side. */
+    fun idea(): JSONObject = call("GET", "/idea")
+
     /** Throw the current deck away and take a fresh starter. */
     fun resetDeck(): JSONObject = call("POST", "/deck/reset", JSONObject())
 

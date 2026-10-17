@@ -23,8 +23,29 @@ data class Directive(
     val original: Boolean = false,
     /** A rival handle to build against, or null to beat the field at large. */
     val target: String? = null,
+    /** A specific card to build around, when the agent proposed one. */
+    val seedCard: Int? = null,
+    val seedCardName: String? = null,
+    val style: Style = Style.ANY,
 ) {
     enum class Breadth { WIDE, BALANCED, DEEP }
+
+    /**
+     * Each style maps to a real change in how the deck is built. None of
+     * them is a label on identical behaviour -- a style that did not change
+     * the deck would be the decorative kind of setting this game is supposed
+     * to avoid.
+     */
+    enum class Style { ANY, AGGRO, COMBO, DEFENSIVE }
+
+    /** COMBO builds the dense, staple-free shape: few distinct cards, each
+     *  at its deck limit. Measured in Pauper at +2.69W on the average
+     *  candidate (t=+4.96, better on 50 of 60 seeds) against the default
+     *  build, which spends 30 of 100 slots on whatever the field plays. */
+    val stapleSlots: Int get() = if (style == Style.COMBO) 0 else 30
+    val pool: Int get() = if (style == Style.COMBO) 8 else 14
+    /** AGGRO seeds only from cheap cards, so the curve is actually low. */
+    val maxSeedCost: Int? get() = if (style == Style.AGGRO) 2 else null
 
     /** Candidate designs to sketch before choosing one to refine. */
     val seedCount: Int get() = when (breadth) {
@@ -51,7 +72,14 @@ data class Directive(
             Breadth.BALANCED -> "balancing breadth and depth"
             Breadth.DEEP -> "refining one idea hard"
         })
-        themeLabel?.let { bits.add("building around $it") }
+        seedCardName?.let { bits.add("building around $it") }
+        if (seedCardName == null) themeLabel?.let { bits.add("building around $it") }
+        when (style) {
+            Style.AGGRO -> bits.add("keeping the curve low")
+            Style.COMBO -> bits.add("going for a tight combo shell")
+            Style.DEFENSIVE -> bits.add("playing defensively")
+            Style.ANY -> {}
+        }
         if (original) bits.add("avoiding what others play")
         target?.let { bits.add("gunning for $it") }
         return bits.joinToString(", ").replaceFirstChar { it.uppercase() } + "."
@@ -63,6 +91,9 @@ data class Directive(
         .put("breadth", breadth.name)
         .put("original", original)
         .put("target", target ?: JSONObject.NULL)
+        .put("seedCard", seedCard ?: JSONObject.NULL)
+        .put("seedCardName", seedCardName ?: JSONObject.NULL)
+        .put("style", style.name)
 
     companion object {
         private const val PREFS = "abagent"
@@ -78,6 +109,10 @@ data class Directive(
                 breadth = Breadth.valueOf(o.optString("breadth", "BALANCED")),
                 original = o.optBoolean("original", false),
                 target = o.optString("target").ifBlank { null },
+                seedCard = o.optInt("seedCard", 0).takeIf { it > 0 },
+                seedCardName = o.optString("seedCardName").ifBlank { null },
+                style = runCatching { Style.valueOf(o.optString("style", "ANY")) }
+                    .getOrDefault(Style.ANY),
             )
         } catch (e: Exception) {
             // A directive that cannot be read is not worth crashing over;

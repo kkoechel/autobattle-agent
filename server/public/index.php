@@ -168,10 +168,15 @@ if ($path === 'standings' && $method === 'GET') {
            FROM results r JOIN players p ON p.id = r.player_id
           WHERE r.round_id = ? ORDER BY r.placement');
     $st->execute([$rd['id']]);
+    // The ban list rides along here. The client needs it to notice that a
+    // card in the player's deck has been banned, and the only other way to
+    // get it is GET /cards, which is a megabyte of catalogue -- far too much
+    // to pull on every refresh for a list that is usually empty.
     reply(['ok' => true,
            'round' => ['id' => (int)$rd['id'], 'finished_at' => $rd['finished_at'],
                        'decks' => (int)$rd['n_decks'], 'seeds' => (int)$rd['seeds'],
                        'next_at' => next_round_at()],
+           'banned' => banned_ids(),
            'standings' => $st->fetchAll()]);
 }
 
@@ -270,6 +275,56 @@ if ($path === 'starters' && $method === 'POST') {
         fail(500, 'could not store starters: ' . $e->getMessage());
     }
     reply(['ok' => true, 'starters' => count($rows)]);
+}
+
+// ---- GET /idea ----------------------------------------------------------
+// A specific card the agent could build around, with a reason.
+//
+// Proposed HERE rather than in the app because naming a card needs the
+// catalogue, and the only client route to that is GET /cards -- a megabyte,
+// to pick one name. The server already holds it.
+//
+// Preference order is the whole point: a card NOBODY in the league plays is
+// a more interesting suggestion than a card everyone plays, and a card with
+// a real tag family behind it can actually be built around, where one with
+// no relatives produces a pile of unrelated staples.
+if ($path === 'idea' && $method === 'GET') {
+    require_player();
+    $cards = catalogue();
+    $banned = array_flip(banned_ids());
+
+    $played = [];
+    foreach (db()->query('SELECT cards_json FROM decks')->fetchAll(PDO::FETCH_COLUMN) as $j) {
+        foreach (json_decode((string)$j, true) ?: [] as $e) {
+            $played[(int)$e['card_id']] = true;
+        }
+    }
+    // How many other cards share a tag with this one -- a cheap proxy for
+    // "is there a deck here".
+    $tagCount = [];
+    foreach ($cards as $c) {
+        foreach (($c['tags'] ?? []) as $t) {
+            $tagCount[$t] = ($tagCount[$t] ?? 0) + 1;
+        }
+    }
+
+    $pool = [];
+    foreach ($cards as $id => $c) {
+        if (isset($banned[$id]) || isset($played[$id])) continue;
+        if ((int)($c['deck_limit'] ?? 0) <= 0) continue;
+        if (trim((string)($c['rules_text'] ?? '')) === '') continue;
+        $best = 0;
+        foreach (($c['tags'] ?? []) as $t) $best = max($best, $tagCount[$t] ?? 0);
+        if ($best < 25) continue;          // not enough relatives to build with
+        $pool[] = ['id' => $id, 'name' => $c['name'], 'family' => $best,
+                   'rarity' => $c['rarity'] ?? '', 'text' => $c['rules_text'] ?? ''];
+    }
+    if (!$pool) fail(404, 'no unplayed card worth suggesting right now');
+    $pick = $pool[random_int(0, count($pool) - 1)];
+    reply(['ok' => true, 'card_id' => $pick['id'], 'name' => $pick['name'],
+           'rarity' => $pick['rarity'],
+           'text' => mb_substr((string)$pick['text'], 0, 160),
+           'reason' => 'Nobody in the league is playing it.']);
 }
 
 // ---- GET /privacy -------------------------------------------------------
