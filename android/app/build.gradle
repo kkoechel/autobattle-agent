@@ -2,6 +2,21 @@ apply plugin: 'com.android.application'
 apply plugin: 'org.jetbrains.kotlin.android'
 apply plugin: 'org.jetbrains.kotlin.plugin.compose'
 
+// Release signing, mirroring autobattle-mobile. keystore.properties and the
+// .jks itself stay OUT of git; the build falls back to unsigned when they are
+// absent so a clean checkout still builds a debug APK.
+//
+// Deliberately reuses autobattle-mobile's keystore rather than minting a new
+// one: under Play App Signing this is only the UPLOAD key (Google holds the
+// real signing key), so it is one secret to protect instead of two, it is
+// already backed up, and it has already been through Android developer
+// verification once.
+def keystorePropertiesFile = rootProject.file('keystore.properties')
+def keystoreProperties = new Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
 android {
     namespace 'online.autobattle.agent'
     compileSdk 36
@@ -25,6 +40,24 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = '17' }
+
+    signingConfigs {
+        release {
+            if (keystorePropertiesFile.exists()) {
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig keystorePropertiesFile.exists() ? signingConfigs.release : null
+            minifyEnabled false
+        }
+    }
 
     buildFeatures { compose true }
 }

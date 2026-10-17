@@ -14,3 +14,9 @@ android/local.properties
 # A committed copy silently drifts from the engine it was cut from, and it
 # carries a digest that must match what the game's own validator produces.
 android/app/libs/*.aar
+
+# Release signing — never commit these.
+android/keystore.properties
+*.jks
+*.keystore
+android/.kotlin/

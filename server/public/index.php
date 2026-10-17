@@ -176,6 +176,19 @@ if ($path === 'round' && $method === 'POST') {
     reply(['ok' => true, 'round_id' => $rid, 'decks' => count($rows)]);
 }
 
+// ---- GET /privacy -------------------------------------------------------
+// Served by the front controller as well as directly, so both /privacy and
+// /privacy.html work -- Play stores whichever URL is pasted into the console
+// and a 404 on the privacy link is a review rejection.
+if (($path === 'privacy' || $path === 'privacy.html') && $method === 'GET') {
+    $f = __DIR__ . '/privacy.html';
+    if (is_file($f)) {
+        header('Content-Type: text/html; charset=utf-8');
+        readfile($f);
+        exit;
+    }
+}
+
 // ---- GET /health --------------------------------------------------------
 if ($path === 'health' && $method === 'GET') {
     reply(['ok' => true, 'cards' => count(catalogue()),
