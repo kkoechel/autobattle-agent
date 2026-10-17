@@ -1,5 +1,6 @@
 package online.autobattle.agent.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -17,6 +18,7 @@ import online.autobattle.agent.data.Secrets
 import online.autobattle.agent.game.Compete
 import online.autobattle.agent.game.Directive
 import online.autobattle.agent.game.GameClient
+import online.autobattle.agent.game.CardInfo
 import online.autobattle.agent.game.Memory
 import online.autobattle.agent.game.Training
 import online.autobattle.agent.game.TrainingService
@@ -50,13 +52,19 @@ fun ArenaPane(modifier: Modifier = Modifier) {
     val finished by Training.result.collectAsState()
     var standings by remember { mutableStateOf<JSONObject?>(null) }
     var myDeck by remember { mutableStateOf<JSONObject?>(null) }
-    var names by remember { mutableStateOf<Map<Int, String>>(emptyMap()) }
+    var cardsById by remember { mutableStateOf<Map<Int, CardInfo>>(emptyMap()) }
+    var showCard by remember { mutableStateOf<CardInfo?>(null) }
     var showDeck by remember { mutableStateOf(false) }
     var loaded by remember { mutableStateOf(false) }
     var confirmReset by remember { mutableStateOf(false) }
     var directive by remember { mutableStateOf(Directive.load(ctx)) }
     var mem by remember { mutableStateOf(Memory.load(ctx)) }
     var idea by remember { mutableStateOf<JSONObject?>(null) }
+    // handle -> that player's current deck, so a rival's list can be opened
+    // from the standings without another request.
+    var field by remember { mutableStateOf<Map<String, JSONObject>>(emptyMap()) }
+    var openDeck by remember { mutableStateOf<String?>(null) }
+    var myForm by remember { mutableStateOf<JSONObject?>(null) }
 
     // Standings and the player's own deck only. Card NAMES are a ~1MB
     // catalogue, and fetching them here made the whole screen wait on a
@@ -69,11 +77,28 @@ fun ArenaPane(modifier: Modifier = Modifier) {
         runCatching {
             withContext(Dispatchers.IO) {
                 val c = GameClient(token)
-                c.standings() to (if (token != null) runCatching { c.me() }.getOrNull() else null)
+                val st = c.standings()
+                val mine = if (token != null) runCatching { c.me() }.getOrNull() else null
+                // Everyone's decks and everyone's form, in the same refresh:
+                // both are small, and fetching them on demand would put a
+                // spinner behind a tap that should feel instant.
+                val f = if (token != null) runCatching { c.field() }.getOrNull() else null
+                val lb = if (token != null) runCatching { c.leaderboard() }.getOrNull() else null
+                Triple(st, mine, f to lb)
             }
-        }.onSuccess { (st, mine) ->
+        }.onSuccess { (st, mine, extra) ->
             standings = st
             myDeck = mine?.optJSONObject("deck")
+            val (f, lb) = extra
+            if (f != null) {
+                field = (0 until f.length()).associate {
+                    val d = f.getJSONObject(it); d.optString("handle") to d
+                }
+            }
+            if (lb != null) {
+                myForm = (0 until lb.length()).map { lb.getJSONObject(it) }
+                    .firstOrNull { it.optString("handle") == handle }
+            }
             // Remember where we stood, so next time the agent can notice it
             // has CHANGED. This is the whole basis of the triggered
             // questions -- without it the agent cannot tell a slip from a
@@ -94,11 +119,11 @@ fun ArenaPane(modifier: Modifier = Modifier) {
         loaded = true
     }
 
-    /** Names are pulled the first time the player actually opens the list. */
+    /** The catalogue is pulled the first time a card actually needs showing. */
     suspend fun ensureNames() {
-        if (names.isNotEmpty()) return
-        runCatching { withContext(Dispatchers.IO) { GameClient(token).cardNames() } }
-            .onSuccess { names = it }
+        if (cardsById.isNotEmpty()) return
+        runCatching { withContext(Dispatchers.IO) { GameClient(token).cardIndex() } }
+            .onSuccess { cardsById = it }
     }
 
     LaunchedEffect(token) { refresh() }
@@ -185,6 +210,18 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                     Column(Modifier.padding(14.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text(q.text, style = MaterialTheme.typography.bodyLarge)
+                        // The agent names a card; the player must be able to
+                        // look at it before answering.
+                        idea?.optInt("card_id")?.takeIf {
+                            it > 0 && q.id == "idea-card"
+                        }?.let { cid ->
+                            TextButton(onClick = {
+                                scope.launch {
+                                    ensureNames()
+                                    cardsById[cid]?.let { c -> showCard = c }
+                                }
+                            }) { Text("See ${idea?.optString("name") ?: "the card"}") }
+                        }
                         for (c in q.choices) {
                             OutlinedButton(
                                 modifier = Modifier.fillMaxWidth(),
@@ -260,6 +297,8 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                     color = MaterialTheme.colorScheme.primary)
             }
 
+        showCard?.let { c -> CardSheet(c) { showCard = null } }
+
         if (confirmReset) {
             AlertDialog(
                 onDismissRequest = { confirmReset = false },
@@ -320,9 +359,12 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                             horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text("${e.optInt("quantity")}x",
                                 style = MaterialTheme.typography.bodySmall)
-                            Text(names[id] ?: "loading…",
+                            Text(cardsById[id]?.name ?: "loading…",
+                                Modifier.clickable {
+                                    cardsById[id]?.let { c -> showCard = c }
+                                },
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                color = MaterialTheme.colorScheme.primary)
                         }
                     }
                 }
@@ -347,6 +389,15 @@ fun ArenaPane(modifier: Modifier = Modifier) {
             // Without this the table looks frozen: a player trains, submits,
             // and then stares at an unchanged standing with nothing saying a
             // round is coming.
+            myForm?.let { f ->
+                val n = f.optInt("rounds")
+                if (n >= 2) {
+                    Text("You: ${"%.1f".format(f.optDouble("avg_place"))} average " +
+                        "place over the last $n rounds, best ${f.optInt("best_place")}.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary)
+                }
+            }
             round?.optString("next_at")?.takeIf { it.isNotBlank() }?.let { nx ->
                 // Relative, not "03:17 UTC". A player holding a phone should
                 // not have to do timezone arithmetic to find out whether it
@@ -357,8 +408,13 @@ fun ArenaPane(modifier: Modifier = Modifier) {
             }
             for (i in 0 until rows.length()) {
                 val r = rows.getJSONObject(i)
-                val mine = r.optString("handle") == handle
-                Row(Modifier.fillMaxWidth(),
+                val who = r.optString("handle")
+                val mine = who == handle
+                Row(Modifier.fillMaxWidth()
+                    .clickable {
+                        openDeck = if (openDeck == who) null else who
+                        if (openDeck != null) scope.launch { ensureNames() }
+                    },
                     horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("${r.optInt("placement")}.",
                         style = MaterialTheme.typography.bodyMedium,
@@ -374,6 +430,28 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                     }
                     Text("${r.optInt("wins")}-${r.optInt("losses")}-${r.optInt("draws")}",
                         style = MaterialTheme.typography.bodyMedium)
+                }
+                if (openDeck == who) {
+                    val cards = field[who]?.optJSONArray("cards")
+                    if (cards == null) {
+                        Text("    deck not available", style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        for (e in (0 until cards.length()).map { cards.getJSONObject(it) }
+                            .sortedByDescending { it.optInt("quantity") }) {
+                            Row(Modifier.fillMaxWidth().padding(start = 22.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text("${e.optInt("quantity")}x",
+                                    style = MaterialTheme.typography.bodySmall)
+                                Text(cardsById[e.optInt("card_id")]?.name ?: "loading…",
+                                    Modifier.clickable {
+                                        cardsById[e.optInt("card_id")]?.let { c -> showCard = c }
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                    }
                 }
             }
         }

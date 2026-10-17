@@ -52,15 +52,14 @@ class GameClient(private val token: String?, private val base: String = BASE) {
 
     fun me(): JSONObject = call("GET", "/me")
 
-    /** Card id -> display name, for showing a deck the player can read. */
-    fun cardNames(): Map<Int, String> {
+    /**
+     * Card id -> everything needed to show a card. One fetch serves both the
+     * deck lists and the card popups; pulling the catalogue twice for names
+     * and then details would be a megabyte each time.
+     */
+    fun cardIndex(): Map<Int, online.autobattle.agent.game.CardInfo> {
         val (arr, _) = cards()
-        val out = HashMap<Int, String>(arr.length())
-        for (i in 0 until arr.length()) {
-            val c = arr.getJSONObject(i)
-            out[c.getInt("id")] = c.optString("name", "#${c.getInt("id")}")
-        }
-        return out
+        return CardIndex.parse(arr)
     }
 
     /**
@@ -83,6 +82,13 @@ class GameClient(private val token: String?, private val base: String = BASE) {
 
     /** A card the agent could suggest building around, chosen server-side. */
     fun idea(): JSONObject = call("GET", "/idea")
+
+    /**
+     * Form over a window of recent rounds. One round is noisy enough that a
+     * player cannot tell improvement from luck by looking at it.
+     */
+    fun leaderboard(rounds: Int = 48): JSONArray =
+        call("GET", "/leaderboard?rounds=$rounds").getJSONArray("table")
 
     /** Throw the current deck away and take a fresh starter. */
     fun resetDeck(): JSONObject = call("POST", "/deck/reset", JSONObject())

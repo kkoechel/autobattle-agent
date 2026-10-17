@@ -180,6 +180,55 @@ if ($path === 'standings' && $method === 'GET') {
            'standings' => $st->fetchAll()]);
 }
 
+// ---- GET /leaderboard ---------------------------------------------------
+// Form over time, not a snapshot.
+//
+// One round is 21 seeds against a handful of opponents, so a placement
+// bounces around for reasons that have nothing to do with the deck. A player
+// watching only the latest round cannot tell improvement from noise, which
+// makes the one thing the game asks of them -- did my change help? --
+// unanswerable.
+//
+// Averaged over a window of recent rounds instead. Average WINS is reported
+// alongside average placement because placement silently depends on how many
+// people are playing: finishing 5th of 11 is better than 5th of 6, and as
+// the league grows every existing player's average placement would drift
+// without anyone's deck changing.
+if ($path === 'leaderboard' && $method === 'GET') {
+    $window = (int)($_GET['rounds'] ?? 48);        // 48 rounds ~= 12 hours
+    $window = max(1, min(500, $window));
+    $latest = (int)db()->query(
+        'SELECT COALESCE(MAX(id),0) FROM rounds WHERE finished_at IS NOT NULL')
+        ->fetchColumn();
+    $since = $latest - $window;
+    $st = db()->prepare(
+        'SELECT p.handle, p.is_bot,
+                COUNT(*)            AS rounds,
+                AVG(r.placement)    AS avg_place,
+                AVG(r.wins)         AS avg_wins,
+                MIN(r.placement)    AS best_place,
+                MAX(r.revision)     AS revision
+           FROM results r JOIN players p ON p.id = r.player_id
+          WHERE r.round_id > ?
+          GROUP BY p.id
+          ORDER BY avg_place ASC, avg_wins DESC');
+    $st->execute([$since]);
+    $rows = [];
+    foreach ($st->fetchAll() as $r) {
+        $rows[] = [
+            'handle'     => $r['handle'],
+            'is_bot'     => (int)$r['is_bot'],
+            'rounds'     => (int)$r['rounds'],
+            'avg_place'  => round((float)$r['avg_place'], 2),
+            'avg_wins'   => round((float)$r['avg_wins'], 2),
+            'best_place' => (int)$r['best_place'],
+            'revision'   => (int)$r['revision'],
+        ];
+    }
+    reply(['ok' => true, 'window' => $window, 'latest_round' => $latest,
+           'table' => $rows]);
+}
+
 // ---- GET /cards ---------------------------------------------------------
 // The forked catalogue plus the ban list. Served whole: the phone needs
 // effects_json and stats_json to run the engine, so a slim variant would
