@@ -1,0 +1,9 @@
+[Unit]
+Description=Sync the forked card catalogue hourly
+
+[Timer]
+OnCalendar=*:09
+Persistent=true
+
+[Install]
+WantedBy=timers.target

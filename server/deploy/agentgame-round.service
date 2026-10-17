@@ -1,0 +1,29 @@
+[Unit]
+Description=AutoBattle Agent game — score one round-robin over every player's deck
+After=network-online.target mysql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/games/agentgame
+EnvironmentFile=/etc/agentgame-round.env
+
+ExecStart=/usr/bin/python3 -u /var/www/games/agentgame/bin/round.py
+
+# Below the live games on this box and below the deck agents, but above the
+# background sweeps: a round is small and players are waiting on it.
+Nice=14
+CPUWeight=40
+MemoryMax=500M
+TimeoutStartSec=1200
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/www/games/agentgame/var
+
+[Install]
+WantedBy=multi-user.target

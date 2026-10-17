@@ -1,0 +1,7 @@
+[Unit]
+Description=AutoBattle Agent game — pull the card catalogue from the main game
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /var/www/games/agentgame/bin/sync_cards.sh
+Nice=19

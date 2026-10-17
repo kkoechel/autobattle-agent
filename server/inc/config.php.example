@@ -1,0 +1,10 @@
+<?php
+// Copy to config.php on the server and fill in. Never committed.
+return [
+    'db_host'     => '127.0.0.1',
+    'db_name'     => 'agentgame',
+    'db_user'     => 'agentgame',
+    'db_pass'     => 'CHANGE-ME',
+    // Guards POST /round. bin/round.py sends it as X-Admin-Token.
+    'admin_token' => 'CHANGE-ME',
+];

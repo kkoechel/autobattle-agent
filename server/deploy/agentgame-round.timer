@@ -1,0 +1,14 @@
+[Unit]
+Description=Score an Agent game round every 15 minutes
+
+[Timer]
+# Cost is O(decks^2): 8 decks is ~1.2k matches and seconds, 50 decks is ~51k
+# and minutes, 100 decks is ~208k and would not fit in this window at all.
+# That is the point at which scoring has to shard out to the phones; until
+# then this is the cheapest correct thing.
+OnCalendar=*:02/15
+Persistent=true
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target
