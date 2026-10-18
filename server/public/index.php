@@ -371,6 +371,14 @@ if ($path === 'idea' && $method === 'GET') {
     $pool = [];
     foreach ($cards as $id => $c) {
         if (isset($banned[$id]) || isset($played[$id])) continue;
+        // RETIRED CARDS ARE THE TRAP HERE. This route prefers cards nobody
+        // plays, and a retired card satisfies that by definition -- it CANNOT
+        // be played. 37% of everything it could suggest was retired, so the
+        // agent kept offering to build around cards that are not in the game.
+        // Mirrors Cards.isPlayable on the phone, which is why no deck ever
+        // actually contained one: only the suggestion was wrong.
+        if (!empty($c['is_retired']) || !empty($c['is_vip'])) continue;
+        if (($c['rarity'] ?? '') === 'token') continue;
         if ((int)($c['deck_limit'] ?? 0) <= 0) continue;
         if (trim((string)($c['rules_text'] ?? '')) === '') continue;
         $best = 0;

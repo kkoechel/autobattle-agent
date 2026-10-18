@@ -121,6 +121,13 @@ function deck_problem(array $entries): ?string {
         if (isset($banned[$id])) {
             return "{$cards[$id]['name']} is banned this season";
         }
+        // Checked here as well as on the phone: the client filters retired
+        // cards when it BUILDS, but nothing stopped a deck containing one
+        // from being stored, and a card retired after a deck was saved would
+        // otherwise sit in it indefinitely.
+        if (!empty($cards[$id]['is_retired'])) {
+            return "{$cards[$id]['name']} is retired and cannot be played";
+        }
         $limit = (int)($cards[$id]['deck_limit'] ?? 0);
         if ($limit <= 0) return "{$cards[$id]['name']} cannot be put in a deck";
         if ($q > $limit) {
