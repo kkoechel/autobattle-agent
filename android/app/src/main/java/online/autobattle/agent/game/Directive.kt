@@ -85,14 +85,25 @@ data class Directive(
         return bits.joinToString(", ").replaceFirstChar { it.uppercase() } + "."
     }
 
+    /**
+     * Null fields are OMITTED, not written as JSON null.
+     *
+     * Android's JSONObject.optString returns the STRING "null" for a JSON
+     * null, and "null" is not blank -- so `optString(k).ifBlank { null }`
+     * read every absent field back as the four-character word. The brief
+     * then read "Trying lots of ideas, building around null, gunning for
+     * null." on every relaunch, because saving and reloading was enough to
+     * turn absent into present. Omitting the key makes optString return its
+     * real default.
+     */
     fun toJson(): JSONObject = JSONObject()
-        .put("theme", theme ?: JSONObject.NULL)
-        .put("themeLabel", themeLabel ?: JSONObject.NULL)
+        .putOpt("theme", theme)
+        .putOpt("themeLabel", themeLabel)
         .put("breadth", breadth.name)
         .put("original", original)
-        .put("target", target ?: JSONObject.NULL)
-        .put("seedCard", seedCard ?: JSONObject.NULL)
-        .put("seedCardName", seedCardName ?: JSONObject.NULL)
+        .putOpt("target", target)
+        .putOpt("seedCard", seedCard)
+        .putOpt("seedCardName", seedCardName)
         .put("style", style.name)
 
     companion object {
@@ -104,13 +115,13 @@ data class Directive(
                 .getString(KEY, null) ?: return Directive()
             val o = JSONObject(raw)
             Directive(
-                theme = o.optString("theme").ifBlank { null },
-                themeLabel = o.optString("themeLabel").ifBlank { null },
+                theme = str(o, "theme"),
+                themeLabel = str(o, "themeLabel"),
                 breadth = Breadth.valueOf(o.optString("breadth", "BALANCED")),
                 original = o.optBoolean("original", false),
-                target = o.optString("target").ifBlank { null },
+                target = str(o, "target"),
                 seedCard = o.optInt("seedCard", 0).takeIf { it > 0 },
-                seedCardName = o.optString("seedCardName").ifBlank { null },
+                seedCardName = str(o, "seedCardName"),
                 style = runCatching { Style.valueOf(o.optString("style", "ANY")) }
                     .getOrDefault(Style.ANY),
             )
@@ -118,6 +129,18 @@ data class Directive(
             // A directive that cannot be read is not worth crashing over;
             // the default is a perfectly playable agent.
             Directive()
+        }
+
+        /**
+         * An optional string, read defensively. Handles both JSON null and
+         * the literal "null" that older saves already contain -- a phone
+         * that has been running since before the fix repairs itself the
+         * first time its directive is loaded, without anyone clearing data.
+         */
+        private fun str(o: JSONObject, key: String): String? {
+            if (o.isNull(key)) return null
+            val v = o.optString(key, "")
+            return if (v.isBlank() || v == "null") null else v
         }
 
         fun save(ctx: Context, d: Directive) {

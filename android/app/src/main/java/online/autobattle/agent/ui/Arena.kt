@@ -56,6 +56,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
     var myDeck by remember { mutableStateOf<JSONObject?>(null) }
     var cardsById by remember { mutableStateOf<Map<Int, CardInfo>>(emptyMap()) }
     var showCard by remember { mutableStateOf<CardInfo?>(null) }
+    var showThemes by remember { mutableStateOf(false) }
     var keywords by remember { mutableStateOf<Map<String, Keyword>>(emptyMap()) }
     var showDeck by remember { mutableStateOf(false) }
     var loaded by remember { mutableStateOf(false) }
@@ -311,6 +312,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                     Text(directive.summary(), Modifier.weight(1f),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton(onClick = { showThemes = true }) { Text("Theme") }
                     TextButton(onClick = {
                         mem = mem.copy(answered = emptySet(), dismissed = emptySet())
                         Memory.save(ctx, mem)
@@ -353,6 +355,55 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 cardsById = cardsById,
                 onOpenCard = { showCard = it },
             )
+        }
+
+        // Asking what the agent should build, instead of waiting to be asked.
+        // The agent proposes a theme on its own, but only one at a time and
+        // only once per scored round, so a player who already knows they want
+        // poison had no way to say so.
+        if (showThemes) {
+            AlertDialog(
+                onDismissRequest = { showThemes = false },
+                title = { Text("What should your agent build around?") },
+                text = {
+                    Column(Modifier.verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("It still picks the other 99 cards on merit — a " +
+                            "theme decides what the deck is built around, not " +
+                            "what may go in it.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        fun choose(tag: String?, label: String?) {
+                            directive = directive.copy(
+                                theme = tag, themeLabel = label,
+                                seedCard = null, seedCardName = null)
+                            Directive.save(ctx, directive)
+                            mem = mem.copy(triedThemes = mem.triedThemes +
+                                listOfNotNull(tag))
+                            Memory.save(ctx, mem)
+                            showThemes = false
+                        }
+                        TextButton(onClick = { choose(null, null) },
+                            modifier = Modifier.fillMaxWidth()) {
+                            Text("Whatever looks best",
+                                modifier = Modifier.fillMaxWidth(),
+                                fontWeight = if (directive.theme == null)
+                                    FontWeight.Bold else FontWeight.Normal)
+                        }
+                        for ((tag, label) in Questions.THEMES) {
+                            TextButton(onClick = { choose(tag, label) },
+                                modifier = Modifier.fillMaxWidth()) {
+                                Text(label.replaceFirstChar { it.uppercase() },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    fontWeight = if (directive.theme == tag)
+                                        FontWeight.Bold else FontWeight.Normal)
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showThemes = false }) { Text("Close") }
+                })
         }
 
         if (confirmReset) {

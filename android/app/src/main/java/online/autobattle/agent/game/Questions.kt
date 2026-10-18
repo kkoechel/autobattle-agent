@@ -41,10 +41,33 @@ data class Question(
 
 object Questions {
 
+    /**
+     * Themes a player can ask for, and the agent can propose.
+     *
+     * Every tag here has at least 25 playable cards in the live catalogue,
+     * counted after retired, vip and token cards are excluded -- below that
+     * there is no deck to build and the generator just returns staples with
+     * a theme-coloured seed. Counts at the time of writing are in the
+     * comments, so a tag that shrinks can be spotted rather than silently
+     * producing worse decks.
+     */
     val THEMES: List<Pair<String, String>> = listOf(
-        "damage" to "damage", "poison" to "poison", "honor" to "honour",
-        "shield" to "defence", "mill" to "milling", "token-copy" to "token swarm",
-        "structure" to "structures", "draw" to "card draw",
+        "damage" to "damage",            // 141
+        "draw" to "card draw",           // 133
+        "token-copy" to "token swarm",   // 126
+        "honor" to "honour",             // 110
+        "energy" to "energy ramp",       // 104
+        "life" to "lifegain",            //  80
+        "poison" to "poison",            //  79
+        "destroy" to "removal",          //  79
+        "shield" to "defence",           //  75
+        "mill" to "milling",             //  64
+        "recycle" to "recursion",        //  64
+        "structure" to "structures",     //  64
+        "tutor" to "tutoring",           //  34
+        "sacrifice" to "sacrifice",      //  33
+        "exile" to "exile",              //  29
+        "dishonor" to "dishonour",       //  26
     )
 
     private val STYLES = listOf(

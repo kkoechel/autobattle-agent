@@ -32,7 +32,10 @@ data class Memory(
     fun toJson(): JSONObject = JSONObject()
         .put("answered", JSONArray(answered.toList()))
         .put("lastPlacement", lastPlacement)
-        .put("lastLeader", lastLeader ?: JSONObject.NULL)
+        // Omitted rather than JSON null: optString would read it back
+        // as the string "null", which then compares unequal to every real
+        // handle and makes the "you passed someone" trigger misfire.
+        .putOpt("lastLeader", lastLeader)
         .put("barrenRuns", barrenRuns)
         .put("triedThemes", JSONArray(triedThemes.toList()))
         .put("lastIdeaRound", lastIdeaRound)
@@ -54,7 +57,8 @@ data class Memory(
             Memory(
                 answered = strings(o, "answered"),
                 lastPlacement = o.optInt("lastPlacement", 0),
-                lastLeader = o.optString("lastLeader").ifBlank { null },
+                lastLeader = o.optString("lastLeader", "")
+                    .takeIf { it.isNotBlank() && it != "null" },
                 barrenRuns = o.optInt("barrenRuns", 0),
                 triedThemes = strings(o, "triedThemes"),
                 lastIdeaRound = o.optInt("lastIdeaRound", 0),
