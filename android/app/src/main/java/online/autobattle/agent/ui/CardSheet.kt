@@ -17,12 +17,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import online.autobattle.agent.R
 import online.autobattle.agent.game.CardIndex
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.ui.text.SpanStyle
@@ -108,20 +110,24 @@ fun CardSheet(
                 }
             }
 
-            // .cf-art -- shown only when there IS art. A card with no image
-            // was rendering as a tall black void, which reads as a broken
-            // image rather than as a card that simply has none.
-            if (card.imageUrl != null) {
-                Box(
-                    Modifier.fillMaxWidth().height(172.dp).background(Color(0x47000000)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    when {
-                        art != null -> Image(art!!, card.name, Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Crop)
-                        failed -> Text("✦", color = Color(0xFF3A3A44), fontSize = 44.sp)
-                        else -> Text("…", color = Color(0xFF3A3A44), fontSize = 28.sp)
-                    }
+            // .cf-art -- always drawn. 220 of the 1,066 cards have no image
+            // yet and art is added per card over time, so a card without one
+            // falls back to the game's own card back rather than the tall
+            // black void that read as a broken image. A download that fails
+            // gets it too. The back is bundled rather than fetched: it is the
+            // one image every no-art card shows, and a placeholder that can
+            // itself 404 is worse than no placeholder.
+            Box(
+                Modifier.fillMaxWidth().height(172.dp).background(Color(0x47000000)),
+                contentAlignment = Alignment.Center,
+            ) {
+                when {
+                    art != null -> Image(art!!, card.name, Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop)
+                    card.imageUrl == null || failed -> Image(
+                        painterResource(R.drawable.card_back), null,
+                        Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    else -> Text("…", color = Color(0xFF3A3A44), fontSize = 28.sp)
                 }
             }
 
