@@ -194,29 +194,30 @@ fun ArenaPane(modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
 
         if (token == null) {
-            Text("Join the Agent league", style = MaterialTheme.typography.titleMedium)
+            Text("“Before we proceed \u2014 by what name shall I record you?”",
+                style = MaterialTheme.typography.titleMedium)
             // A stored handle with no token means this player WAS in the
             // league and their account is gone -- a deleted player, or a
             // league that was rebuilt under them. Said plainly, and derived
             // from persisted state rather than from a transient note, which
             // vanished the moment the app was relaunched.
             if (handle.isNotBlank()) {
-                Text("You are signed out. \"$handle\" is no longer in the " +
-                    "league, so your decks and standing are gone. Joining " +
-                    "again starts you with a fresh deck.",
+                Text("“You have been struck from the register. \"$handle\" is " +
+                    "no longer in the league, and its decks and standing " +
+                    "went with it. Joining again opens a fresh record.”",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.error)
             }
-            Text("Pick a handle. Your agent designs and tests decks on this " +
-                "phone, then plays the best one against everyone else's " +
-                "agents. A new round is scored every 15 minutes.",
+            Text("“I design and test decks on this device, then enter the " +
+                "strongest against the other agents. The league is scored " +
+                "every fifteen minutes.”",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             OutlinedTextField(
                 value = typed, onValueChange = { typed = it },
                 singleLine = true, enabled = !busy,
                 label = { Text("Handle") },
-                supportingText = { Text("3-24 characters. Everyone can see it.") },
+                supportingText = { Text("3-24 characters. It will appear in the standings.") },
                 modifier = Modifier.fillMaxWidth())
             GameButton(enabled = !busy && typed.trim().length >= 3,
                 onClick = {
@@ -233,7 +234,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                         }.onFailure { error = readable(it) }
                         uiBusy = false
                     }
-                }, text = "Join")
+                }, text = "Record it")
         } else {
             Row(verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -244,8 +245,8 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onBackground,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
-                GameLink("Refresh", enabled = !busy) { scope.launch { refresh() } }
-                GameLink("Start over", enabled = !busy) { confirmReset = true }
+                GameLink("Any news?", enabled = !busy) { scope.launch { refresh() } }
+                GameLink("Start again", enabled = !busy) { confirmReset = true }
             }
 
             // The agent asks; the player answers. This is the whole decision
@@ -256,16 +257,31 @@ fun ArenaPane(modifier: Modifier = Modifier) {
             } ?: emptySet()
             val q = if (busy) null else
                 Questions.next(directive, mem, handle, standings, deckIds, idea)
+            val mood = moodFor(
+                working = busy,
+                asking = q != null,
+                barrenRuns = mem.barrenRuns,
+                placement = standings?.optJSONArray("standings")?.let { rows ->
+                    (0 until rows.length()).map { rows.getJSONObject(it) }
+                        .firstOrNull { it.optString("handle") == handle }
+                        ?.optInt("placement")
+                },
+                lastPlacement = mem.lastPlacement.takeIf { it > 0 },
+            )
+
             if (q != null) {
                 GamePanel {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        AgentPortrait(mood)
                         Text(q.text, style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onBackground)
+                    }
                         // The agent names a card; the player must be able to
                         // look at it before answering.
                         idea?.optInt("card_id")?.takeIf {
                             it > 0 && q.id == "idea-card"
                         }?.let { cid ->
-                            GameLink("See ${idea?.optString("name") ?: "the card"}") {
+                            GameLink("Show me ${idea?.optString("name") ?: "the card"}") {
                                 scope.launch {
                                     ensureNames()
                                     cardsById[cid]?.let { c -> showCard = c }
@@ -304,13 +320,15 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                                 })
                         }
                 }
-            } else if (!busy) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    AgentPortrait(mood, size = 48.dp)
                     Text(directive.summary(), Modifier.weight(1f),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    GameLink("Theme") { showThemes = true }
-                    GameLink("Re-brief") {
+                    GameLink("Build around…", enabled = !busy) { showThemes = true }
+                    GameLink("Let's talk", enabled = !busy) {
                         mem = mem.copy(answered = emptySet(), dismissed = emptySet())
                         Memory.save(ctx, mem)
                     }
@@ -332,13 +350,12 @@ fun ArenaPane(modifier: Modifier = Modifier) {
 
             if (awaitingRound) {
                 GamePanel {
-                    Text("Your deck has not played a round yet.",
+                    Text("“It has not been played yet.”",
                         style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.primary)
-                    Text("Every deck in the league is scored together, so " +
-                        "yours gets its result at the next round. Building " +
-                        "another one now would throw this one away before " +
-                        "you have seen it play.",
+                    Text("“The league is scored as a whole, so your result " +
+                        "arrives with the next round. Were I to build another " +
+                        "now, this one would be discarded unexamined.”",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                     // Its own sentence. Appending it lower-cased read as
@@ -350,8 +367,8 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     GameButton(
-                        text = if (trialBusy) (trialStep ?: "Playing…")
-                               else "Try it against the field now",
+                        text = if (trialBusy) (trialStep ?: "Playing it out…")
+                               else "Show me what it can do",
                         enabled = !trialBusy && !busy,
                         modifier = Modifier.fillMaxWidth()) {
                         error = null; note = null; trial = null; trialBusy = true
@@ -370,17 +387,17 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                     // screen: the note sits below the fold, so the answer to
                     // a button you just pressed scrolled away out of sight.
                     trial?.let { t ->
-                        Text("\"${t.deckName}\" is ahead against ${t.beaten} of " +
-                            "${t.opponents} rivals, behind against ${t.lostTo}" +
-                            (if (t.even > 0) ", level with ${t.even}" else "") + ".",
+                        Text("“${t.deckName} is favourable against ${t.beaten} of " +
+                            "the ${t.opponents}. ${t.lostTo} are unfavourable" +
+                            (if (t.even > 0) ", and ${t.even} could go either way" else "") +
+                            ".”",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.primary)
-                        Text("That is ${"%.1f".format(t.wins)} match wins a round " +
-                            "over ${t.seeds} seeds it has never played" +
-                            (t.worstAgainst?.let { ". Worst matchup: $it" } ?: "") +
-                            ". A rehearsal only — the league scores every deck " +
-                            "itself at the next round, and these are not those " +
-                            "games.",
+                        Text("“That is ${"%.1f".format(t.wins)} wins a round across " +
+                            "${t.seeds} draws it has not seen" +
+                            (t.worstAgainst?.let { ". $it remains the difficulty" } ?: "") +
+                            ". A rehearsal only \u2014 the league plays its own " +
+                            "games at the next round.”",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -389,9 +406,9 @@ fun ArenaPane(modifier: Modifier = Modifier) {
 
             GameButton(
                 text = when {
-                    busy -> "Your agent is working…"
-                    awaitingRound -> "Build a new deck anyway"
-                    else -> "Send your agent to work"
+                    busy -> "Compiling…"
+                    awaitingRound -> "Build another regardless"
+                    else -> "Get to work"
                 },
                 enabled = !busy && !trialBusy, modifier = Modifier.fillMaxWidth()) {
                 error = null; note = null
@@ -439,13 +456,13 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 containerColor = MaterialTheme.colorScheme.surface,
                 shape = RoundedCornerShape(12.dp),
                 onDismissRequest = { showThemes = false },
-                title = { Text("What should your agent build around?") },
+                title = { Text("“What shall I build around?”") },
                 text = {
                     Column(Modifier.verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text("It still picks the other 99 cards on merit — a " +
-                            "theme decides what the deck is built around, not " +
-                            "what may go in it.",
+                        Text("“I will still select the remaining ninety-nine on " +
+                            "merit. A theme governs what the deck is built " +
+                            "around, not what may enter it.”",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                         fun choose(tag: String?, label: String?) {
@@ -487,16 +504,16 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                     }
                 },
                 confirmButton = {
-                    TextButton(onClick = { showThemes = false }) { Text("Close") }
+                    TextButton(onClick = { showThemes = false }) { Text("That's all") }
                 })
         }
 
         if (confirmReset) {
             AlertDialog(
                 onDismissRequest = { confirmReset = false },
-                title = { Text("Start over?") },
-                text = { Text("Your agent throws away its current deck and " +
-                    "takes a fresh one. Your handle and past results are kept.") },
+                title = { Text("“Discard it?”") },
+                text = { Text("“I would discard the present deck and take a " +
+                    "fresh one. Your name and your record remain.”") },
                 confirmButton = {
                     TextButton(onClick = {
                         confirmReset = false; uiBusy = true; error = null; note = null
@@ -513,10 +530,10 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                             }.onFailure { error = readable(it) }
                             uiBusy = false
                         }
-                    }) { Text("Start over") }
+                    }) { Text("Do it") }
                 },
                 dismissButton = {
-                    TextButton(onClick = { confirmReset = false }) { Text("Cancel") }
+                    TextButton(onClick = { confirmReset = false }) { Text("Never mind") }
                 })
         }
 
@@ -529,7 +546,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 HorizontalDivider()
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("Your agent built: ${d.optString("name")}",
+                        Text("“I have built you ${d.optString("name")}.”",
                             style = MaterialTheme.typography.titleSmall)
                         Text("revision ${d.optInt("revision")}",
                             style = MaterialTheme.typography.bodySmall,
@@ -567,7 +584,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
         val s = standings
         val rows = s?.optJSONArray("standings")
         if (!loaded) {
-            Text("Loading the league…",
+            Text("“Let me see where matters stand…”",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else if (rows == null || rows.length() == 0) {
@@ -626,7 +643,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 if (openDeck == who) {
                     val cards = field[who]?.optJSONArray("cards")
                     if (cards == null) {
-                        Text("    deck not available", style = MaterialTheme.typography.bodySmall,
+                        Text("    their deck is not on file", style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else {
                         for (e in (0 until cards.length()).map { cards.getJSONObject(it) }

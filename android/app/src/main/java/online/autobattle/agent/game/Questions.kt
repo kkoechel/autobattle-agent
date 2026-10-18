@@ -100,13 +100,13 @@ object Questions {
             .map { bannedArr!!.getInt(it) }.firstOrNull { it in myDeckCardIds }
         if (hit != null) {
             return Question("banned",
-                "“One of our cards has been banned. The deck is illegal as " +
-                    "it stands. Do you want me to rebuild around what is left, " +
-                    "or start from something fresh?”",
+                "“One of our cards has been struck from the format. The deck " +
+                    "is illegal as it stands. Shall I rebuild around what " +
+                    "remains, or begin from something new?”",
                 listOf(
-                    Choice("Rebuild what we have", "Keeps the current direction " +
-                        "and works around the hole.") { it },
-                    Choice("Start fresh", "Drops the idea and begins again.") {
+                    Choice("Rebuild around it", "Keeps the present direction and " +
+                        "works around the gap.") { it },
+                    Choice("Begin again", "Abandons the idea and starts from nothing.") {
                         it.copy(seedCard = null, seedCardName = null, theme = null,
                             themeLabel = null)
                     },
@@ -118,16 +118,16 @@ object Questions {
             d.target == null && "passed" !in mem.dismissed) {
             val who = leader.optString("handle")
             return Question("passed",
-                "“We have slipped to ${me.optInt("placement")}. $who is ahead " +
-                    "with ${leader.optString("deck_name")}. Do you want me to " +
-                    "build specifically to beat them?”",
+                "“We have slipped to ${me.optInt("placement")}. $who leads " +
+                    "with ${leader.optString("deck_name")}. Shall I build " +
+                    "expressly against them?”",
                 listOf(
-                    Choice("Go after $who", "Targets their deck. Risky: a deck " +
-                        "built to beat one rival often loses ground to the rest.") {
+                    Choice("Go after $who", "Aimed at their deck. A specimen bred " +
+                        "against one rival tends to lose ground to the rest.") {
                         it.copy(target = who)
                     },
-                    Choice("No, beat the field", "Keeps optimising against " +
-                        "everyone, which is what the standings reward.") {
+                    Choice("No, the field entire", "Measured against everyone, " +
+                        "which is what the standings actually reward.") {
                         it.copy(target = null)
                     },
                 ))
@@ -135,66 +135,65 @@ object Questions {
 
         if (mem.barrenRuns >= 2 && "stuck" !in mem.dismissed) {
             return Question("stuck",
-                "“I have tried ${mem.barrenRuns} times now and found nothing " +
-                    "better. I think this deck is as good as it gets. Shall I " +
-                    "change how I am working?”",
+                "“${mem.barrenRuns} attempts, no improvement. I would call " +
+                    "this deck finished. Shall I change my method?”",
                 listOf(
-                    Choice("Try something completely different",
-                        "Throws out the current direction and casts wide.") {
+                    Choice("Something else entirely",
+                        "Discards the present direction and casts wide.") {
                         it.copy(seedCard = null, seedCardName = null, theme = null,
                             themeLabel = null, breadth = Directive.Breadth.WIDE)
                     },
-                    Choice("Dig deeper on this one",
-                        "Fewer designs, far more refinement. Sometimes the next " +
-                            "improvement is just further down.") {
+                    Choice("Deeper on this one",
+                        "Fewer drafts, far more refinement. The next " +
+                            "improvement is sometimes simply further down.") {
                         it.copy(breadth = Directive.Breadth.DEEP)
                     },
-                    Choice("Keep going as we are", "No change.") { it },
+                    Choice("Carry on", "No change to the method.") { it },
                 ))
         }
 
         if (d.target != null && me != null && mem.lastPlacement > 0 &&
             me.optInt("placement") >= mem.lastPlacement && "giveup" !in mem.dismissed) {
             return Question("giveup",
-                "“Targeting ${d.target} has not moved us up. Keep at it?”",
+                "“Pursuing ${d.target} has not moved us up. Persist?”",
                 listOf(
-                    Choice("Stop targeting", "Back to beating the whole field.") {
+                    Choice("Let them be", "Back to the field entire.") {
                         it.copy(target = null)
                     },
-                    Choice("Keep at it", "Some matchups take a few attempts.") { it },
+                    Choice("Persist", "Some matchups take several attempts.") { it },
                 ))
         }
 
         // --- ONBOARDING -----------------------------------------------
         if ("breadth" !in mem.answered) {
             return Question("breadth",
-                "“I can sketch a lot of decks quickly, or take one idea and " +
-                    "refine it properly. I can't do both in one sitting. Which?”",
+                "“I can sketch a great many decks, or take one idea and " +
+                    "refine it properly. Not both in one sitting. Which?”",
                 listOf(
-                    Choice("Try lots of ideas", "Sixty rough designs. Good when " +
-                        "you don't know what you are looking for yet.") {
+                    Choice("Many rough ideas", "Sixty drafts. Sensible when neither " +
+                        "of us yet knows what we are looking for.") {
                         it.copy(breadth = Directive.Breadth.WIDE)
                     },
-                    Choice("Refine one properly", "Eighteen designs, then twelve " +
-                        "rounds of improvement on the best. Refining is where " +
-                        "most of the strength comes from.") {
+                    Choice("One, properly", "Eighteen drafts, then twelve passes of " +
+                        "refinement on the best. Refinement is where most " +
+                        "of the strength is found.") {
                         it.copy(breadth = Directive.Breadth.DEEP)
                     },
-                    Choice("A bit of both", "The middle.") {
+                    Choice("Some of each", "The middle course.") {
                         it.copy(breadth = Directive.Breadth.BALANCED)
                     },
                 ), dismissible = false)
         }
         if ("original" !in mem.answered) {
             return Question("original",
-                "“Should I lean on cards the winning decks already use, or " +
-                    "stay away from them and find something of our own?”",
+                "“Shall I draw on the cards the winning decks already use, " +
+                    "or avoid them and find something of our own?”",
                 listOf(
-                    Choice("Use what works", "Faster to a solid deck. You will " +
-                        "look like everyone else.") { it.copy(original = false) },
-                    Choice("Find our own thing", "Refuses decks that share too " +
-                        "much with any rival. Slower, and the only way to end " +
-                        "up with something nobody has seen.") {
+                    Choice("What is known to work", "Quicker to a sound deck. You " +
+                        "will resemble everyone else.") { it.copy(original = false) },
+                    Choice("Something of our own", "Refuses any deck sharing too " +
+                        "much with a rival. Slower, and the only route to " +
+                        "something nobody has seen.") {
                         it.copy(original = true)
                     },
                 ), dismissible = false)
@@ -208,13 +207,13 @@ object Questions {
         if (idea != null && idea.optInt("card_id") > 0) {
             val nm = idea.optString("name")
             return Question("idea-card",
-                "“Do you want me to build around $nm? ${idea.optString("reason")}”",
+                "“$nm. ${idea.optString("reason")} Shall I investigate?”",
                 listOf(
-                    Choice("Yes, build around $nm", idea.optString("text")) {
+                    Choice("Investigate $nm", idea.optString("text")) {
                         it.copy(seedCard = idea.optInt("card_id"), seedCardName = nm,
                             theme = null, themeLabel = null)
                     },
-                    Choice("Not that one", "Carries on as we are.") { it },
+                    Choice("Not that one", "We carry on as we are.") { it },
                 ))
         }
 
@@ -223,14 +222,14 @@ object Questions {
             val (tag, label) = untried.random()
             val (style, styleWord, styleBlurb) = STYLES.random()
             return Question("idea-theme",
-                "“What if we built a $label $styleWord deck? We have never " +
-                    "tried it.”",
+                "“A $label $styleWord deck. We have never attempted one. " +
+                    "Shall we?”",
                 listOf(
-                    Choice("Let's try it", styleBlurb) {
+                    Choice("Attempt it", styleBlurb) {
                         it.copy(theme = tag, themeLabel = label, style = style,
                             seedCard = null, seedCardName = null)
                     },
-                    Choice("Maybe later", "Carries on as we are.") { it },
+                    Choice("Another time", "We carry on as we are.") { it },
                 ))
         }
         return null

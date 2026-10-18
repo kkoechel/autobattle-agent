@@ -159,11 +159,11 @@ object Compete {
         workers: Int = 4,
         onProgress: (Progress) -> Unit = {},
     ): Trial {
-        onProgress(Progress("Fetching cards", 0, 1))
+        onProgress(Progress("Consulting the catalogue", 0, 1))
         val (cardsJson, _) = client.cards()
         val cat = Catalogue(cardsJson)
 
-        onProgress(Progress("Fetching the field", 0, 1))
+        onProgress(Progress("Examining the field", 0, 1))
         val field = client.field()
         val opponents = opponentsOf(field, myHandle)
         require(opponents.isNotEmpty()) { "there is nobody to play against yet" }
@@ -184,7 +184,7 @@ object Compete {
         // it, which is the same winner's curse the three-block split exists
         // to avoid.
         val block = (0 until seedCount).map { 90_000 + it }
-        onProgress(Progress("Playing the field", 0, 1))
+        onProgress(Progress("Playing it out", 0, 1))
         val s = score(cat, listOf(mine), opponents, block, workers)["me"]
             ?: error("the engine returned no result")
 
@@ -240,11 +240,11 @@ object Compete {
         workers: Int = 4,
         onProgress: (Progress) -> Unit = {},
     ): Outcome {
-        onProgress(Progress("Fetching cards", 0, 1))
+        onProgress(Progress("Consulting the catalogue", 0, 1))
         val (cardsJson, banned) = client.cards()
         val cat = Catalogue(cardsJson)
 
-        onProgress(Progress("Fetching the field", 0, 1))
+        onProgress(Progress("Examining the field", 0, 1))
         val field = client.field()
         val opponents = opponentsOf(field, myHandle)
         require(opponents.isNotEmpty()) { "nobody to play against yet" }
@@ -292,7 +292,7 @@ object Compete {
 
         val built = ArrayList<Archetype.Built>()
         picked.forEachIndexed { i, s ->
-            onProgress(Progress("Designing decks", i + 1, picked.size))
+            onProgress(Progress("Drafting", i + 1, picked.size))
             val b = Archetype.build(s, cat, meta,
                 stapleSlots = directive.stapleSlots, pool = directive.pool)
                 ?: return@forEachIndexed
@@ -329,7 +329,7 @@ object Compete {
             ?.let { t -> opponents.filter { it.name == t } }
             ?.takeIf { it.isNotEmpty() } ?: opponents
 
-        onProgress(Progress("Testing ${built.size} decks", 0, 1))
+        onProgress(Progress("Comparing ${built.size} drafts", 0, 1))
         val arms = built.mapIndexed { i, b -> Deck("c$i", b.cards, b.plan, b.seedName, null) }
         val screened = score(cat, arms, selectAgainst, seeds, workers)
         var bestI = arms.indices.maxByOrNull { screened["c$it"]?.wins ?: -1.0 }!!
@@ -348,7 +348,7 @@ object Compete {
         var barren = 0
         val climbBlock = (0 until climbSeeds).map { 20_000 + it }
         for (g in 1..generations) {
-            onProgress(Progress("Improving (round $g of $generations)", g, generations))
+            onProgress(Progress("Refining, pass $g of $generations", g, generations))
             val kids = ArrayList<Pair<List<Int>, JSONObject>>()
             repeat(mutationsPerGen) {
                 val m = mutation(cur, curPlan, cat, addPool, rnd)
@@ -378,7 +378,7 @@ object Compete {
 
         // ALWAYS re-measure, on seeds used by neither stage. Quoting the
         // block a deck was selected on reports the selection, not the deck.
-        onProgress(Progress("Checking the result", 1, 1))
+        onProgress(Progress("Verifying", 1, 1))
         val verify = (0 until climbSeeds).map { 50_000 + it }
         val finalWins = score(cat, listOf(Deck("fin", cur, curPlan, name, null)),
             opponents, verify, workers)["fin"]?.wins ?: curWins
