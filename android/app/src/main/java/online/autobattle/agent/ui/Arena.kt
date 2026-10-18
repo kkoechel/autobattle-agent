@@ -304,20 +304,15 @@ fun ArenaPane(modifier: Modifier = Modifier) {
             }
 
         showCard?.let { c ->
-            // Only TOKENS are linkable by name. Matching every card name would
-            // turn ordinary words into links -- a card called "Shield" would
-            // light up half the game's text.
-            val tokens = remember(cardsById) {
-                cardsById.values
-                    .filter { it.rarity.equals("token", true) ||
-                              it.rarity.equals("manifest", true) }
-                    .associateBy { it.name.lowercase() }
-            }
-            CardSheet(
+            // Drawn by the main game's own renderer, so the card looks exactly
+            // like it does there. Which names inside the text are linkable is
+            // its decision too -- it marks them data-keyword / data-card-id
+            // and we honour whatever it marked.
+            CardWeb(
                 card = c,
                 onDismiss = { showCard = null },
                 keywords = keywords,
-                tokens = tokens,
+                cardsById = cardsById,
                 onOpenCard = { showCard = it },
             )
         }

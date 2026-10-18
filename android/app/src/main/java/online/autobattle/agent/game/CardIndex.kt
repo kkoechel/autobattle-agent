@@ -30,6 +30,13 @@ data class CardInfo(
     val melee: Int?,
     val health: Int?,
     val armor: Int?,
+    /**
+     * The card exactly as the catalogue sent it. Kept because the main game's
+     * own card renderer (window.buildCardSVG) takes the whole card object --
+     * effects_json, tags, flavour and all -- and reconstructing that from the
+     * fields above would drift from it the first time the main game adds one.
+     */
+    val raw: String = "",
 ) {
     val typeLine: String
         get() = listOf(supertype, subtype).filter { it.isNotBlank() }.joinToString(" · ")
@@ -85,6 +92,7 @@ object CardIndex {
                 melee = stats?.optInt("melee", -1)?.takeIf { it >= 0 },
                 health = stats?.optInt("health", -1)?.takeIf { it >= 0 },
                 armor = stats?.optInt("armor", -1)?.takeIf { it >= 0 },
+                raw = c.toString(),
             )
         }
         return out
