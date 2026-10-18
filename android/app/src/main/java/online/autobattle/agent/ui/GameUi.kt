@@ -68,7 +68,7 @@ fun GameButton(
             .padding(horizontal = 18.dp, vertical = 14.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text.uppercase(),
+        Text(text,
             style = MaterialTheme.typography.labelLarge,
             textAlign = TextAlign.Center,
             color = if (enabled) (if (pressed) GoldBright else MaterialTheme.colorScheme.primary)
@@ -130,7 +130,7 @@ fun GameLink(text: String, modifier: Modifier = Modifier, enabled: Boolean = tru
         // Single line, always. Letter-spaced capitals are wide, and three of
         // these sit in one row -- "Start over" wrapped to two lines and made
         // its own box taller than the button beside it.
-        Text(text.uppercase(), style = MaterialTheme.typography.labelMedium,
+        Text(text, style = MaterialTheme.typography.labelMedium,
             maxLines = 1, softWrap = false,
             color = if (enabled) MaterialTheme.colorScheme.primary
                     else Subtle.copy(alpha = 0.6f))
