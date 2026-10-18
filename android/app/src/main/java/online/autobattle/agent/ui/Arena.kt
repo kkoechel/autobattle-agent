@@ -1,5 +1,7 @@
 package online.autobattle.agent.ui
 
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -10,6 +12,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -212,7 +215,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 label = { Text("Handle") },
                 supportingText = { Text("3-24 characters. Everyone can see it.") },
                 modifier = Modifier.fillMaxWidth())
-            Button(enabled = !busy && typed.trim().length >= 3,
+            GameButton(enabled = !busy && typed.trim().length >= 3,
                 onClick = {
                     uiBusy = true; error = null
                     scope.launch {
@@ -227,19 +230,19 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                         }.onFailure { error = readable(it) }
                         uiBusy = false
                     }
-                }) { Text("Join") }
+                }, text = "Join")
         } else {
             Row(verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(handle.ifBlank { "You" },
-                    style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.weight(1f))
-                TextButton(enabled = !busy, onClick = { scope.launch { refresh() } }) {
-                    Text("Refresh")
-                }
-                TextButton(enabled = !busy, onClick = { confirmReset = true }) {
-                    Text("Start over")
-                }
+                // The handle gives way, not the buttons: a long one used to
+                // push "Start over" off the edge, and a clipped control is
+                // worse than a shortened name.
+                Text(handle.ifBlank { "You" }, Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                GameLink("Refresh", enabled = !busy) { scope.launch { refresh() } }
+                GameLink("Start over", enabled = !busy) { confirmReset = true }
             }
 
             // The agent asks; the player answers. This is the whole decision
@@ -251,25 +254,25 @@ fun ArenaPane(modifier: Modifier = Modifier) {
             val q = if (busy) null else
                 Questions.next(directive, mem, handle, standings, deckIds, idea)
             if (q != null) {
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(q.text, style = MaterialTheme.typography.bodyLarge)
+                GamePanel {
+                        Text(q.text, style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onBackground)
                         // The agent names a card; the player must be able to
                         // look at it before answering.
                         idea?.optInt("card_id")?.takeIf {
                             it > 0 && q.id == "idea-card"
                         }?.let { cid ->
-                            TextButton(onClick = {
+                            GameLink("See ${idea?.optString("name") ?: "the card"}") {
                                 scope.launch {
                                     ensureNames()
                                     cardsById[cid]?.let { c -> showCard = c }
                                 }
-                            }) { Text("See ${idea?.optString("name") ?: "the card"}") }
+                            }
                         }
                         for (c in q.choices) {
-                            OutlinedButton(
-                                modifier = Modifier.fillMaxWidth(),
+                            GameChoice(
+                                label = c.label,
+                                detail = c.blurb,
                                 onClick = {
                                     val before = directive
                                     directive = c.apply(directive)
@@ -295,37 +298,30 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                                                      else mem.barrenRuns)
                                     Memory.save(ctx, mem)
                                     if (q.id.startsWith("idea")) idea = null
-                                }) {
-                                Column(Modifier.fillMaxWidth()) {
-                                    Text(c.label,
-                                        style = MaterialTheme.typography.bodyMedium)
-                                    Text(c.blurb,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
+                                })
                         }
-                    }
                 }
             } else if (!busy) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(directive.summary(), Modifier.weight(1f),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    TextButton(onClick = { showThemes = true }) { Text("Theme") }
-                    TextButton(onClick = {
+                    GameLink("Theme") { showThemes = true }
+                    GameLink("Re-brief") {
                         mem = mem.copy(answered = emptySet(), dismissed = emptySet())
                         Memory.save(ctx, mem)
-                    }) { Text("Re-brief") }
+                    }
                 }
             }
 
-            Button(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = {
+            GameButton(
+                text = if (busy) "Your agent is working…" else "Send your agent to work",
+                enabled = !busy, modifier = Modifier.fillMaxWidth()) {
                 error = null; note = null
                 // Hand the work to the service and return immediately. The
                 // screen is now an observer, so leaving it is harmless.
                 TrainingService.start(ctx)
-            }) { Text(if (busy) "Your agent is working…" else "Send your agent to work") }
+            }
 
             progress?.let { p ->
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -363,6 +359,8 @@ fun ArenaPane(modifier: Modifier = Modifier) {
         // poison had no way to say so.
         if (showThemes) {
             AlertDialog(
+                containerColor = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(12.dp),
                 onDismissRequest = { showThemes = false },
                 title = { Text("What should your agent build around?") },
                 text = {
@@ -383,22 +381,32 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                             Memory.save(ctx, mem)
                             showThemes = false
                         }
-                        TextButton(onClick = { choose(null, null) },
-                            modifier = Modifier.fillMaxWidth()) {
-                            Text("Whatever looks best",
-                                modifier = Modifier.fillMaxWidth(),
-                                fontWeight = if (directive.theme == null)
-                                    FontWeight.Bold else FontWeight.Normal)
-                        }
-                        for ((tag, label) in Questions.THEMES) {
-                            TextButton(onClick = { choose(tag, label) },
-                                modifier = Modifier.fillMaxWidth()) {
+                        // Plain rows rather than TextButtons: sixteen
+                        // buttons at Material's 48dp minimum turned a list
+                        // into a scroll marathon, and the chosen one was
+                        // hard to spot among them.
+                        @Composable
+                        fun row(tag: String?, label: String) {
+                            val on = directive.theme == tag
+                            Row(
+                                Modifier.fillMaxWidth()
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable { choose(tag, if (tag == null) null else label) }
+                                    .padding(horizontal = 10.dp, vertical = 9.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(if (on) "◆" else "  ",
+                                    color = MaterialTheme.colorScheme.primary,
+                                    style = MaterialTheme.typography.bodySmall)
+                                Spacer(Modifier.width(8.dp))
                                 Text(label.replaceFirstChar { it.uppercase() },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    fontWeight = if (directive.theme == tag)
-                                        FontWeight.Bold else FontWeight.Normal)
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = if (on) GoldBright
+                                            else MaterialTheme.colorScheme.primary)
                             }
                         }
+                        row(null, "Whatever looks best")
+                        for ((tag, label) in Questions.THEMES) row(tag, label)
                     }
                 },
                 confirmButton = {
