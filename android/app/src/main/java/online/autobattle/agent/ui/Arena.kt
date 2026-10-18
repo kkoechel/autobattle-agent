@@ -18,6 +18,7 @@ import online.autobattle.agent.data.Secrets
 import online.autobattle.agent.game.Compete
 import online.autobattle.agent.game.Directive
 import online.autobattle.agent.game.GameClient
+import online.autobattle.agent.game.GameException
 import online.autobattle.agent.game.CardInfo
 import online.autobattle.agent.game.Keyword
 import online.autobattle.agent.game.Memory
@@ -42,7 +43,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
 
     var token by remember { mutableStateOf(Secrets.load(ctx, Secrets.SLOT_GAME_TOKEN)) }
     var handle by remember { mutableStateOf(Secrets.handle(ctx) ?: "") }
-    var typed by remember { mutableStateOf("") }
+    var typed by remember { mutableStateOf(Secrets.handle(ctx) ?: "") }
     var uiBusy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var note by remember { mutableStateOf<String?>(null) }
@@ -76,16 +77,27 @@ fun ArenaPane(modifier: Modifier = Modifier) {
     val busy = uiBusy || running
 
     suspend fun refresh() {
+        // A 401 means this token names an account the coordinator no longer
+        // has. Every authenticated call then fails, and because each one was
+        // swallowed individually the screen kept showing the stale handle and
+        // said "deck not available" against every rival -- which reads as a
+        // broken server rather than as "you are signed out". Noticed here and
+        // handled once, rather than at each call site.
+        var expired = false
+        fun watch(e: Throwable) { if (e is GameException && e.status == 401) expired = true }
         runCatching {
             withContext(Dispatchers.IO) {
                 val c = GameClient(token)
                 val st = c.standings()
-                val mine = if (token != null) runCatching { c.me() }.getOrNull() else null
+                val mine = if (token != null)
+                    runCatching { c.me() }.onFailure(::watch).getOrNull() else null
                 // Everyone's decks and everyone's form, in the same refresh:
                 // both are small, and fetching them on demand would put a
                 // spinner behind a tap that should feel instant.
-                val f = if (token != null) runCatching { c.field() }.getOrNull() else null
-                val lb = if (token != null) runCatching { c.leaderboard() }.getOrNull() else null
+                val f = if (token != null)
+                    runCatching { c.field() }.onFailure(::watch).getOrNull() else null
+                val lb = if (token != null)
+                    runCatching { c.leaderboard() }.onFailure(::watch).getOrNull() else null
                 Triple(st, mine, f to lb)
             }
         }.onSuccess { (st, mine, extra) ->
@@ -113,7 +125,21 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 lastPlacement = mineRow?.optInt("placement") ?: mem.lastPlacement,
                 lastLeader = lead?.optString("handle") ?: mem.lastLeader)
             Memory.save(ctx, mem)
-        }.onFailure { error = readable(it) }
+        }.onFailure { watch(it); error = readable(it) }
+
+        if (expired) {
+            // Drop the dead credential so the join screen comes back. The
+            // handle is kept and pre-filled: it is almost always the name the
+            // player wants again, and retyping it is the only thing standing
+            // between them and being back in the league.
+            Secrets.clear(ctx, Secrets.SLOT_GAME_TOKEN)
+            token = null
+            typed = handle
+            error = null
+            loaded = true
+            return
+        }
+
         if (idea == null && token != null) {
             runCatching { withContext(Dispatchers.IO) { GameClient(token).idea() } }
                 .onSuccess { idea = it }
@@ -162,6 +188,18 @@ fun ArenaPane(modifier: Modifier = Modifier) {
 
         if (token == null) {
             Text("Join the Agent league", style = MaterialTheme.typography.titleMedium)
+            // A stored handle with no token means this player WAS in the
+            // league and their account is gone -- a deleted player, or a
+            // league that was rebuilt under them. Said plainly, and derived
+            // from persisted state rather than from a transient note, which
+            // vanished the moment the app was relaunched.
+            if (handle.isNotBlank()) {
+                Text("You are signed out. \"$handle\" is no longer in the " +
+                    "league, so your decks and standing are gone. Joining " +
+                    "again starts you with a fresh deck.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error)
+            }
             Text("Pick a handle. Your agent designs and tests decks on this " +
                 "phone, then plays the best one against everyone else's " +
                 "agents. A new round is scored every 15 minutes.",
