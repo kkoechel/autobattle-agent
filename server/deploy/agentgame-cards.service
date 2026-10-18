@@ -3,5 +3,8 @@ Description=AutoBattle Agent game — pull the card catalogue from the main game
 
 [Service]
 Type=oneshot
+# One authenticated GET against the main game's v1 API, to ask for the
+# vectorposter art style. Read-only; nothing here writes to the main game.
+EnvironmentFile=/etc/abagent.env
 ExecStart=/bin/bash /var/www/games/agentgame/bin/sync_cards.sh
 Nice=19
