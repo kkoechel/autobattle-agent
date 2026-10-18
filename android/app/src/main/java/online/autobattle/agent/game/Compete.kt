@@ -128,6 +128,86 @@ object Compete {
             env.getJSONArray("results").toString(), arms, seeds, opponents.size)
     }
 
+    /** How the deck you already have does against the field as it stands. */
+    data class Trial(
+        val deckName: String,
+        val wins: Double,
+        val opponents: Int,
+        val seeds: Int,
+        val beaten: Int,
+        val lostTo: Int,
+        val even: Int,
+        val bestAgainst: String?,
+        val worstAgainst: String?,
+    )
+
+    /**
+     * Play the current deck against the field WITHOUT changing it.
+     *
+     * The point is to give a player something to do while a round is
+     * pending, other than retraining. Rounds are scored every 15 minutes, so
+     * the honest answer to "is my deck any good" used to be "wait" -- and
+     * the available button threw the deck away and built another, which is
+     * the one thing a player wanting to see their deck work should not do.
+     *
+     * Nothing here writes: no deck is submitted and no directive changes.
+     */
+    fun testDeck(
+        client: GameClient,
+        myHandle: String?,
+        seedCount: Int = 31,
+        workers: Int = 4,
+        onProgress: (Progress) -> Unit = {},
+    ): Trial {
+        onProgress(Progress("Fetching cards", 0, 1))
+        val (cardsJson, _) = client.cards()
+        val cat = Catalogue(cardsJson)
+
+        onProgress(Progress("Fetching the field", 0, 1))
+        val field = client.field()
+        val opponents = opponentsOf(field, myHandle)
+        require(opponents.isNotEmpty()) { "there is nobody to play against yet" }
+
+        val me = client.me().optJSONObject("deck")
+            ?: error("you do not have a deck yet")
+        val entries = me.optJSONArray("cards") ?: error("your deck is empty")
+        val flat = ArrayList<Int>(100)
+        for (j in 0 until entries.length()) {
+            val e = entries.getJSONObject(j)
+            repeat(e.getInt("quantity")) { flat.add(e.getInt("card_id")) }
+        }
+        val mine = Deck("me", flat, me.optJSONObject("battle_plan"),
+            me.optString("name"), null)
+
+        // A seed block none of the training stages use (7k screen, 20k climb,
+        // 50k verify). Re-reading the seeds a deck was tuned on would flatter
+        // it, which is the same winner's curse the three-block split exists
+        // to avoid.
+        val block = (0 until seedCount).map { 90_000 + it }
+        onProgress(Progress("Playing the field", 0, 1))
+        val s = score(cat, listOf(mine), opponents, block, workers)["me"]
+            ?: error("the engine returned no result")
+
+        val handleOf = opponents.associate { it.slotId to it.name }
+        var beaten = 0
+        var lost = 0
+        var even = 0
+        var best: String? = null
+        var bestMargin = Int.MIN_VALUE
+        var worst: String? = null
+        var worstMargin = Int.MAX_VALUE
+        for ((slot, wld) in s.perOpponent) {
+            val (w, l, _) = wld
+            if (w > l) beaten++ else if (l > w) lost++ else even++
+            val margin = w - l
+            val nm = handleOf[slot] ?: slot
+            if (margin > bestMargin) { bestMargin = margin; best = nm }
+            if (margin < worstMargin) { worstMargin = margin; worst = nm }
+        }
+        return Trial(me.optString("name"), s.wins, opponents.size, block.size,
+            beaten, lost, even, best, worst)
+    }
+
     /**
      * Screen a spread of archetypes, then climb the best one.
      *

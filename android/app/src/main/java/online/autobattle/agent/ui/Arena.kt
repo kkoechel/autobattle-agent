@@ -60,6 +60,9 @@ fun ArenaPane(modifier: Modifier = Modifier) {
     var cardsById by remember { mutableStateOf<Map<Int, CardInfo>>(emptyMap()) }
     var showCard by remember { mutableStateOf<CardInfo?>(null) }
     var showThemes by remember { mutableStateOf(false) }
+    var trialBusy by remember { mutableStateOf(false) }
+    var trialStep by remember { mutableStateOf<String?>(null) }
+    var trial by remember { mutableStateOf<Compete.Trial?>(null) }
     var keywords by remember { mutableStateOf<Map<String, Keyword>>(emptyMap()) }
     var showDeck by remember { mutableStateOf(false) }
     var loaded by remember { mutableStateOf(false) }
@@ -314,9 +317,83 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 }
             }
 
+            // HAS THE CURRENT DECK ACTUALLY PLAYED YET?
+            //
+            // Both timestamps come from the server in the same clock, so a
+            // string compare is the whole test. Until a round has been scored
+            // since the deck was submitted, retraining throws away a deck
+            // nobody has seen play -- so the work button waits and the trial
+            // button takes its place. The trial changes nothing; it just
+            // answers "is this any good" without spending the deck.
+            val scoredAt = standings?.optJSONObject("round")?.optString("finished_at") ?: ""
+            val submittedAt = myDeck?.optString("updated_at") ?: ""
+            val awaitingRound = submittedAt.isNotBlank() && scoredAt.isNotBlank() &&
+                scoredAt <= submittedAt
+
+            if (awaitingRound) {
+                GamePanel {
+                    Text("Your deck has not played a round yet.",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.primary)
+                    Text("Every deck in the league is scored together, so " +
+                        "yours gets its result at the next round. Building " +
+                        "another one now would throw this one away before " +
+                        "you have seen it play.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    // Its own sentence. Appending it lower-cased read as
+                    // "...seen it play. next round in about 2 minutes."
+                    standings?.optJSONObject("round")
+                        ?.optString("next_at")?.takeIf { it.isNotBlank() }?.let {
+                            Text(untilRound(it) + ".",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    GameButton(
+                        text = if (trialBusy) (trialStep ?: "Playing…")
+                               else "Try it against the field now",
+                        enabled = !trialBusy && !busy,
+                        modifier = Modifier.fillMaxWidth()) {
+                        error = null; note = null; trial = null; trialBusy = true
+                        scope.launch {
+                            runCatching {
+                                withContext(Dispatchers.Default) {
+                                    Compete.testDeck(GameClient(token), handle,
+                                        onProgress = { trialStep = it.step })
+                                }
+                            }.onSuccess { trial = it }
+                             .onFailure { error = readable(it) }
+                            trialBusy = false; trialStep = null
+                        }
+                    }
+                    // Shown HERE rather than in the note at the foot of the
+                    // screen: the note sits below the fold, so the answer to
+                    // a button you just pressed scrolled away out of sight.
+                    trial?.let { t ->
+                        Text("\"${t.deckName}\" is ahead against ${t.beaten} of " +
+                            "${t.opponents} rivals, behind against ${t.lostTo}" +
+                            (if (t.even > 0) ", level with ${t.even}" else "") + ".",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary)
+                        Text("That is ${"%.1f".format(t.wins)} match wins a round " +
+                            "over ${t.seeds} seeds it has never played" +
+                            (t.worstAgainst?.let { ". Worst matchup: $it" } ?: "") +
+                            ". A rehearsal only — the league scores every deck " +
+                            "itself at the next round, and these are not those " +
+                            "games.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+
             GameButton(
-                text = if (busy) "Your agent is working…" else "Send your agent to work",
-                enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                text = when {
+                    busy -> "Your agent is working…"
+                    awaitingRound -> "Build a new deck anyway"
+                    else -> "Send your agent to work"
+                },
+                enabled = !busy && !trialBusy, modifier = Modifier.fillMaxWidth()) {
                 error = null; note = null
                 // Hand the work to the service and return immediately. The
                 // screen is now an observer, so leaving it is harmless.
