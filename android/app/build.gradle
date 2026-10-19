@@ -25,9 +25,26 @@ android {
         applicationId "online.autobattle.agent"
         minSdk 24
         targetSdk 36
-        versionCode 23
-        versionName "1.13"
+        versionCode 24
+        versionName "1.14"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        // Side-by-side test install: ./gradlew assembleRelease -PdevId
+        //
+        // A build signed with the UPLOAD key cannot replace one Play
+        // installed, because Play re-signs with its own -- so verifying a
+        // change on a real phone otherwise means uninstalling the player's
+        // app. That takes their token with it, and since their handle is
+        // already registered they cannot rejoin as themselves. A separate
+        // applicationId installs beside it and touches nothing.
+        manifestPlaceholders = [appLabel: "AutoBattle Agent"]
+        if (project.hasProperty('devId')) {
+            applicationIdSuffix ".dev"
+            versionNameSuffix "-dev"
+            // Renamed too, or the two sit side by side on the launcher under
+            // the same name and the wrong one gets opened.
+            manifestPlaceholders = [appLabel: "AB Agent (dev)"]
+        }
 
         // The engine AAR ships arm64 only. Adding more ABIs means rebuilding
         // it with more -target values in build_aar.sh; each one adds ~3.8MB of

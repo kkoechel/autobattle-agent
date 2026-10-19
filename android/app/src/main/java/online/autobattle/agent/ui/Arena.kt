@@ -1319,11 +1319,16 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                             style = snesText(12,
                                 androidx.compose.ui.graphics.Color(0xFFFF9C6E)))
                     }
+                    // GAMES, said as games. These counts are over every
+                    // match played -- 28 opponents by 21 seeds -- while the
+                    // record on the history row above is per OPPONENT, out
+                    // of 28. Printing "217 won ... across 28 opponents" put
+                    // the two scales in one sentence and read as a bug.
                     val won = t.games.count { it.outcome == "won" }
                     val lost = t.games.count { it.outcome == "lost" }
                     val drew = t.games.count { it.outcome == "drew" }
-                    Text("$won won, $lost lost, $drew drawn " +
-                        "across ${t.opponents} opponents.",
+                    Text("${t.games.size} games against ${t.opponents} " +
+                        "opponents: $won won, $lost lost, $drew drawn.",
                         style = snesText(12,
                             androidx.compose.ui.graphics.Color(0xFF8A8AA8)))
                     if (t.games.isEmpty()) {
