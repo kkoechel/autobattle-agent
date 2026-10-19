@@ -83,7 +83,18 @@ private sealed interface Phase {
  */
 @Composable
 fun AgentApp() {
+    // WHICH BACKDROP, decided by the pane and drawn out here.
+    //
+    // It has to be drawn above this Column, not inside the pane, or it stops
+    // at the pane's edges -- the title bar and the 18dp side padding stayed
+    // black and the "back screen" was a framed picture rather than the room.
+    // Reported upwards rather than hoisting `place` and the avatar choice out
+    // of the pane: the pane owns both, and this is the only thing out here
+    // that needs to know about them.
+    var backdrop by remember { mutableStateOf<Avatar?>(null) }
     Surface(Modifier.fillMaxSize()) {
+      Box(Modifier.fillMaxSize()) {
+        backdrop?.let { AvatarBackdrop(it, Modifier.matchParentSize()) }
         Column(
             // safeDrawingPadding, not padding alone: targetSdk 35+ draws
             // edge-to-edge by default, so without it the heading sits under
@@ -99,8 +110,9 @@ fun AgentApp() {
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
             )
-            ArenaPane(Modifier.fillMaxSize())
+            ArenaPane(Modifier.fillMaxSize()) { backdrop = it }
         }
+      }
     }
 }
 

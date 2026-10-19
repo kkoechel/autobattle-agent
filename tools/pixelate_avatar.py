@@ -6,9 +6,11 @@ flat colour, hard edges, no gradients or texture. That is already most of the
 way to pixel art, so the job is resampling and a palette, not stylisation. A
 photographic source would need far more than this and would still look muddy.
 
-WHAT IT PRODUCES. One portrait-aspect image per card, sized so the phone
-scales it by a whole number: 180x320 upscales 6x to 1080x1920 with no
-resampling blur, which is why the app draws it with FilterQuality.None. The
+WHAT IT PRODUCES. One portrait-aspect image per card. The sizes offered here
+are the ones that divide 1080x1920 exactly, which is how the chunkiness was
+compared fairly -- though note the app now draws these to COVER the whole
+screen, and a phone taller than 16:9 scales by a non-integer factor anyway.
+FilterQuality.None is what matters, not the ratio. The
 character fills the frame and its own scene becomes the background, so a
 single source gives both halves of "a pixel avatar over a pixel background".
 The dialogue box is expected to cover the bottom; nothing load-bearing is put
@@ -50,7 +52,11 @@ SUBJECTS = {
     # a busy frame, and at the wider crop the gold swirls read as the
     # subject while she dissolved into them -- at this size a thin shape
     # needs more of the frame, not the same share of it.
-    "722": (505, 115, 835, 600),     # head, wings and torso
+    # Shifted DOWN relative to where she sits, which moves her UP in the
+    # finished frame. Her head landed about a third of the way down
+    # where the wizard's and the minotaur's are nearer a fifth, so the
+    # dialogue box covered her face while theirs cleared it.
+    "722": (505, 195, 835, 680),     # head, wings and torso
     "947": (500, 110, 1190, 810),    # toucan wizard: crest, beak, robe, book
 }
 

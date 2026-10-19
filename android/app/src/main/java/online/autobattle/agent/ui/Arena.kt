@@ -9,6 +9,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.Image
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.imageResource
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -39,6 +43,31 @@ import androidx.compose.runtime.collectAsState
 import online.autobattle.agent.game.Questions
 import org.json.JSONArray
 import org.json.JSONObject
+
+/**
+ * runCatching, except that it lets cancellation through.
+ *
+ * kotlin's runCatching catches Throwable, and CancellationException is a
+ * Throwable -- so a coroutine cancelled while suspended has its cancellation
+ * SWALLOWED and reported as a failure. On this screen that surfaced as the
+ * player being shown "The coroutine scope left the composition" in red, twice,
+ * on every cold start: the first refresh was still in flight when the resume
+ * trigger asked for another, the first LaunchedEffect was cancelled as it
+ * should be, and the cancellation was then displayed as if the server had
+ * failed.
+ *
+ * Swallowing it is also wrong beyond the cosmetics -- it breaks structured
+ * concurrency, because the cancelled block carries on to its own onFailure
+ * instead of unwinding.
+ */
+private inline fun <T> runCancellable(block: () -> T): Result<T> =
+    try {
+        Result.success(block())
+    } catch (c: kotlinx.coroutines.CancellationException) {
+        throw c
+    } catch (t: Throwable) {
+        Result.failure(t)
+    }
 
 /**
  * A game being watched, and the run that produced it.
@@ -83,7 +112,16 @@ private fun WatchPicker(t: Compete.Trial, onPick: (Compete.Game) -> Unit) {
  * screen is off is a game that gets uninstalled.
  */
 @Composable
-fun ArenaPane(modifier: Modifier = Modifier) {
+fun ArenaPane(
+    modifier: Modifier = Modifier,
+    /**
+     * Which avatar should stand behind the whole app, or null for none.
+     *
+     * Reported rather than drawn here: inside this pane the picture stops at
+     * the pane's edges, and the point of it is that it does not.
+     */
+    onBackdrop: (Avatar?) -> Unit = {},
+) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -161,6 +199,8 @@ fun ArenaPane(modifier: Modifier = Modifier) {
     var wantRefresh by remember { mutableIntStateOf(0) }
     var confirmReset by remember { mutableStateOf(false) }
     var directive by remember { mutableStateOf(Directive.load(ctx)) }
+    var avatar by remember { mutableStateOf(Avatar.load(ctx)) }
+    var pickAvatar by remember { mutableStateOf(false) }
     var mem by remember { mutableStateOf(Memory.load(ctx)) }
     var idea by remember { mutableStateOf<JSONObject?>(null) }
     // handle -> that player's current deck, so a rival's list can be opened
@@ -185,22 +225,22 @@ fun ArenaPane(modifier: Modifier = Modifier) {
         // handled once, rather than at each call site.
         var expired = false
         fun watch(e: Throwable) { if (e is GameException && e.status == 401) expired = true }
-        runCatching {
+        runCancellable {
             withContext(Dispatchers.IO) {
                 val c = GameClient(token)
                 val st = c.standings()
                 val mine = if (token != null)
-                    runCatching { c.me() }.onFailure(::watch).getOrNull() else null
+                    runCancellable { c.me() }.onFailure(::watch).getOrNull() else null
                 // Everyone's decks and everyone's form, in the same refresh:
                 // both are small, and fetching them on demand would put a
                 // spinner behind a tap that should feel instant.
                 val f = if (token != null)
-                    runCatching { c.field() }.onFailure(::watch).getOrNull() else null
+                    runCancellable { c.field() }.onFailure(::watch).getOrNull() else null
                 val lb = if (token != null)
-                    runCatching { c.leaderboard() }.onFailure(::watch).getOrNull() else null
+                    runCancellable { c.leaderboard() }.onFailure(::watch).getOrNull() else null
                 val hi = if (token != null)
-                    runCatching { c.history() }.onFailure(::watch).getOrNull() else null
-                val bn = runCatching { c.bans() }.getOrNull()
+                    runCancellable { c.history() }.onFailure(::watch).getOrNull() else null
+                val bn = runCancellable { c.bans() }.getOrNull()
                 Triple(st, mine, listOf(f, lb, hi, bn))
             }
         }.onSuccess { (st, mine, extra) ->
@@ -258,7 +298,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
         }
 
         if (idea == null && token != null) {
-            runCatching { withContext(Dispatchers.IO) { GameClient(token).idea() } }
+            runCancellable { withContext(Dispatchers.IO) { GameClient(token).idea() } }
                 .onSuccess { idea = it }
         }
         loaded = true
@@ -267,14 +307,14 @@ fun ArenaPane(modifier: Modifier = Modifier) {
     /** The catalogue is pulled the first time a card actually needs showing. */
     suspend fun ensureNames() {
         if (cardsById.isNotEmpty()) return
-        runCatching {
+        runCancellable {
             withContext(Dispatchers.IO) {
                 val c = GameClient(token)
                 // The raw array and the ban list come back together, and both
                 // are needed later: the catalogue to repair a kept deck, the
                 // bans to know it needs repairing.
                 val (arr, ban) = c.cards()
-                Triple(arr, ban, runCatching { c.keywords() }.getOrDefault(emptyMap()))
+                Triple(arr, ban, runCancellable { c.keywords() }.getOrDefault(emptyMap()))
             }
         }.onSuccess { (arr, ban, kw) ->
             cardsById = CardIndex.parse(arr)
@@ -369,6 +409,17 @@ fun ArenaPane(modifier: Modifier = Modifier) {
         Training.clearResult()
     }
 
+    // THE BACKDROP DOES NOT SCROLL, and it is not drawn here. It is the room
+    // the conversation happens in, not an item in the list, so it is reported
+    // to the host and drawn behind everything including the title.
+    //
+    // Only on the Agent tab: the Dojo and the Binder are dense tables and a
+    // picture behind them fights the text for every row. Only once there is a
+    // token, so the join screen stays plain.
+    LaunchedEffect(place, token, avatar) {
+        onBackdrop(if (place == Place.AGENT && token != null) avatar else null)
+    }
+
     Column(modifier.verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
 
@@ -402,7 +453,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 onClick = {
                     uiBusy = true; error = null
                     scope.launch {
-                        runCatching {
+                        runCancellable {
                             withContext(Dispatchers.IO) { GameClient.join(typed.trim()) }
                         }.onSuccess {
                             val t = it.getString("token")
@@ -426,7 +477,16 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 // A nameplate, not loose text. It was the only unframed
                 // thing left on the screen, which made it read as a caption
                 // for the buttons beside it rather than as who you are.
-                Nameplate(handle.ifBlank { "You" }, Modifier.weight(1f))
+                // Tapping your own name opens the face chooser. It lived
+                // with "Pick a theme..." below, which is hidden whenever the
+                // agent has a question pending -- and an account whose deck
+                // holds a banned card ALWAYS has one, so the chooser was
+                // unreachable on exactly the screens that most wanted it.
+                // Your name and your face are the same question anyway.
+                Nameplate(handle.ifBlank { "You" },
+                    Modifier.weight(1f).clickable(enabled = token != null) {
+                        pickAvatar = true
+                    })
                 // It used to refresh in silence, which is indistinguishable
                 // from a dead button: nothing on screen changes unless a
                 // round happened to land in between. Now it answers.
@@ -525,11 +585,27 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 out
             }
 
+            // ROOM FOR THE FACE. Every avatar's head sits in the upper
+            // quarter of its frame, and the tabs plus the nameplate already
+            // reach about a quarter down the screen -- so the dialogue
+            // landed exactly on it and the character was a pair of
+            // shoulders. Pushed down by a share of the SCREEN rather than a
+            // fixed dp, because what has to clear the head is a fraction of
+            // the picture and the picture is sized to the screen.
+            //
+            // Only when a backdrop is actually behind it: with no avatar
+            // this would just be a hole at the top of the page.
+            if (token != null) {
+                Spacer(Modifier.height(
+                    (LocalConfiguration.current.screenHeightDp * 0.20f).dp))
+            }
+
             SnesWindow {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    AgentPortrait(mood)
-                    TypedLine(line, spoken, onOpenCard = { showCard = it })
-                }
+                // No portrait here any more. The avatar now stands full
+                // height behind this window, so drawing the little one as
+                // well put the same character on screen twice -- the exact
+                // thing that looked wrong when the dialogue had two.
+                TypedLine(line, spoken, onOpenCard = { showCard = it })
                 if (busy) {
                     val pr = progress
                     if (pr != null) SnesProgress(pr.done, pr.total) else SnesProgress(0, 1)
@@ -698,7 +774,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                                     error = null; note = null; trial = null
                                     trialBusy = true
                                     scope.launch {
-                                        runCatching {
+                                        runCancellable {
                                             withContext(Dispatchers.Default) {
                                                 Compete.testDeck(GameClient(token), handle,
                                                     onProgress = { trialStep = it.step })
@@ -1071,7 +1147,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                         shelfBusy = true
                         val text = noteText.trim()
                         scope.launch {
-                            runCatching {
+                            runCancellable {
                                 withContext(Dispatchers.IO) {
                                     val c = GameClient(token)
                                     c.noteDeck(id, text); c.savedDecks()
@@ -1088,6 +1164,56 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 })
         }
 
+        // Choosing who stands behind the conversation. Local to the phone:
+        // it is how the game looks to you, not anything the league needs to
+        // know, so it is a preference and not a field on the account.
+        if (pickAvatar) {
+            AlertDialog(
+                containerColor = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(12.dp),
+                onDismissRequest = { pickAvatar = false },
+                title = { Text("\u201cWhose face shall I wear?\u201d") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        for (a in Avatar.entries) {
+                            Row(
+                                Modifier.fillMaxWidth()
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable {
+                                        avatar = a; Avatar.save(ctx, a)
+                                        pickAvatar = false
+                                    }
+                                    .padding(6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                // A thumbnail of the real thing, drawn the
+                                // same way: a name alone says nothing about
+                                // a picture you have not seen.
+                                Image(
+                                    painter = androidx.compose.ui.graphics.painter.BitmapPainter(
+                                        androidx.compose.ui.graphics.ImageBitmap
+                                            .imageResource(a.art),
+                                        filterQuality =
+                                            androidx.compose.ui.graphics.FilterQuality.None),
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    alignment = Alignment.TopCenter,
+                                    modifier = Modifier.size(44.dp, 60.dp)
+                                        .clip(RoundedCornerShape(4.dp)))
+                                Text(a.label,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = if (a == avatar) GoldBright
+                                            else MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { pickAvatar = false }) { Text("That one") }
+                })
+        }
+
         if (confirmReset) {
             AlertDialog(
                 onDismissRequest = { confirmReset = false },
@@ -1098,7 +1224,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                     TextButton(onClick = {
                         confirmReset = false; uiBusy = true; error = null; note = null
                         scope.launch {
-                            runCatching {
+                            runCancellable {
                                 withContext(Dispatchers.IO) { GameClient(token).resetDeck() }
                             }.onSuccess {
                                 note = "Started over with \"${it.optString("name")}\"."
@@ -1130,7 +1256,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 LaunchedEffect(myDeck?.toString(), token) {
                     ensureNames()
                     if (token != null && saved == null) {
-                        runCatching {
+                        runCancellable {
                             withContext(Dispatchers.IO) { GameClient(token).savedDecks() }
                         }.onSuccess { saved = it }
                     }
@@ -1147,7 +1273,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                             onClick = {
                                 shelfBusy = true; error = null; note = null
                                 scope.launch {
-                                    runCatching {
+                                    runCancellable {
                                         withContext(Dispatchers.IO) {
                                             val c = GameClient(token)
                                             val r = c.saveDeck()
@@ -1233,7 +1359,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                                         onClick = {
                                             shelfBusy = true; error = null
                                             scope.launch {
-                                                runCatching {
+                                                runCancellable {
                                                     withContext(Dispatchers.Default) {
                                                         val cat = Catalogue(rawCards!!)
                                                         val cs = sv.getJSONArray("cards")
@@ -1275,7 +1401,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                                         onClick = {
                                             shelfBusy = true; error = null
                                             scope.launch {
-                                                runCatching {
+                                                runCancellable {
                                                     withContext(Dispatchers.IO) {
                                                         GameClient(token).restoreDeck(id)
                                                     }
@@ -1310,7 +1436,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                                         onClick = {
                                             shelfBusy = true
                                             scope.launch {
-                                                runCatching {
+                                                runCancellable {
                                                     withContext(Dispatchers.IO) {
                                                         val c = GameClient(token)
                                                         c.deleteSaved(id); c.savedDecks()
@@ -1429,7 +1555,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                                 error = null
                                 roundReplay = null; roundBusy = rid
                                 scope.launch {
-                                    runCatching {
+                                    runCancellable {
                                         withContext(Dispatchers.Default) {
                                             Compete.replayRound(
                                                 GameClient(token), handle, rid,
