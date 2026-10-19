@@ -5,6 +5,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -150,6 +153,9 @@ fun ArenaPane(modifier: Modifier = Modifier) {
     var keywords by remember { mutableStateOf<Map<String, Keyword>>(emptyMap()) }
     var showDeck by remember { mutableStateOf(false) }
     var loaded by remember { mutableStateOf(false) }
+    // Bumped to ask for a refetch. A counter rather than a flag so two
+    // triggers arriving together still result in exactly one refresh.
+    var wantRefresh by remember { mutableIntStateOf(0) }
     var confirmReset by remember { mutableStateOf(false) }
     var directive by remember { mutableStateOf(Directive.load(ctx)) }
     var mem by remember { mutableStateOf(Memory.load(ctx)) }
@@ -276,6 +282,53 @@ fun ArenaPane(modifier: Modifier = Modifier) {
     }
 
     LaunchedEffect(token) { refresh() }
+
+    // THE SCREEN HAS TO COME BACK TO LIFE ON ITS OWN.
+    //
+    // Everything above was fetched once, on first composition, and nothing
+    // ever asked again -- so a league scored every fifteen minutes sat frozen
+    // until the app was killed and relaunched. Switching tabs did not help,
+    // because the places share this one load. Measured on the device: a round
+    // was scored, the Dojo still showed the previous one, and the player's own
+    // result simply was not there.
+    //
+    // Two triggers, and deliberately not a poll. The data only changes when a
+    // round is scored, and the server already says when the next one is due.
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle, token) {
+        val obs = LifecycleEventObserver { _, e ->
+            // Coming back to the app is the moment a stale screen is most
+            // obvious -- the player has been away, and a round has very
+            // likely been scored meanwhile.
+            if (e == Lifecycle.Event.ON_RESUME) wantRefresh++
+        }
+        lifecycle.addObserver(obs)
+        onDispose { lifecycle.removeObserver(obs) }
+    }
+    // Waits out the round rather than polling for it. A poll fine enough to
+    // feel responsive would be a dozen requests between each actual change;
+    // this is one, a few seconds after the round is due, and it re-arms from
+    // whatever the fresh standings say comes next.
+    // Keyed on wantRefresh as well as standings, so the timer re-arms after
+    // EVERY attempt. Keyed on standings alone it stalled permanently the
+    // first time a refresh failed or was skipped for being busy: standings
+    // kept the same instance, this effect never restarted, and nothing was
+    // left to ask again until the app was backgrounded.
+    LaunchedEffect(standings, wantRefresh, token) {
+        val next = standings?.optJSONObject("round")?.optString("next_at")
+        val due = msUntil(next)
+        // No next_at, or one already past, still gets a check -- a round that
+        // is late is exactly when a player is watching for it.
+        kotlinx.coroutines.delay((due + 5_000L).coerceIn(15_000L, 20 * 60_000L))
+        wantRefresh++
+    }
+    LaunchedEffect(wantRefresh) {
+        // Never while the engine is working. A refresh mid-build competes
+        // with it for the CPU the build is already straining, and a ban
+        // announcement arriving over a result the player is reading is worse
+        // than a screen that is thirty seconds behind.
+        if (wantRefresh > 0 && !busy && !trialBusy && roundBusy == null) refresh()
+    }
 
     // A run can finish while this screen is away; picking the result up here
     // means the outcome is shown whenever the player comes back, not only if
@@ -1477,6 +1530,18 @@ private val HELP = listOf(
         "seeds it has never seen. It changes nothing \u2014 the league plays " +
         "its own games at the next round.",
 )
+
+/** Milliseconds until a UTC "yyyy-MM-dd HH:mm:ss" instant; 0 if past or unparseable. */
+private fun msUntil(utc: String?): Long {
+    if (utc.isNullOrBlank()) return 0L
+    return try {
+        val fmt = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+            .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
+        (fmt.parse(utc)!!.time - System.currentTimeMillis()).coerceAtLeast(0L)
+    } catch (e: Exception) {
+        0L
+    }
+}
 
 private fun untilRound(utc: String): String = try {
     val fmt = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
