@@ -1,0 +1,14 @@
+[Unit]
+Description=Ban one card every six hours, if the field warrants it
+
+[Timer]
+# Six hours, not every round. A format that changes every fifteen minutes
+# gives nobody time to react to it, and the measurement needs decks that have
+# settled -- a ban measured against decks that are themselves mid-rebuild is
+# measuring the rebuild.
+OnCalendar=*-*-* 00,06,12,18:20:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

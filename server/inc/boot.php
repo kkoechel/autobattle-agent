@@ -102,6 +102,18 @@ function require_player(): array {
  * Checked HERE and not trusted from the client, because the client is a phone
  * the player controls. Returns an error string, or null when the deck is fine.
  */
+/**
+ * The admin token, for the privileged CLI clients (bin/round.py, bin/ban.py).
+ *
+ * hash_equals rather than ===, and an empty configured token is a refusal
+ * rather than a free pass: a missing admin_token must not mean "no check".
+ */
+function require_admin(): void {
+    $tok  = (string)($_SERVER['HTTP_X_ADMIN_TOKEN'] ?? '');
+    $want = (string)(cfg()['admin_token'] ?? '');
+    if ($want === '' || !hash_equals($want, $tok)) fail(403, 'admin token required');
+}
+
 function deck_problem(array $entries): ?string {
     $cards = catalogue();
     if (!$cards) return 'catalogue unavailable';

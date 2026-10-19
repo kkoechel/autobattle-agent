@@ -337,6 +337,71 @@ if ($path === 'starters' && $method === 'POST') {
     reply(['ok' => true, 'starters' => count($rows)]);
 }
 
+// ---- POST /bans ---------------------------------------------------------
+// Apply one ban and rotate the pool. Admin only, and the only place bans are
+// written -- bin/ban.py decides WHICH card, this decides what that means.
+//
+// Rotating rather than accumulating: a format that only ever loses cards
+// shrinks until nothing is left, and a card that was banned a long time ago
+// is no longer the card that warped the field. The oldest leaves when the
+// pool is full, so a ban is a suspension with a known end.
+if ($path === 'bans' && $method === 'POST') {
+    require_admin();
+    $b = body();
+    $keep = max(1, min(50, (int)($b['keep'] ?? 7)));
+    $card = (int)($b['card_id'] ?? 0);
+    $cards = catalogue();
+    if ($card && !isset($cards[$card])) fail(400, "unknown card $card");
+
+    $released = [];
+    db()->beginTransaction();
+    try {
+        if ($card) {
+            db()->prepare(
+                'INSERT IGNORE INTO bans (card_id, reason) VALUES (?,?)'
+            )->execute([$card, mb_substr((string)($b['reason'] ?? ''), 0, 255)]);
+        }
+        // Oldest first, so the pool is a queue rather than a graveyard.
+        $over = db()->query(
+            'SELECT card_id FROM bans ORDER BY banned_at ASC, card_id ASC')
+            ->fetchAll(PDO::FETCH_COLUMN);
+        while (count($over) > $keep) {
+            $old = (int)array_shift($over);
+            db()->prepare('DELETE FROM bans WHERE card_id = ?')->execute([$old]);
+            $released[] = ['card_id' => $old,
+                           'name' => $cards[$old]['name'] ?? "card $old"];
+        }
+        db()->commit();
+    } catch (Throwable $e) {
+        db()->rollBack();
+        fail(500, 'could not apply the ban: ' . $e->getMessage());
+    }
+
+    $now = [];
+    foreach (db()->query(
+        'SELECT card_id, banned_at, reason FROM bans ORDER BY banned_at DESC') as $r) {
+        $id = (int)$r['card_id'];
+        $now[] = ['card_id' => $id, 'name' => $cards[$id]['name'] ?? "card $id",
+                  'banned_at' => $r['banned_at'], 'reason' => $r['reason']];
+    }
+    reply(['ok' => true, 'banned' => $now, 'released' => $released, 'keep' => $keep]);
+}
+
+// ---- GET /bans ----------------------------------------------------------
+// What is out, with names and why. Public: a player needs to know why their
+// deck became illegal.
+if ($path === 'bans' && $method === 'GET') {
+    $cards = catalogue();
+    $out = [];
+    foreach (db()->query(
+        'SELECT card_id, banned_at, reason FROM bans ORDER BY banned_at DESC') as $r) {
+        $id = (int)$r['card_id'];
+        $out[] = ['card_id' => $id, 'name' => $cards[$id]['name'] ?? "card $id",
+                  'banned_at' => $r['banned_at'], 'reason' => $r['reason']];
+    }
+    reply(['ok' => true, 'banned' => $out]);
+}
+
 // ---- saved decks --------------------------------------------------------
 // The agent only ever has ONE deck, and training replaces it. Without a
 // shelf, trying a new idea costs you the deck that was working.

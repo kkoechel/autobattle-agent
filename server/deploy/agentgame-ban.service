@@ -1,0 +1,30 @@
+[Unit]
+Description=AutoBattle Agent game — measure the field and apply one ban
+After=network-online.target mysql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/games/agentgame
+EnvironmentFile=/etc/agentgame-round.env
+
+ExecStart=/usr/bin/python3 -u /var/www/games/agentgame/bin/ban.py
+
+# Heavier and far less urgent than a round: it rebuilds decks and replays
+# them, and nobody is waiting on the answer. Below the round job on every
+# axis so a ban measurement can never delay a score.
+Nice=18
+CPUWeight=20
+MemoryMax=700M
+TimeoutStartSec=2400
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/www/games/agentgame/var
+
+[Install]
+WantedBy=multi-user.target
