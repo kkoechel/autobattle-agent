@@ -129,6 +129,21 @@ object Compete {
     }
 
     /** How the deck you already have does against the field as it stands. */
+    /**
+     * One match the trial actually played, kept so it can be watched.
+     *
+     * The seed and the seat are both needed: sim() alternates who goes
+     * first by seed INDEX, and replaying with the wrong seat produces a
+     * different game from the one that was scored.
+     */
+    data class Game(
+        val seed: Int,
+        val opponent: String,
+        val youFirst: Boolean,
+        /** "won", "lost" or "drew", from your side. */
+        val outcome: String,
+    )
+
     data class Trial(
         val deckName: String,
         val wins: Double,
@@ -139,6 +154,12 @@ object Compete {
         val even: Int,
         val bestAgainst: String?,
         val worstAgainst: String?,
+        /** Everything played, so a game can be picked out and watched. */
+        val games: List<Game> = emptyList(),
+        /** What a replay needs, carried rather than re-fetched. */
+        val mine: Deck? = null,
+        val rivals: List<Deck> = emptyList(),
+        val cardDefs: String = "",
     )
 
     /**
@@ -185,8 +206,38 @@ object Compete {
         // to avoid.
         val block = (0 until seedCount).map { 90_000 + it }
         onProgress(Progress("Playing it out", 0, 1))
-        val s = score(cat, listOf(mine), opponents, block, workers)["me"]
+        // Run it here rather than through score(), because the per-match
+        // rows are what make a game watchable afterwards -- the aggregate
+        // cannot say WHICH seed lost.
+        val builder = PayloadBuilder(cat.raw)
+        val payload = builder.build(listOf(mine), opponents, block)
+        val env = JSONObject(Mobile.run(payload, workers.toLong()))
+        val raw = env.getJSONArray("results")
+        val s = Aggregator.aggregate(raw.toString(), listOf(mine), block, opponents.size)["me"]
             ?: error("the engine returned no result")
+
+        val nameOfSlot = opponents.associate { it.slotId to it.name }
+        val seatOf = block.withIndex().associate { (i, seed) -> seed to (i % 2 == 0) }
+        val games = ArrayList<Game>(raw.length())
+        for (i in 0 until raw.length()) {
+            val r = raw.getJSONObject(i)
+            val parts = r.getString("match_id").split("|")
+            if (parts.size != 3) continue
+            val (sid, oid, seedStr) = parts
+            if (sid != "me") continue
+            val seed = seedStr.toIntOrNull() ?: continue
+            val winner = if (r.isNull("winner_slot")) null else r.getString("winner_slot")
+            games.add(Game(
+                seed = seed,
+                opponent = nameOfSlot[oid] ?: oid,
+                youFirst = seatOf[seed] ?: true,
+                outcome = when (winner) {
+                    null -> "drew"
+                    sid -> "won"
+                    else -> "lost"
+                },
+            ))
+        }
 
         val handleOf = opponents.associate { it.slotId to it.name }
         var beaten = 0
@@ -205,7 +256,9 @@ object Compete {
             if (margin < worstMargin) { worstMargin = margin; worst = nm }
         }
         return Trial(me.optString("name"), s.wins, opponents.size, block.size,
-            beaten, lost, even, best, worst)
+            beaten, lost, even, best, worst,
+            games = games, mine = mine, rivals = opponents,
+            cardDefs = builder.cardDefs)
     }
 
     /**

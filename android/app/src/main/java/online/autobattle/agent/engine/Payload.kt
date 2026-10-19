@@ -21,7 +21,17 @@ data class Deck(
  */
 class PayloadBuilder(catalogue: JSONArray) {
 
-    private val cardsJson: String = buildCards(catalogue)
+    /**
+     * The card definitions, exactly as the engine is given them.
+     *
+     * Exposed because the replay hands the SAME map to the JS engine in a
+     * WebView. The Go engine decides the result and the JS one draws it, so
+     * if they are fed different definitions the replay shows a game that did
+     * not happen.
+     */
+    val cardDefs: String = buildCards(catalogue)
+
+    private val cardsJson: String get() = cardDefs
 
     /**
      * Copies the fields the engine actually reads.

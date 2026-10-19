@@ -85,6 +85,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
     var askNow by remember { mutableStateOf(false) }
     var showHelp by remember { mutableStateOf(false) }
     var newsBusy by remember { mutableStateOf(false) }
+    var watching by remember { mutableStateOf<Compete.Game?>(null) }
     var keywords by remember { mutableStateOf<Map<String, Keyword>>(emptyMap()) }
     var showDeck by remember { mutableStateOf(false) }
     var loaded by remember { mutableStateOf(false) }
@@ -401,6 +402,22 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 }
                 // The answer to a rehearsal stays in the window that was
                 // asked for it.
+                // WATCH ONE. The trial just played these games on this phone,
+                // so the seeds that won and lost are already known -- picking
+                // one out is a filter, not another simulation.
+                trial?.takeIf { it.games.isNotEmpty() }?.let { t ->
+                    val lost = t.games.filter { it.outcome == "lost" }
+                    val won = t.games.filter { it.outcome == "won" }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (won.isNotEmpty()) GameLink("Watch one we won") {
+                            watching = won.random()
+                        }
+                        if (lost.isNotEmpty()) GameLink("Watch one we lost") {
+                            watching = lost.random()
+                        }
+                        GameLink("Watch any") { watching = t.games.random() }
+                    }
+                }
                 trial?.let { t ->
                     Text("\u201c${t.deckName} is favourable against ${t.beaten} of " +
                         "the ${t.opponents}. ${t.lostTo} are unfavourable" +
@@ -641,6 +658,25 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 cardsById = cardsById,
                 onOpenCard = { showCard = it },
             )
+        }
+
+        // Watching is an overlay, like the card popup: it belongs to no place.
+        watching?.let { g ->
+            val t = trial
+            val rival = t?.rivals?.firstOrNull { it.name == g.opponent }
+            if (t?.mine != null && rival != null) {
+                ReplayScreen(
+                    mine = t.mine,
+                    rival = rival,
+                    cardDefs = t.cardDefs,
+                    seed = g.seed,
+                    youFirst = g.youFirst,
+                    expected = g.outcome,
+                    onDismiss = { watching = null },
+                )
+            } else {
+                watching = null
+            }
         }
 
         if (showHelp) {
