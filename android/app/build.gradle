@@ -25,8 +25,8 @@ android {
         applicationId "online.autobattle.agent"
         minSdk 24
         targetSdk 36
-        versionCode 16
-        versionName "1.6"
+        versionCode 17
+        versionName "1.7"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         // The engine AAR ships arm64 only. Adding more ABIs means rebuilding

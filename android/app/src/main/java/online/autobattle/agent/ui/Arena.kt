@@ -282,29 +282,75 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 lastPlacement = mem.lastPlacement.takeIf { it > 0 },
             )
 
-            if (q != null) {
-                SnesWindow {
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        AgentPortrait(mood)
-                        TypedLine(q.text)
-                    }
-                        // The agent names a card; the player must be able to
-                        // look at it before answering.
-                        idea?.optInt("card_id")?.takeIf {
-                            it > 0 && q.id == "idea-card"
-                        }?.let { cid ->
-                            Text(
-                                "• Show me ${idea?.optString("name") ?: "the card"}",
-                                style = snesText(13, androidx.compose.ui.graphics.Color(0xFFA8C8E8)),
-                                modifier = Modifier.clickable {
-                                    scope.launch {
-                                        ensureNames()
-                                        cardsById[cid]?.let { c -> showCard = c }
-                                    }
-                                },
-                            )
+            // ONE dialogue, one face. The agent had been speaking from two
+            // windows at once -- a question above and a notice below, each
+            // with its own portrait -- which read as two people talking over
+            // each other. Everything it has to say now goes through a single
+            // frame, and what it says is chosen by priority.
+            val scoredAt = standings?.optJSONObject("round")?.optString("finished_at") ?: ""
+            val submittedAt = myDeck?.optString("updated_at") ?: ""
+            val awaitingRound = submittedAt.isNotBlank() && scoredAt.isNotBlank() &&
+                scoredAt <= submittedAt
+
+            val line = when {
+                busy -> "\u201c${progress?.step ?: "Working"}\u2026\u201d"
+                q != null -> q.text
+                awaitingRound -> "\u201cIt has not been played yet.\u201d"
+                else -> "\u201c${directive.summary()}\u201d"
+            }
+
+            SnesWindow {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    AgentPortrait(mood)
+                    TypedLine(line)
+                }
+                if (busy) {
+                    val pr = progress
+                    if (pr != null) SnesProgress(pr.done, pr.total) else SnesProgress(0, 1)
+                }
+                if (!busy && q == null && awaitingRound) {
+                    Text("\u201cThe league is scored as a whole, so your result " +
+                        "arrives with the next round. Were I to build another " +
+                        "now, this one would be discarded unexamined.\u201d",
+                        style = snesText(13))
+                    standings?.optJSONObject("round")
+                        ?.optString("next_at")?.takeIf { it.isNotBlank() }?.let {
+                            Text(untilRound(it) + ".",
+                                style = snesText(12, androidx.compose.ui.graphics.Color(0xFF8A8AA8)))
                         }
-                        SnesChoiceBox {
+                }
+                // The answer to a rehearsal stays in the window that was
+                // asked for it.
+                trial?.let { t ->
+                    Text("\u201c${t.deckName} is favourable against ${t.beaten} of " +
+                        "the ${t.opponents}. ${t.lostTo} are unfavourable" +
+                        (if (t.even > 0) ", and ${t.even} could go either way" else "") +
+                        ".\u201d",
+                        style = snesText(14, androidx.compose.ui.graphics.Color(0xFF8CE8A0)))
+                    Text("\u201cThat is ${"%.1f".format(t.wins)} wins a round across " +
+                        "${t.seeds} draws it has not seen" +
+                        (t.worstAgainst?.let { ". $it remains the difficulty" } ?: "") +
+                        ". A rehearsal only \u2014 the league plays its own " +
+                        "games at the next round.\u201d",
+                        style = snesText(12, androidx.compose.ui.graphics.Color(0xFFA8A8C8)))
+                }
+                // The agent names a card; the player must be able to look at
+                // it before answering.
+                if (q != null && q.id == "idea-card") {
+                    idea?.optInt("card_id")?.takeIf { it > 0 }?.let { cid ->
+                        Text("\u2022 Show me ${idea?.optString("name") ?: "the card"}",
+                            style = snesText(13, androidx.compose.ui.graphics.Color(0xFFA8C8E8)),
+                            modifier = Modifier.clickable {
+                                scope.launch {
+                                    ensureNames()
+                                    cardsById[cid]?.let { c -> showCard = c }
+                                }
+                            })
+                    }
+                }
+
+                if (!busy) SnesChoiceBox {
+                    if (q != null) {
                         for (c in q.choices) {
                             SnesChoice(
                                 label = c.label,
@@ -334,145 +380,66 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                                                      else mem.barrenRuns)
                                     Memory.save(ctx, mem)
                                     if (q.id.startsWith("idea")) idea = null
+                                    // AGREEING TO AN IDEA STARTS THE WORK.
+                                    // Saying "investigate this card" and
+                                    // watching nothing happen made the answer
+                                    // look ignored -- the brief changed, but
+                                    // the deck on screen was still the old
+                                    // one and nothing said why.
+                                    val newPlan = directive.seedCard != before.seedCard ||
+                                        directive.theme != before.theme
+                                    if (newPlan && !awaitingRound) {
+                                        error = null; note = null; trial = null
+                                        TrainingService.start(ctx)
+                                    }
                                 })
                         }
+                    } else {
+                        if (awaitingRound) {
+                            SnesChoice(
+                                label = if (trialBusy) (trialStep ?: "Playing it out\u2026")
+                                        else "Show me what it can do",
+                                enabled = !trialBusy,
+                                onClick = {
+                                    error = null; note = null; trial = null
+                                    trialBusy = true
+                                    scope.launch {
+                                        runCatching {
+                                            withContext(Dispatchers.Default) {
+                                                Compete.testDeck(GameClient(token), handle,
+                                                    onProgress = { trialStep = it.step })
+                                            }
+                                        }.onSuccess { trial = it }
+                                         .onFailure { error = readable(it) }
+                                        trialBusy = false; trialStep = null
+                                    }
+                                })
                         }
-                }
-            } else {
-                // The agent keeps the window even when it is not asking
-                // anything -- while it works, which is the longest a player
-                // ever looks at this screen, and when it is simply standing
-                // by. Dropping back to a line of grey text the moment it
-                // started working was the one place the character vanished.
-                SnesWindow {
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        AgentPortrait(mood)
-                        Column(
-                            Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(7.dp),
-                        ) {
-                            val p = progress
-                            when {
-                                busy && p != null -> {
-                                    // Keyed on the step alone: the counts
-                                    // change constantly and would restart
-                                    // the reveal on every tick.
-                                    TypedLine("\u201c${p.step}\u2026\u201d")
-                                    SnesProgress(p.done, p.total)
-                                }
-                                busy -> {
-                                    TypedLine("\u201cWorking.\u201d")
-                                    SnesProgress(0, 1)
-                                }
-                                else -> TypedLine("\u201c${directive.summary()}\u201d")
-                            }
-                        }
+                        SnesChoice(
+                            label = if (awaitingRound) "Build another one anyway"
+                                    else "Get to work",
+                            enabled = !trialBusy,
+                            onClick = {
+                                error = null; note = null; trial = null
+                                TrainingService.start(ctx)
+                            })
                     }
                 }
-                if (!busy) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        GameLink("Build around\u2026") { showThemes = true }
-                        GameLink("Let's talk") {
-                            mem = mem.copy(answered = emptySet(), dismissed = emptySet())
-                            Memory.save(ctx, mem)
-                        }
-                    }
-                }
+                if (trialBusy) SnesProgress(0, 1)
             }
 
-            // HAS THE CURRENT DECK ACTUALLY PLAYED YET?
-            //
-            // Both timestamps come from the server in the same clock, so a
-            // string compare is the whole test. Until a round has been scored
-            // since the deck was submitted, retraining throws away a deck
-            // nobody has seen play -- so the work button waits and the trial
-            // button takes its place. The trial changes nothing; it just
-            // answers "is this any good" without spending the deck.
-            val scoredAt = standings?.optJSONObject("round")?.optString("finished_at") ?: ""
-            val submittedAt = myDeck?.optString("updated_at") ?: ""
-            val awaitingRound = submittedAt.isNotBlank() && scoredAt.isNotBlank() &&
-                scoredAt <= submittedAt
-
-            if (awaitingRound) {
-                // The agent says this, so it is said the way the agent says
-                // things: its own window, with its face on it. As a bordered
-                // panel of grey text it read as a system notice about the
-                // deck rather than as the agent declining to throw it away.
-                SnesWindow {
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        AgentPortrait(Mood.IDLE, size = 48.dp)
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("“It has not been played yet.”",
-                                style = snesText(15, androidx.compose.ui.graphics.Color(0xFFFFE28C)))
-                            Text("“The league is scored as a whole, so your " +
-                                "result arrives with the next round. Were I to " +
-                                "build another now, this one would be discarded " +
-                                "unexamined.”",
-                                style = snesText(13))
-                        }
-                    }
-                    // Its own sentence. Appending it lower-cased read as
-                    // "...seen it play. next round in about 2 minutes."
-                    standings?.optJSONObject("round")
-                        ?.optString("next_at")?.takeIf { it.isNotBlank() }?.let {
-                            Text(untilRound(it) + ".",
-                                style = snesText(12, androidx.compose.ui.graphics.Color(0xFF8A8AA8)))
-                        }
-                    SnesChoiceBox {
-                    SnesChoice(
-                        label = if (trialBusy) (trialStep ?: "Playing it out…")
-                                else "Show me what it can do",
-                        enabled = !trialBusy && !busy,
-                        onClick = {
-                        error = null; note = null; trial = null; trialBusy = true
-                        scope.launch {
-                            runCatching {
-                                withContext(Dispatchers.Default) {
-                                    Compete.testDeck(GameClient(token), handle,
-                                        onProgress = { trialStep = it.step })
-                                }
-                            }.onSuccess { trial = it }
-                             .onFailure { error = readable(it) }
-                            trialBusy = false; trialStep = null
-                        }
-                    })
-                    }
-                    if (trialBusy) SnesProgress(0, 1)
-                    // Shown HERE rather than in the note at the foot of the
-                    // screen: the note sits below the fold, so the answer to
-                    // a button you just pressed scrolled away out of sight.
-                    trial?.let { t ->
-                        Text("“${t.deckName} is favourable against ${t.beaten} of " +
-                            "the ${t.opponents}. ${t.lostTo} are unfavourable" +
-                            (if (t.even > 0) ", and ${t.even} could go either way" else "") +
-                            ".”",
-                            style = snesText(14, androidx.compose.ui.graphics.Color(0xFF8CE8A0)))
-                        Text("“That is ${"%.1f".format(t.wins)} wins a round across " +
-                            "${t.seeds} draws it has not seen" +
-                            (t.worstAgainst?.let { ". $it remains the difficulty" } ?: "") +
-                            ". A rehearsal only \u2014 the league plays its own " +
-                            "games at the next round.”",
-                            style = snesText(12, androidx.compose.ui.graphics.Color(0xFFA8A8C8)))
+            if (!busy && q == null) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    GameLink("Build around\u2026") { showThemes = true }
+                    GameLink("Let's talk") {
+                        mem = mem.copy(answered = emptySet(), dismissed = emptySet())
+                        Memory.save(ctx, mem)
                     }
                 }
-            }
-
-            GameButton(
-                text = when {
-                    busy -> "Compiling…"
-                    awaitingRound -> "Build another regardless"
-                    else -> "Get to work"
-                },
-                enabled = !busy && !trialBusy, modifier = Modifier.fillMaxWidth()) {
-                error = null; note = null
-                // Hand the work to the service and return immediately. The
-                // screen is now an observer, so leaving it is harmless.
-                TrainingService.start(ctx)
             }
 
             note?.let {
-                Text(it, style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.primary)
+                Text(it, style = snesText(13, androidx.compose.ui.graphics.Color(0xFFFFE28C)))
             }
             }   // end Place.AGENT
 

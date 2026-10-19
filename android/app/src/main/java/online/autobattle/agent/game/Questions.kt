@@ -204,6 +204,17 @@ object Questions {
         // becoming a popup.
         if (roundId <= mem.lastIdeaRound) return null
 
+        // ONCE A PLAN IS SET, STOP PITCHING.
+        //
+        // The ideas register exists to give a player something to react to
+        // when they have no direction of their own. A player who has said
+        // "build around Turingue" HAS a direction, and being asked about
+        // Void Mage the next round reads as the agent having forgotten --
+        // worse, taking the new suggestion silently replaces the plan they
+        // chose. They can always ask for something else through "Build
+        // around...", or clear it back to "whatever looks best".
+        if (d.seedCard != null || d.theme != null) return null
+
         if (idea != null && idea.optInt("card_id") > 0) {
             val nm = idea.optString("name")
             return Question("idea-card",
