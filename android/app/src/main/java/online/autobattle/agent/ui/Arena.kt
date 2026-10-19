@@ -86,6 +86,9 @@ fun ArenaPane(modifier: Modifier = Modifier) {
     var showHelp by remember { mutableStateOf(false) }
     var newsBusy by remember { mutableStateOf(false) }
     var watching by remember { mutableStateOf<Compete.Game?>(null) }
+    var saved by remember { mutableStateOf<JSONArray?>(null) }
+    var openSaved by remember { mutableStateOf<Int?>(null) }
+    var shelfBusy by remember { mutableStateOf(false) }
     var keywords by remember { mutableStateOf<Map<String, Keyword>>(emptyMap()) }
     var showDeck by remember { mutableStateOf(false) }
     var loaded by remember { mutableStateOf(false) }
@@ -806,12 +809,112 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 style = MaterialTheme.typography.bodyMedium)
         }
 
-            if (place == Place.BINDER) myDeck?.let { d ->
+            if (place == Place.BINDER) {
                 // The binder needs every card's name and art, so the
                 // catalogue is pulled on arrival rather than behind a
-                // "show cards" tap -- the page IS the content here.
-                LaunchedEffect(d.toString()) { ensureNames() }
-                BinderPage(d, cardsById) { showCard = it }
+                // "show cards" tap -- the page IS the content here. The
+                // shelf comes with it.
+                LaunchedEffect(myDeck?.toString(), token) {
+                    ensureNames()
+                    if (token != null && saved == null) {
+                        runCatching {
+                            withContext(Dispatchers.IO) { GameClient(token).savedDecks() }
+                        }.onSuccess { saved = it }
+                    }
+                }
+                myDeck?.let { d ->
+                    BinderPage(d, cardsById) { showCard = it }
+                    SnesChoiceBox {
+                        SnesChoice(
+                            label = if (shelfBusy) "Keeping\u2026" else "Keep this deck",
+                            detail = "Puts a copy on the shelf. The agent " +
+                                "replaces the deck it is working on, so this " +
+                                "is the only way back to one that was working.",
+                            enabled = !shelfBusy && !busy,
+                            onClick = {
+                                shelfBusy = true; error = null; note = null
+                                scope.launch {
+                                    runCatching {
+                                        withContext(Dispatchers.IO) {
+                                            val c = GameClient(token)
+                                            c.saveDeck()
+                                            c.savedDecks()
+                                        }
+                                    }.onSuccess { saved = it }
+                                     .onFailure { error = readable(it) }
+                                    shelfBusy = false
+                                }
+                            })
+                    }
+                }
+
+                saved?.takeIf { it.length() > 0 }?.let { shelf ->
+                    SnesWindow {
+                        Text("Kept decks (${shelf.length()})",
+                            style = snesText(14, androidx.compose.ui.graphics.Color(0xFFFFE28C)))
+                        for (i in 0 until shelf.length()) {
+                            val sv = shelf.getJSONObject(i)
+                            val id = sv.optInt("id")
+                            val place_ = sv.optInt("best_place", 0)
+                            val of = sv.optInt("of_decks", 0)
+                            Text(
+                                sv.optString("name") + "  r${sv.optInt("revision")}" +
+                                    if (place_ > 0 && of > 0) "  \u00b7  best $place_ of $of" else "",
+                                Modifier.fillMaxWidth().clickable {
+                                    openSaved = if (openSaved == id) null else id
+                                },
+                                style = snesText(13,
+                                    if (openSaved == id) androidx.compose.ui.graphics.Color(0xFFFFE28C)
+                                    else androidx.compose.ui.graphics.Color(0xFFF2EFE4)))
+                            if (openSaved == id) {
+                                sv.optJSONArray("cards")?.let { cards ->
+                                    RivalPockets(cards, cardsById) { showCard = it }
+                                }
+                                SnesChoiceBox {
+                                    SnesChoice(
+                                        label = "Put this one back",
+                                        detail = "Replaces the deck in play. " +
+                                            "Checked for legality first \u2014 a deck " +
+                                            "saved before a ban cannot come back.",
+                                        enabled = !shelfBusy && !busy,
+                                        onClick = {
+                                            shelfBusy = true; error = null
+                                            scope.launch {
+                                                runCatching {
+                                                    withContext(Dispatchers.IO) {
+                                                        GameClient(token).restoreDeck(id)
+                                                    }
+                                                }.onSuccess {
+                                                    note = "\u201c${it.optString("name")} is " +
+                                                        "back in play.\u201d"
+                                                    openSaved = null
+                                                    refresh()
+                                                }.onFailure { error = readable(it) }
+                                                shelfBusy = false
+                                            }
+                                        })
+                                    SnesChoice(
+                                        label = "Take it off the shelf",
+                                        detail = "Forgets this copy.",
+                                        enabled = !shelfBusy && !busy,
+                                        onClick = {
+                                            shelfBusy = true
+                                            scope.launch {
+                                                runCatching {
+                                                    withContext(Dispatchers.IO) {
+                                                        val c = GameClient(token)
+                                                        c.deleteSaved(id); c.savedDecks()
+                                                    }
+                                                }.onSuccess { saved = it; openSaved = null }
+                                                 .onFailure { error = readable(it) }
+                                                shelfBusy = false
+                                            }
+                                        })
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 

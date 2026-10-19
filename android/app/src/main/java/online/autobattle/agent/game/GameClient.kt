@@ -92,6 +92,27 @@ class GameClient(private val token: String?, private val base: String = BASE) {
         CardIndex.parseKeywords(call("GET", "/keywords").getJSONObject("keywords"))
 
     /**
+     * The decks this player has kept.
+     *
+     * Snapshots held by the coordinator rather than on the phone: a deck
+     * worth keeping should survive a reinstall, and the whole point is not
+     * losing it.
+     */
+    fun savedDecks(): JSONArray =
+        call("GET", "/decks/saved").getJSONArray("saved")
+
+    /** Keep the deck currently in play. Saving the same list twice is a no-op. */
+    fun saveDeck(note: String? = null): JSONObject =
+        call("POST", "/decks/saved", JSONObject().apply { note?.let { put("note", it) } })
+
+    /** Put a kept deck back into play. Re-validated server-side first. */
+    fun restoreDeck(id: Int): JSONObject =
+        call("POST", "/decks/saved/restore", JSONObject().put("id", id))
+
+    fun deleteSaved(id: Int): JSONObject =
+        call("POST", "/decks/saved/delete", JSONObject().put("id", id))
+
+    /**
      * This player's own round-by-round record, newest first.
      *
      * Separate from leaderboard() because an average answers a different

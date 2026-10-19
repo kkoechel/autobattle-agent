@@ -96,3 +96,28 @@ CREATE TABLE IF NOT EXISTS starters (
   opponents   SMALLINT     NOT NULL DEFAULT 0,
   created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- A player's keepers. The agent replaces the ONE deck it is working on, so
+-- without somewhere to put a deck that is doing well, trying a new idea
+-- means losing the old one: "if I were to switch deck ideas right now, I'd
+-- lose the ability to come back to this one".
+--
+-- The list is snapshotted, not referenced: restoring must give back the
+-- cards that were saved, not whatever the live deck has become since.
+CREATE TABLE IF NOT EXISTS saved_decks (
+  id          INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  player_id   INT UNSIGNED NOT NULL,
+  name        VARCHAR(80)  NOT NULL,
+  cards_json  MEDIUMTEXT   NOT NULL,
+  plan_json   MEDIUMTEXT   NOT NULL,
+  -- What it was doing when it was saved, so the shelf is readable without
+  -- replaying history: a deck is worth keeping because of how it placed.
+  revision    INT UNSIGNED NOT NULL DEFAULT 0,
+  best_place  SMALLINT     NULL,
+  of_decks    SMALLINT     NULL,
+  note        VARCHAR(120) NULL,
+  created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_saved_player (player_id, id),
+  CONSTRAINT fk_saved_player FOREIGN KEY (player_id) REFERENCES players(id)
+    ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

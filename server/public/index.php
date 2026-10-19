@@ -337,6 +337,115 @@ if ($path === 'starters' && $method === 'POST') {
     reply(['ok' => true, 'starters' => count($rows)]);
 }
 
+// ---- saved decks --------------------------------------------------------
+// The agent only ever has ONE deck, and training replaces it. Without a
+// shelf, trying a new idea costs you the deck that was working.
+//
+// Snapshots, not references: restoring gives back the cards that were saved,
+// not whatever the live deck has become since.
+const SAVED_MAX = 12;
+
+if ($path === 'decks/saved' && $method === 'GET') {
+    $p = require_player();
+    $st = db()->prepare(
+        'SELECT id, name, revision, best_place, of_decks, note, created_at,
+                cards_json, plan_json
+           FROM saved_decks WHERE player_id = ? ORDER BY id DESC');
+    $st->execute([$p['id']]);
+    $rows = [];
+    foreach ($st->fetchAll() as $r) {
+        $rows[] = [
+            'id' => (int)$r['id'], 'name' => $r['name'],
+            'revision' => (int)$r['revision'],
+            'best_place' => $r['best_place'] === null ? null : (int)$r['best_place'],
+            'of_decks' => $r['of_decks'] === null ? null : (int)$r['of_decks'],
+            'note' => $r['note'], 'created_at' => $r['created_at'],
+            'cards' => json_decode($r['cards_json'], true),
+            'battle_plan' => json_decode($r['plan_json'], true) ?: new stdClass(),
+        ];
+    }
+    reply(['ok' => true, 'saved' => $rows, 'max' => SAVED_MAX]);
+}
+
+if ($path === 'decks/saved' && $method === 'POST') {
+    $p = require_player();
+    $b = body();
+    $st = db()->prepare(
+        'SELECT name, revision, cards_json, plan_json FROM decks WHERE player_id = ?');
+    $st->execute([$p['id']]);
+    $d = $st->fetch();
+    if (!$d) fail(400, 'you have no deck to save');
+
+    // The same list twice is a shelf full of one deck. Compared by content
+    // rather than by name, because the agent names decks after their seed
+    // card and two different builds often share a name.
+    $dupe = db()->prepare(
+        'SELECT id FROM saved_decks WHERE player_id = ? AND cards_json = ?');
+    $dupe->execute([$p['id'], $d['cards_json']]);
+    if ($row = $dupe->fetch()) {
+        reply(['ok' => true, 'id' => (int)$row['id'], 'already' => true]);
+    }
+
+    $cnt = db()->prepare('SELECT COUNT(*) FROM saved_decks WHERE player_id = ?');
+    $cnt->execute([$p['id']]);
+    if ((int)$cnt->fetchColumn() >= SAVED_MAX) {
+        fail(409, 'that is ' . SAVED_MAX . ' saved decks; remove one first');
+    }
+
+    // Its best finish, so the shelf says why a deck was worth keeping.
+    $best = db()->prepare(
+        'SELECT MIN(r.placement) AS p, MAX(rd.n_decks) AS n
+           FROM results r JOIN rounds rd ON rd.id = r.round_id
+          WHERE r.player_id = ? AND r.revision = ?');
+    $best->execute([$p['id'], (int)$d['revision']]);
+    $b2 = $best->fetch();
+
+    $ins = db()->prepare(
+        'INSERT INTO saved_decks
+            (player_id, name, cards_json, plan_json, revision, best_place,
+             of_decks, note)
+         VALUES (?,?,?,?,?,?,?,?)');
+    $ins->execute([$p['id'], $d['name'], $d['cards_json'], $d['plan_json'],
+                   (int)$d['revision'],
+                   $b2 && $b2['p'] !== null ? (int)$b2['p'] : null,
+                   $b2 && $b2['n'] !== null ? (int)$b2['n'] : null,
+                   isset($b['note']) ? mb_substr((string)$b['note'], 0, 120) : null]);
+    reply(['ok' => true, 'id' => (int)db()->lastInsertId()]);
+}
+
+if ($path === 'decks/saved/restore' && $method === 'POST') {
+    $p = require_player();
+    $id = (int)(body()['id'] ?? 0);
+    $st = db()->prepare(
+        'SELECT name, cards_json, plan_json FROM saved_decks
+          WHERE id = ? AND player_id = ?');
+    $st->execute([$id, $p['id']]);
+    $sv = $st->fetch();
+    if (!$sv) fail(404, 'no such saved deck');
+
+    // Validated on the way back in: a deck saved before a ban is no longer
+    // legal, and restoring it unchecked would quietly enter an illegal list.
+    if ($why = deck_problem(json_decode($sv['cards_json'], true) ?: [])) {
+        fail(400, "that deck cannot be played now: $why");
+    }
+    db()->prepare(
+        'INSERT INTO decks (player_id, name, cards_json, plan_json)
+         VALUES (?,?,?,?)
+         ON DUPLICATE KEY UPDATE name = VALUES(name),
+             cards_json = VALUES(cards_json), plan_json = VALUES(plan_json),
+             revision = revision + 1, updated_at = NOW()'
+    )->execute([$p['id'], $sv['name'], $sv['cards_json'], $sv['plan_json']]);
+    reply(['ok' => true, 'name' => $sv['name']]);
+}
+
+if ($path === 'decks/saved/delete' && $method === 'POST') {
+    $p = require_player();
+    $id = (int)(body()['id'] ?? 0);
+    $st = db()->prepare('DELETE FROM saved_decks WHERE id = ? AND player_id = ?');
+    $st->execute([$id, $p['id']]);
+    reply(['ok' => true, 'removed' => $st->rowCount()]);
+}
+
 // ---- GET /history -------------------------------------------------------
 // The caller's OWN round-by-round record: what each deck actually did, round
 // by round, newest first.
