@@ -70,6 +70,16 @@ fun ArenaPane(modifier: Modifier = Modifier) {
     var trialBusy by remember { mutableStateOf(false) }
     var trialStep by remember { mutableStateOf<String?>(null) }
     var trial by remember { mutableStateOf<Compete.Trial?>(null) }
+    // A plan agreed while the current deck is still waiting for its round.
+    // Without this the agent took the instruction, could not act on it
+    // because of the brake, and simply asked a different question -- which
+    // from the outside looked like the buttons toggling between themselves.
+    var planPending by remember { mutableStateOf(false) }
+    // What the agent has just finished, held until the player acknowledges
+    // it. Without the beat, accepting an angle and having a new question
+    // appear a few seconds later reads as the options toggling between
+    // themselves -- the work in between is invisible because it is fast.
+    var justBuilt by remember { mutableStateOf<String?>(null) }
     var keywords by remember { mutableStateOf<Map<String, Keyword>>(emptyMap()) }
     var showDeck by remember { mutableStateOf(false) }
     var loaded by remember { mutableStateOf(false) }
@@ -193,6 +203,13 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 "your standing may differ." +
                 if (o.relaxed) " (It could not avoid the field's cards this time " +
                     "and built the best deck it could instead.)" else ""
+            justBuilt = "\u201cDone. ${o.name}, revision ${r.revision}. On fresh " +
+                "matchups it won ${"%.1f".format(o.wins)} of ${o.opponents}, " +
+                "picked from ${o.screened} designs and improved " +
+                "${o.climbed} time${if (o.climbed == 1) "" else "s"}.\u201d" +
+                if (o.relaxed) " \u201cI could not avoid the field's cards this " +
+                    "time, so that is the best I could do around them.\u201d" else ""
+            note = null
             mem = mem.copy(barrenRuns = if (o.climbed == 0) mem.barrenRuns + 1 else 0)
             Memory.save(ctx, mem)
             refresh()
@@ -268,7 +285,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
             val deckIds = myDeck?.optJSONArray("cards")?.let { a ->
                 (0 until a.length()).map { a.getJSONObject(it).optInt("card_id") }.toSet()
             } ?: emptySet()
-            val q = if (busy) null else
+            val q = if (busy || planPending || justBuilt != null) null else
                 Questions.next(directive, mem, handle, standings, deckIds, idea)
             val mood = moodFor(
                 working = busy,
@@ -292,9 +309,17 @@ fun ArenaPane(modifier: Modifier = Modifier) {
             val awaitingRound = submittedAt.isNotBlank() && scoredAt.isNotBlank() &&
                 scoredAt <= submittedAt
 
+            // Built before the `when` because it needs a lambda, and a lambda
+            // inside a string template cannot be split across a concatenation
+            // without the template swallowing the closing brace.
+            val plannedNow = directive.summary().replaceFirstChar { it.lowercase() }
             val line = when {
                 busy -> "\u201c${progress?.step ?: "Working"}\u2026\u201d"
                 q != null -> q.text
+                justBuilt != null -> justBuilt!!
+                planPending ->
+                    "\u201cNoted \u2014 $plannedNow I will build it once this " +
+                        "one has had its round.\u201d"
                 awaitingRound -> "\u201cIt has not been played yet.\u201d"
                 else -> "\u201c${directive.summary()}\u201d"
             }
@@ -308,7 +333,8 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                     val pr = progress
                     if (pr != null) SnesProgress(pr.done, pr.total) else SnesProgress(0, 1)
                 }
-                if (!busy && q == null && awaitingRound) {
+                if (!busy && q == null && awaitingRound && !planPending &&
+                    justBuilt == null) {
                     Text("\u201cThe league is scored as a whole, so your result " +
                         "arrives with the next round. Were I to build another " +
                         "now, this one would be discarded unexamined.\u201d",
@@ -408,14 +434,20 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                                         directive.style != before.style ||
                                         directive.breadth != before.breadth ||
                                         directive.original != before.original
-                                    if (newPlan && !awaitingRound) {
+                                    if (newPlan) {
                                         error = null; note = null; trial = null
-                                        TrainingService.start(ctx)
+                                        // The brake still holds -- an unplayed
+                                        // deck is not discarded because a new
+                                        // angle was agreed -- but the agent
+                                        // now says it has the instruction and
+                                        // offers to act on it anyway.
+                                        if (awaitingRound) planPending = true
+                                        else TrainingService.start(ctx)
                                     }
                                 })
                         }
                     } else {
-                        if (awaitingRound) {
+                        if (awaitingRound && justBuilt == null) {
                             SnesChoice(
                                 label = if (trialBusy) (trialStep ?: "Playing it out\u2026")
                                         else "Show me what it can do",
@@ -435,7 +467,34 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                                     }
                                 })
                         }
-                        SnesChoice(
+                        if (justBuilt != null) {
+                            // One beat, one tap. The result is the agent
+                            // reporting back, so it gets acknowledged the way
+                            // anything else it says does.
+                            SnesChoice(
+                                label = "Good",
+                                detail = "Back to what we were doing.",
+                                onClick = { justBuilt = null })
+                        }
+                        if (justBuilt == null && planPending) {
+                            SnesChoice(
+                                label = "Build it now",
+                                detail = "Throws away the deck that has not " +
+                                    "played yet and builds the new plan.",
+                                enabled = !trialBusy,
+                                onClick = {
+                                    planPending = false
+                                    error = null; note = null; trial = null
+                                    TrainingService.start(ctx)
+                                })
+                            SnesChoice(
+                                label = "Wait for the round",
+                                detail = "Keeps the current deck. I will build " +
+                                    "the new plan after it has played.",
+                                enabled = !trialBusy,
+                                onClick = { planPending = false })
+                        }
+                        if (!planPending && justBuilt == null) SnesChoice(
                             // "Build another one anyway" did not say what it
                             // would do with the deck you already have, and
                             // sat as the loudest thing on the screen while
