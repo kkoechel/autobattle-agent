@@ -80,11 +80,22 @@ object Archetype {
         size: Int = 100,
         stapleSlots: Int = 30,
         pool: Int = 14,
+        /**
+         * An extra tag to weigh the supporting cards toward.
+         *
+         * The archetype is normally read off the seed's own tags, which is
+         * why "build around Turingue AND pursue poison" used to be a
+         * decorative setting: the theme only chose which cards could be
+         * SEEDS, and a named seed card skips that entirely. Folding the tag
+         * into the affinity set makes it re-rank the other 99 instead, which
+         * is a real difference in the deck that comes back.
+         */
+        bias: String? = null,
     ): Built? {
         if (!cat.isPlayable(seed)) return null
         val theme = themeOf(seed, cat)
         if (theme.isEmpty()) return null
-        val tset = theme.toSet()
+        val tset = (theme + listOfNotNull(bias)).toSet()
 
         val picks = ArrayList<Pair<Int, Int>>()
         picks.add(seed to cat.deckLimit(seed))

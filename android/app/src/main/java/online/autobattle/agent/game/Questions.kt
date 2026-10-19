@@ -1,5 +1,6 @@
 package online.autobattle.agent.game
 
+import kotlin.random.Random
 import org.json.JSONObject
 
 /**
@@ -28,7 +29,8 @@ import org.json.JSONObject
 data class Choice(
     val label: String,
     val blurb: String,
-    val apply: (Directive) -> Directive,
+    /** Unchanged by default, which is what a decline is. */
+    val apply: (Directive) -> Directive = { it },
 )
 
 data class Question(
@@ -213,7 +215,7 @@ object Questions {
         // close the conversation. So while a plan is set the agent offers
         // angles on that plan, and nothing else.
         val plan = d.seedCardName ?: d.themeLabel
-        if (plan != null) return angle(d, mem, plan)
+        if (plan != null) return angle(d, mem, plan, roundId)
 
         if (idea != null && idea.optInt("card_id") > 0) {
             val nm = idea.optString("name")
@@ -244,50 +246,66 @@ object Questions {
      * label: style decides the staple budget and the seed pool, breadth
      * decides how much of the budget goes into refinement.
      */
-    private fun angle(d: Directive, mem: Memory, plan: String): Question? {
-        data class Angle(
-            val id: String,
-            val ask: String,
-            val take: String,
-            val why: String,
-            val apply: (Directive) -> Directive,
-        )
-        val angles = listOf(
-            Angle("angle-combo",
-                "\u201c$plan, then. Shall I build a tight shell around it \u2014 " +
-                    "few distinct cards, each at its limit?\u201d",
-                "Build the tight shell",
-                "Spends no slots on the field's staples. Measured stronger " +
-                    "on average than spreading them.",
-                { it.copy(style = Directive.Style.COMBO) }),
-            Angle("angle-aggro",
-                "\u201cShall I keep the curve low around $plan? Nothing " +
-                    "expensive, and we win early or not at all.\u201d",
-                "Keep the curve low",
-                "Seeds only from cheap cards.",
-                { it.copy(style = Directive.Style.AGGRO) }),
-            Angle("angle-defensive",
-                "\u201cShall I build $plan defensively \u2014 shields and " +
-                    "structures, and outlasting them?\u201d",
-                "Play the long game",
-                "Shields and structures over pressure.",
-                { it.copy(style = Directive.Style.DEFENSIVE) }),
-            Angle("angle-deep",
-                "\u201cI could stop sketching alternatives and refine $plan " +
-                    "properly instead. Twelve passes on one list.\u201d",
-                "Refine it properly",
-                "Fewer drafts, far more refinement. Refinement is where most " +
-                    "of the strength is found.",
-                { it.copy(breadth = Directive.Breadth.DEEP) }),
-            Angle("angle-original",
-                "\u201cShall I keep $plan away from what the winning decks " +
-                    "play, even if it costs us a little?\u201d",
-                "Something of our own",
-                "Refuses any deck sharing too much with a rival.",
-                { it.copy(original = true) }),
-        ).filterNot { it.id in mem.answered }
+    /**
+     * Angles on a plan the player has already chosen.
+     *
+     * SEVERAL AT ONCE, not one. A single yes/no reads as the agent having
+     * one idea; a short menu shows the player what directions exist and
+     * lets them see which ones have already been taken -- an angle that is
+     * currently in force is simply not offered again.
+     *
+     * Availability is read off the DIRECTIVE rather than remembered, which
+     * is what makes that work: switch away from a combo shell and the combo
+     * shell is offered again, because it is genuinely available again.
+     *
+     * NO ABANDON OPTION HERE. It sat on every angle and made walking away
+     * the easiest thing on the screen, which is the opposite of iterating.
+     * Leaving is still one tap through "Build around...", and the agent
+     * offers it itself once the angles are exhausted.
+     */
+    private fun angle(d: Directive, mem: Memory, plan: String, roundId: Int): Question? {
+        data class Angle(val take: String, val why: String,
+                         val apply: (Directive) -> Directive)
 
-        if (angles.isEmpty()) {
+        // Kept apart so the menu can be MIXED. There are sixteen pairings
+        // and five structural angles, so drawing three at random gave three
+        // pairings nearly every time -- a menu of variations on one idea,
+        // which is not a choice of directions.
+        val structural = ArrayList<Angle>()
+        val pairings = ArrayList<Angle>()
+        val options = structural
+        if (d.style != Directive.Style.COMBO) options += Angle(
+            "Build a tight shell",
+            "Few distinct cards, each at its limit, and no slots spent on " +
+                "the field's staples.",
+            { it.copy(style = Directive.Style.COMBO) })
+        if (d.style != Directive.Style.AGGRO) options += Angle(
+            "Keep the curve low",
+            "Nothing expensive. We win early or not at all.",
+            { it.copy(style = Directive.Style.AGGRO) })
+        if (d.style != Directive.Style.DEFENSIVE) options += Angle(
+            "Play the long game",
+            "Shields and structures, and outlasting them.",
+            { it.copy(style = Directive.Style.DEFENSIVE) })
+        if (d.breadth != Directive.Breadth.DEEP) options += Angle(
+            "Refine it properly",
+            "Fewer drafts, twelve passes of refinement on the best.",
+            { it.copy(breadth = Directive.Breadth.DEEP) })
+        if (!d.original) options += Angle(
+            "Keep clear of the field",
+            "Refuses any deck sharing too much with a rival.",
+            { it.copy(original = true) })
+        // Pairings. These weigh the supporting cards, which is a real change
+        // to the ninety-nine around the card you named.
+        for ((tag, label) in THEMES) {
+            if (tag == d.theme) continue
+            pairings += Angle(
+                "Pursue a $label angle",
+                "Weighs the supporting cards toward $label.",
+                { it.copy(theme = tag, themeLabel = label) })
+        }
+
+        if (structural.isEmpty() && pairings.isEmpty()) {
             if ("angle-done" in mem.answered) return null
             return Question("angle-done",
                 "\u201cI have tried every angle I have on $plan. Shall we " +
@@ -302,17 +320,20 @@ object Questions {
                 ))
         }
 
-        val a = angles.random()
-        return Question(a.id, a.ask,
-            listOf(
-                Choice(a.take, a.why, a.apply),
-                Choice("Not that angle", "We carry on as we are.") { it },
-                Choice("Stop building around $plan",
-                    "Back to whatever looks best.") {
-                    it.copy(seedCard = null, seedCardName = null,
-                        theme = null, themeLabel = null)
-                },
-            ))
+        // Seeded on the round so the menu is stable while a player reads it;
+        // a fresh shuffle on every recomposition would move the options
+        // under their thumb.
+        // Two ways of changing the deck and one new pairing, so the menu
+        // always contains more than one kind of idea.
+        val rng = Random(roundId.toLong())
+        val shown = (structural.shuffled(rng).take(2) + pairings.shuffled(rng).take(2))
+            .take(3)
+            .ifEmpty { (structural + pairings).shuffled(rng).take(3) }
+        return Question("angles",
+            "\u201c$plan, then. Which way shall I take it?\u201d",
+            shown.map { Choice(it.take, it.why, it.apply) } +
+                Choice("Not just now", "We carry on as we are."),
+        )
     }
 
     /** A theme nobody here has tried yet, for a player with no plan. */

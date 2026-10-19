@@ -294,7 +294,11 @@ object Compete {
         picked.forEachIndexed { i, s ->
             onProgress(Progress("Drafting", i + 1, picked.size))
             val b = Archetype.build(s, cat, meta,
-                stapleSlots = directive.stapleSlots, pool = directive.pool)
+                stapleSlots = directive.stapleSlots, pool = directive.pool,
+                // With a named seed the theme no longer picks seeds, so it
+                // weighs the support instead -- otherwise "around Turingue,
+                // pursuing poison" would change nothing at all.
+                bias = directive.theme)
                 ?: return@forEachIndexed
             if (b.cards.size != 100 || b.cards.any { it in banned }) return@forEachIndexed
             // Originality is a filter on what may be SUBMITTED, applied before
@@ -315,7 +319,8 @@ object Compete {
             relaxed = true
             picked.forEach { s ->
                 val b = Archetype.build(s, cat, meta,
-                    stapleSlots = directive.stapleSlots, pool = directive.pool)
+                    stapleSlots = directive.stapleSlots, pool = directive.pool,
+                    bias = directive.theme)
                     ?: return@forEach
                 if (b.cards.size == 100 && b.cards.none { it in banned }) built.add(b)
             }

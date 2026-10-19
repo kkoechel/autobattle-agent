@@ -426,8 +426,16 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                                 })
                         }
                         SnesChoice(
-                            label = if (awaitingRound) "Build another one anyway"
+                            // "Build another one anyway" did not say what it
+                            // would do with the deck you already have, and
+                            // sat as the loudest thing on the screen while
+                            // the agent was asking you to wait. It says what
+                            // it costs now, and carries the warning as its
+                            // detail line.
+                            label = if (awaitingRound) "Discard it and start a new deck"
                                     else "Get to work",
+                            detail = if (awaitingRound)
+                                "Throws away the deck that has not played yet." else null,
                             enabled = !trialBusy,
                             onClick = {
                                 error = null; note = null; trial = null
