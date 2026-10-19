@@ -11,6 +11,11 @@ declare(strict_types=1);
 
 const CARD_FILE = __DIR__ . '/../var/cards.json';
 
+// How many rounds of deck snapshots to keep for replay. At 15-minute rounds
+// 96 is a day, which is the span a player might plausibly want to re-watch;
+// results are kept forever, only the lists that played are pruned.
+const REPLAY_KEEP_ROUNDS = 96;
+
 function cfg(): array {
     static $c = null;
     if ($c === null) {

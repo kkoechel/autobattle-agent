@@ -226,20 +226,70 @@ object Questions {
         val plan = d.seedCardName ?: d.themeLabel
         if (plan != null) return angle(d, mem, plan, roundId)
 
-        if (idea != null && idea.optInt("card_id") > 0) {
-            val nm = idea.optString("name")
-            return Question("idea-card",
-                "“$nm. ${idea.optString("reason")} Shall I investigate?”",
-                listOf(
-                    Choice("Investigate $nm", idea.optString("text")) {
-                        it.copy(seedCard = idea.optInt("card_id"), seedCardName = nm,
-                            themes = emptyList(), themeLabels = emptyList())
-                    },
-                    Choice("Not that one", "We carry on as we are.") { it },
-                ))
-        }
+        // A CARD AND A THEME ARE EQUAL WAYS TO START.
+        //
+        // The card idea used to be tried first and the theme only reached
+        // when there was no card to name -- and /idea nearly always names
+        // one, so in practice every unprompted suggestion was "build around
+        // this specific card". A player who wants to build mill, or poison,
+        // and does not care which card carries it was never offered that.
+        // Now the two alternate, and whichever is asked carries the other as
+        // a choice, so a theme is always one tap away.
+        val card = cardIdea(idea, mem, roundId)
+        val theme = themeIdea(mem, idea, roundId)
+        return if (roundId % 2 == 0) (card ?: theme) else (theme ?: card)
+    }
 
-        return themeIdea(mem)
+    /** One card worth building around, with a theme offered beside it. */
+    private fun cardIdea(idea: JSONObject?, mem: Memory, roundId: Int): Question? {
+        if (idea == null || idea.optInt("card_id") <= 0) return null
+        val nm = idea.optString("name")
+        val alt = untriedTheme(mem, roundId)
+        return Question("idea-card",
+            "“$nm. ${idea.optString("reason")} Shall I investigate?”",
+            listOfNotNull(
+                Choice("Investigate $nm", idea.optString("text")) {
+                    it.copy(seedCard = idea.optInt("card_id"), seedCardName = nm,
+                        themes = emptyList(), themeLabels = emptyList())
+                },
+                alt?.let { (tag, label) ->
+                    Choice("Build $label instead",
+                        "No card in particular — I pick the whole deck " +
+                            "for $label and let the best one carry it.") {
+                        it.copy(themes = listOf(tag), themeLabels = listOf(label),
+                            seedCard = null, seedCardName = null)
+                    }
+                },
+                Choice("Not that one", "We carry on as we are.") { it },
+            ))
+    }
+
+    /**
+     * A theme nobody here has tried yet, for a player with no plan.
+     *
+     * Drawn on the round rather than at random so the menu does not change
+     * under a player who is reading it, which is the same reason the angle
+     * menu is seeded.
+     */
+    private fun untriedTheme(mem: Memory, roundId: Int): Pair<String, String>? =
+        pickTheme(mem, roundId)?.first
+
+    /**
+     * The theme to propose, and whether it is genuinely new.
+     *
+     * RECYCLES once all sixteen have been tried, rather than returning null.
+     * Going silent is what made the agent card-only to begin with: the tried
+     * set only ever grows, so "no untried theme" eventually becomes permanent
+     * and a player who prefers themes would quietly stop being offered any. A
+     * theme tried weeks ago against a field that has moved since is worth
+     * proposing again -- it just must not be described as one we have never
+     * attempted.
+     */
+    private fun pickTheme(mem: Memory, roundId: Int): Pair<Pair<String, String>, Boolean>? {
+        if (THEMES.isEmpty()) return null
+        val untried = THEMES.filter { it.first !in mem.triedThemes }
+        val pool = untried.ifEmpty { THEMES }
+        return pool[Random(roundId.toLong()).nextInt(pool.size)] to untried.isNotEmpty()
     }
 
     /**
@@ -383,23 +433,33 @@ object Questions {
         )
     }
 
-    /** A theme nobody here has tried yet, for a player with no plan. */
-    private fun themeIdea(mem: Memory): Question? {
-        val untried = THEMES.filter { it.first !in mem.triedThemes }
-        if (untried.isNotEmpty()) {
-            val (tag, label) = untried.random()
-            val (style, styleWord, styleBlurb) = STYLES.random()
-            return Question("idea-theme",
-                "“A $label $styleWord deck. We have never attempted one. " +
-                    "Shall we?”",
-                listOf(
-                    Choice("Attempt it", styleBlurb) {
-                        it.copy(themes = listOf(tag), themeLabels = listOf(label), style = style,
-                            seedCard = null, seedCardName = null)
-                    },
-                    Choice("Another time", "We carry on as we are.") { it },
-                ))
+    private fun themeIdea(mem: Memory, idea: JSONObject?, roundId: Int): Question? {
+        val (pair, fresh) = pickTheme(mem, roundId) ?: return null
+        val (tag, label) = pair
+        val rng = Random(roundId.toLong() xor 0x5EEDL)
+        val (style, styleWord, styleBlurb) = STYLES[rng.nextInt(STYLES.size)]
+        val nm = idea?.optString("name")?.takeIf {
+            it.isNotBlank() && (idea.optInt("card_id") > 0)
         }
-        return null
+        return Question("idea-theme",
+            "“A $label $styleWord deck. " +
+                (if (fresh) "We have never attempted one. "
+                 else "We have tried $label before, but not like this. ") +
+                "Shall we?”",
+            listOfNotNull(
+                Choice("Attempt it", styleBlurb) {
+                    it.copy(themes = listOf(tag), themeLabels = listOf(label), style = style,
+                        seedCard = null, seedCardName = null)
+                },
+                // The card idea the agent would otherwise have led with, so
+                // declining a theme is not the same as declining both.
+                nm?.let { n ->
+                    Choice("Build around $n instead", idea.optString("text")) {
+                        it.copy(seedCard = idea.optInt("card_id"), seedCardName = n,
+                            themes = emptyList(), themeLabels = emptyList())
+                    }
+                },
+                Choice("Another time", "We carry on as we are.") { it },
+            ))
     }
 }

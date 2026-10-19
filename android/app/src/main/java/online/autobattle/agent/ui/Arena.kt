@@ -84,6 +84,13 @@ fun ArenaPane(modifier: Modifier = Modifier) {
     // appear a few seconds later reads as the options toggling between
     // themselves -- the work in between is invisible because it is fast.
     var justBuilt by remember { mutableStateOf<String?>(null) }
+    // A BAD result needs somewhere to go. The beat above offered one
+    // choice -- "Good" -- which is the right acknowledgement for a deck
+    // that worked and a dead end for one that won nothing: the plan was
+    // still set, so the agent went back to offering angles on an idea the
+    // player had just watched fail. Kept as state rather than re-derived
+    // because the outcome is cleared as soon as it is read.
+    var builtPoorly by remember { mutableStateOf(false) }
     // The player asking the agent to talk, rather than waiting to be asked.
     var askNow by remember { mutableStateOf(false) }
     var showHelp by remember { mutableStateOf(false) }
@@ -251,6 +258,12 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 if (o.relaxed) " \u201cI could not avoid the field's cards this " +
                     "time, so that is the best I could do around them.\u201d" else ""
             note = null
+            // "Poor" is measured against the field it was actually screened
+            // on, not a fixed win count: 6 wins is good against 27 opponents
+            // and bad against 8. Failing to improve at all counts too -- a
+            // deck the search could not move is one the idea is not carrying.
+            builtPoorly = o.opponents > 0 &&
+                (o.wins / o.opponents < 0.30 || o.climbed == 0)
             mem = mem.copy(barrenRuns = if (o.climbed == 0) mem.barrenRuns + 1 else 0)
             Memory.save(ctx, mem)
             refresh()
@@ -613,13 +626,58 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                                 })
                         }
                         if (justBuilt != null) {
-                            // One beat, one tap. The result is the agent
-                            // reporting back, so it gets acknowledged the way
-                            // anything else it says does.
-                            SnesChoice(
-                                label = "Good",
-                                detail = "Back to what we were doing.",
-                                onClick = { justBuilt = null })
+                            // One beat, one tap when the deck worked. The
+                            // result is the agent reporting back, so it gets
+                            // acknowledged the way anything else it says does.
+                            if (!builtPoorly) {
+                                SnesChoice(
+                                    label = "Good",
+                                    detail = "Back to what we were doing.",
+                                    onClick = { justBuilt = null })
+                            } else {
+                                // A deck that won nothing is a result, not an
+                                // error, so the agent owns it and offers the
+                                // three things a player could actually want:
+                                // the same idea again, the same idea built
+                                // differently, or a different idea entirely.
+                                // All three were already reachable -- behind
+                                // tapping "Good" first and then finding them.
+                                SnesChoice(
+                                    label = "Try that again",
+                                    detail = "Same idea, fresh designs. The " +
+                                        "search starts from different drafts.",
+                                    enabled = !trialBusy,
+                                    onClick = {
+                                        justBuilt = null; builtPoorly = false
+                                        error = null; note = null; trial = null
+                                        TrainingService.start(ctx)
+                                    })
+                                if (directive.seedCardName != null ||
+                                    directive.themes.isNotEmpty()) {
+                                    SnesChoice(
+                                        label = "Build it a different way",
+                                        detail = "Keeps the idea and changes " +
+                                            "how I build it.",
+                                        enabled = !trialBusy,
+                                        onClick = {
+                                            justBuilt = null; builtPoorly = false
+                                            askNow = true
+                                        })
+                                }
+                                SnesChoice(
+                                    label = "Let's try something else",
+                                    detail = "Drops this idea and picks a new " +
+                                        "one to build around.",
+                                    enabled = !trialBusy,
+                                    onClick = {
+                                        justBuilt = null; builtPoorly = false
+                                        showThemes = true
+                                    })
+                                SnesChoice(
+                                    label = "Leave it for now",
+                                    detail = "Keeps the deck as it is.",
+                                    onClick = { justBuilt = null; builtPoorly = false })
+                            }
                         }
                         if (justBuilt == null && planPending) {
                             SnesChoice(
@@ -676,7 +734,10 @@ fun ArenaPane(modifier: Modifier = Modifier) {
 
             if (!busy && q == null) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    GameLink("Build around\u2026") { showThemes = true }
+                    // Named for what it offers. "Build around..." read as
+                    // "name a card", which is the half of the game that was
+                    // already over-represented.
+                    GameLink("Pick a theme\u2026") { showThemes = true }
                     GameLink("Let's talk") {
                         mem = mem.copy(answered = emptySet(), dismissed = emptySet())
                         Memory.save(ctx, mem)
@@ -804,24 +865,45 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 containerColor = MaterialTheme.colorScheme.surface,
                 shape = RoundedCornerShape(12.dp),
                 onDismissRequest = { showThemes = false },
-                title = { Text("“What shall I build around?”") },
+                title = { Text("“What shall I build toward?”") },
                 text = {
                     Column(Modifier.verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text("“I will still select the remaining ninety-nine on " +
-                            "merit. A theme governs what the deck is built " +
-                            "around, not what may enter it.”",
+                        Text("“No particular card — I pick the whole deck " +
+                            "for it. Name up to three and I will look for cards " +
+                            "that do more than one.”",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        // TOGGLES, not single-select. Three tags is the cap the
+                        // generator uses -- past that the affinity set matches
+                        // nearly every card, which is the same as having no theme
+                        // at all -- and it is the cap the angle menu already
+                        // enforces, so the two ways of combining themes agree.
                         fun choose(tag: String?, label: String?) {
-                            directive = directive.copy(
-                                themes = listOfNotNull(tag), themeLabels = listOfNotNull(label),
+                            if (tag == null || label == null) {
+                                directive = directive.copy(themes = emptyList(),
+                                    themeLabels = emptyList(),
+                                    seedCard = null, seedCardName = null)
+                                Directive.save(ctx, directive)
+                                showThemes = false
+                                return
+                            }
+                            val i = directive.themes.indexOf(tag)
+                            val tags: List<String>
+                            val labels: List<String>
+                            if (i >= 0) {
+                                tags = directive.themes - tag
+                                labels = directive.themeLabels.filterIndexed { k, _ -> k != i }
+                            } else {
+                                if (directive.themes.size >= 3) return
+                                tags = directive.themes + tag
+                                labels = directive.themeLabels + label
+                            }
+                            directive = directive.copy(themes = tags, themeLabels = labels,
                                 seedCard = null, seedCardName = null)
                             Directive.save(ctx, directive)
-                            mem = mem.copy(triedThemes = mem.triedThemes +
-                                listOfNotNull(tag))
+                            mem = mem.copy(triedThemes = mem.triedThemes + tags)
                             Memory.save(ctx, mem)
-                            showThemes = false
                         }
                         // Plain rows rather than TextButtons: sixteen
                         // buttons at Material's 48dp minimum turned a list
@@ -852,7 +934,13 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                     }
                 },
                 confirmButton = {
-                    TextButton(onClick = { showThemes = false }) { Text("That's all") }
+                    // Names the combination, because the dialog no longer
+                    // closes on the first tap: with three slots the player
+                    // needs to see what they have assembled before leaving.
+                    TextButton(onClick = { showThemes = false }) {
+                        Text(if (directive.themeLabels.isEmpty()) "That's all"
+                             else "Build " + directive.themeLabels.joinToString(" + "))
+                    }
                 })
         }
 

@@ -269,9 +269,10 @@ if ($path === 'round' && $method === 'POST') {
                            <=> [$x['wins'] ?? 0, $y['losses'] ?? 0]);
     db()->beginTransaction();
     try {
-        db()->prepare('INSERT INTO rounds (n_decks, seeds, note, finished_at)
-                       VALUES (?,?,?,NOW())')
+        db()->prepare('INSERT INTO rounds (n_decks, seeds, seed0, note, finished_at)
+                       VALUES (?,?,?,?,NOW())')
             ->execute([count($rows), (int)($b['seeds'] ?? 0),
+                       (int)($b['seed0'] ?? 0),
                        substr((string)($b['note'] ?? ''), 0, 255)]);
         $rid = (int)db()->lastInsertId();
         $ins = db()->prepare(
@@ -285,6 +286,33 @@ if ($path === 'round' && $method === 'POST') {
                            (int)($r['losses'] ?? 0), (int)($r['draws'] ?? 0),
                            $i + 1]);
         }
+
+        // The lists as they played, so the round can be watched and not just
+        // read. Optional on purpose: an older bin/round.py posts no `decks`
+        // and must still be able to score a round -- it loses the replay,
+        // not the result.
+        $snaps = $b['decks'] ?? null;
+        if (is_array($snaps)) {
+            $sn = db()->prepare(
+                'INSERT INTO round_decks (round_id, player_id, handle,
+                                          deck_name, revision, cards_json,
+                                          plan_json)
+                 VALUES (?,?,?,?,?,?,?)');
+            foreach ($snaps as $d) {
+                if (!isset($d['player_id'], $d['cards'])) continue;
+                $sn->execute([$rid, (int)$d['player_id'],
+                              substr((string)($d['handle'] ?? '?'), 0, 40),
+                              substr((string)($d['deck_name'] ?? '?'), 0, 80),
+                              (int)($d['revision'] ?? 0),
+                              json_encode($d['cards']),
+                              json_encode($d['battle_plan'] ?? new stdClass())]);
+            }
+        }
+        // Snapshots are bulky (every deck in the league, every 15 minutes) and
+        // only the recent past is watchable in practice, so they are pruned
+        // while the results they belong to are kept forever.
+        db()->prepare('DELETE FROM round_decks WHERE round_id <= ?')
+            ->execute([$rid - REPLAY_KEEP_ROUNDS]);
         db()->commit();
     } catch (Throwable $e) {
         db()->rollBack();
@@ -526,7 +554,9 @@ if ($path === 'history' && $method === 'GET') {
     $n = max(1, min(200, (int)($_GET['rounds'] ?? 40)));
     $st = db()->prepare(
         'SELECT r.round_id, r.deck_name, r.revision, r.wins, r.losses,
-                r.draws, r.placement, rd.finished_at, rd.n_decks
+                r.draws, r.placement, rd.finished_at, rd.n_decks, rd.seed0,
+                (SELECT COUNT(*) FROM round_decks x
+                  WHERE x.round_id = r.round_id) AS snap
            FROM results r JOIN rounds rd ON rd.id = r.round_id
           WHERE r.player_id = ?
           ORDER BY r.round_id DESC
@@ -544,9 +574,77 @@ if ($path === 'history' && $method === 'GET') {
             'draws'       => (float)$r['draws'],
             'placement'   => (int)$r['placement'],
             'of'          => (int)$r['n_decks'],
+            // Whether this round can be WATCHED, not inferred from its age:
+            // snapshots began part-way through the league's history and are
+            // pruned at the far end, so the app offers a replay only where
+            // one exists rather than discovering that at tap time.
+            'replayable'  => ((int)$r['snap']) > 1,
         ];
     }
     reply(['ok' => true, 'rounds' => $rows]);
+}
+
+// ---- GET /replay --------------------------------------------------------
+// Everything needed to re-play a scored round on the phone: every deck as it
+// actually was, and the seed block it was scored on.
+//
+// The per-MATCH outcomes are deliberately not stored. The phone holds the same
+// engine and now the same decks and the same seeds, so it can re-derive them
+// itself -- and a client that re-derives them can answer "show me a game we
+// won" or "...one that shows off poison" without this service having to
+// anticipate the question. Storing 9x8x21 match records per round to answer a
+// question the phone can answer locally would be the worse trade.
+if ($path === 'replay' && $method === 'GET') {
+    $p = require_player();
+    $want = (int)($_GET['round'] ?? 0);
+    if ($want > 0) {
+        $st = db()->prepare('SELECT id, seed0, seeds, n_decks, finished_at
+                               FROM rounds WHERE id = ?');
+        $st->execute([$want]);
+    } else {
+        // Newest round that still HAS a snapshot, not simply the newest round:
+        // pruning and the pre-snapshot history both leave rounds that cannot
+        // be replayed, and an empty answer for "the latest game" reads as a
+        // broken feature rather than an old one.
+        $st = db()->query('SELECT r.id, r.seed0, r.seeds, r.n_decks,
+                                  r.finished_at
+                             FROM rounds r
+                             JOIN round_decks d ON d.round_id = r.id
+                            GROUP BY r.id ORDER BY r.id DESC LIMIT 1');
+    }
+    $r = $st->fetch();
+    if (!$r) fail(404, 'no replayable round');
+    $rid = (int)$r['id'];
+
+    $st = db()->prepare(
+        'SELECT d.player_id, d.handle, d.deck_name, d.revision, d.cards_json,
+                d.plan_json, res.wins, res.losses, res.draws, res.placement
+           FROM round_decks d
+           LEFT JOIN results res
+                  ON res.round_id = d.round_id AND res.player_id = d.player_id
+          WHERE d.round_id = ?
+          ORDER BY res.placement IS NULL, res.placement');
+    $st->execute([$rid]);
+    $decks = [];
+    foreach ($st->fetchAll() as $d) {
+        $decks[] = [
+            'player_id'   => (int)$d['player_id'],
+            'is_me'       => (int)$d['player_id'] === (int)$p['id'],
+            'handle'      => $d['handle'],
+            'deck_name'   => $d['deck_name'],
+            'revision'    => (int)$d['revision'],
+            'cards'       => json_decode($d['cards_json'], true),
+            'battle_plan' => json_decode($d['plan_json'], true) ?: new stdClass(),
+            'wins'        => $d['wins'] === null ? null : (int)$d['wins'],
+            'losses'      => $d['losses'] === null ? null : (int)$d['losses'],
+            'draws'       => $d['draws'] === null ? null : (int)$d['draws'],
+            'placement'   => $d['placement'] === null ? null : (int)$d['placement'],
+        ];
+    }
+    if (!$decks) fail(404, 'round ' . $rid . ' has no deck snapshot');
+    reply(['ok' => true, 'round_id' => $rid, 'finished_at' => $r['finished_at'],
+           'seed0' => (int)$r['seed0'], 'seeds' => (int)$r['seeds'],
+           'n_decks' => (int)$r['n_decks'], 'decks' => $decks]);
 }
 
 // ---- GET /idea ----------------------------------------------------------

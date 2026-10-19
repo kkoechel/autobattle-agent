@@ -38,6 +38,10 @@ CREATE TABLE IF NOT EXISTS rounds (
   finished_at DATETIME     NULL,
   n_decks     SMALLINT UNSIGNED NOT NULL DEFAULT 0,
   seeds       SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+  -- The first seed of the block this round was played on. Recorded rather
+  -- than inferred: it comes from an environment variable, and a replay built
+  -- on a guess about it is a different game from the one that was scored.
+  seed0       INT UNSIGNED NOT NULL DEFAULT 0,
   note        VARCHAR(255) NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -119,5 +123,25 @@ CREATE TABLE IF NOT EXISTS saved_decks (
   created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_saved_player (player_id, id),
   CONSTRAINT fk_saved_player FOREIGN KEY (player_id) REFERENCES players(id)
+    ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- The decks exactly as they played a round.
+--
+-- results records WHICH revision played and how it did, not what was in it,
+-- so a finished round could be read but never watched: replaying needs the
+-- two lists, and the live decks have moved on since. Snapshotted at scoring
+-- time, pruned to the recent past -- a replay of a round from last week is
+-- not worth carrying every deck in the league forever.
+CREATE TABLE IF NOT EXISTS round_decks (
+  round_id    INT UNSIGNED NOT NULL,
+  player_id   INT UNSIGNED NOT NULL,
+  handle      VARCHAR(40)  NOT NULL,
+  deck_name   VARCHAR(80)  NOT NULL,
+  revision    INT UNSIGNED NOT NULL DEFAULT 0,
+  cards_json  MEDIUMTEXT   NOT NULL,
+  plan_json   MEDIUMTEXT   NOT NULL,
+  PRIMARY KEY (round_id, player_id),
+  CONSTRAINT fk_rd_round FOREIGN KEY (round_id) REFERENCES rounds(id)
     ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

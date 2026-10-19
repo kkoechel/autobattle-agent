@@ -113,7 +113,18 @@ def main() -> int:
         print(f"  {me['handle']:<18} {s.wins:5.1f}W {s.losses:5.1f}L "
               f"{s.draws:5.1f}D  ({me['deck_name'][:28]})")
 
-    out = call("/round", {"results": rows, "seeds": SEEDS,
+    # The lists exactly as they played, so the round can be WATCHED later and
+    # not merely read. Taken from the same `decks` the scoring loop used, not
+    # re-fetched: /field between the two calls could return a deck a player
+    # edited mid-round, and a replay of a list that did not play is a lie
+    # dressed as a record.
+    snaps = [{"player_id": d["player_id"], "handle": d["handle"],
+              "deck_name": d["deck_name"], "revision": d["revision"],
+              "cards": d["cards"], "battle_plan": d.get("battle_plan") or {}}
+             for d in decks]
+
+    out = call("/round", {"results": rows, "seeds": SEEDS, "seed0": SEED0,
+                          "decks": snaps,
                           "note": f"round-robin over {len(decks)} decks"},
                admin=True)
     print(f"round {out['round_id']}: {out['decks']} decks scored")
