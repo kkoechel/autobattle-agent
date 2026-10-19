@@ -40,6 +40,8 @@ fun ReplayScreen(
     mine: Deck,
     rival: Deck,
     cardDefs: String,
+    /** id -> subtype, for the visualiser's per-card glyph. */
+    subtypes: String,
     seed: Int,
     youFirst: Boolean,
     /** What the Go engine scored, from your side: won / lost / drew. */
@@ -60,7 +62,7 @@ fun ReplayScreen(
                         setBackgroundColor(android.graphics.Color.BLACK)
                         loadDataWithBaseURL(
                             BASE,
-                            page(mine, rival, cardDefs, seed, youFirst, expected),
+                            page(mine, rival, cardDefs, subtypes, seed, youFirst, expected),
                             "text/html", "utf-8", null,
                         )
                     }
@@ -76,8 +78,8 @@ private const val BASE = "https://autobattle.online/"
 private fun flat(d: Deck) = JSONArray().apply { d.cards.forEach { put(it) } }
 
 private fun page(
-    mine: Deck, rival: Deck, cardDefs: String, seed: Int, youFirst: Boolean,
-    expected: String,
+    mine: Deck, rival: Deck, cardDefs: String, subtypes: String, seed: Int,
+    youFirst: Boolean, expected: String,
 ): String {
     // A is always the side that moves first, so the seat decides which deck
     // is A -- not which one is yours.
@@ -123,6 +125,13 @@ private fun page(
     msg.textContent = 'Could not load the battle engine.'; return;
   }
   var defs  = $cardDefs;
+  // The visualiser picks each card's glyph from def.name, then falls back to
+  // def.SUBTYPE -- but the engine's own field is card_type, so without this
+  // every card that is not in its name table drew the generic sparkle. Added
+  // here rather than in PayloadBuilder so the definitions the two engines
+  // compute from stay byte-identical; this is display only.
+  var subtypes = $subtypes;
+  for (var id in subtypes) if (defs[id]) defs[id].subtype = subtypes[id];
   var cardsA = ${flat(a)}, cardsB = ${flat(b)};
   var planA = $planA, planB = $planB;
   var slotA = { deck_name: $aName, owner: $aName };

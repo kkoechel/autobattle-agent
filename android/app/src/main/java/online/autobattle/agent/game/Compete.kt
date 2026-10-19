@@ -160,6 +160,8 @@ object Compete {
         val mine: Deck? = null,
         val rivals: List<Deck> = emptyList(),
         val cardDefs: String = "",
+        /** id -> subtype, which the visualiser needs and the engine does not. */
+        val subtypes: String = "",
     )
 
     /**
@@ -258,7 +260,14 @@ object Compete {
         return Trial(me.optString("name"), s.wins, opponents.size, block.size,
             beaten, lost, even, best, worst,
             games = games, mine = mine, rivals = opponents,
-            cardDefs = builder.cardDefs)
+            cardDefs = builder.cardDefs,
+            subtypes = JSONObject().apply {
+                for (i in 0 until cardsJson.length()) {
+                    val c = cardsJson.getJSONObject(i)
+                    val st = c.optString("subtype")
+                    if (st.isNotBlank() && st != "null") put(c.getInt("id").toString(), st)
+                }
+            }.toString())
     }
 
     /**

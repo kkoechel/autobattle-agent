@@ -408,14 +408,18 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 trial?.takeIf { it.games.isNotEmpty() }?.let { t ->
                     val lost = t.games.filter { it.outcome == "lost" }
                     val won = t.games.filter { it.outcome == "won" }
+                    // A label and three short links. Three full sentences in
+                    // one row ran "Watch any" off the right edge of the
+                    // phone, where it was unreachable and invisible.
+                    Text("Watch a game:", style = snesText(12, androidx.compose.ui.graphics.Color(0xFF8A8AA8)))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (won.isNotEmpty()) GameLink("Watch one we won") {
+                        if (won.isNotEmpty()) GameLink("We won") {
                             watching = won.random()
                         }
-                        if (lost.isNotEmpty()) GameLink("Watch one we lost") {
+                        if (lost.isNotEmpty()) GameLink("We lost") {
                             watching = lost.random()
                         }
-                        GameLink("Watch any") { watching = t.games.random() }
+                        GameLink("Any") { watching = t.games.random() }
                     }
                 }
                 trial?.let { t ->
@@ -547,7 +551,13 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                                 })
                         }
                     } else {
-                        if (awaitingRound && justBuilt == null) {
+                        // Offered whenever there is a deck, not only while
+                        // one is waiting for its round. Rehearsing changes
+                        // nothing, and it is the only way to get a game you
+                        // can watch -- gating it behind "your deck has not
+                        // played yet" meant watching was reachable for about
+                        // fifteen minutes out of every fifteen.
+                        if (justBuilt == null && myDeck != null) {
                             SnesChoice(
                                 label = if (trialBusy) (trialStep ?: "Playing it out\u2026")
                                         else "Show me what it can do",
@@ -669,6 +679,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                     mine = t.mine,
                     rival = rival,
                     cardDefs = t.cardDefs,
+                    subtypes = t.subtypes,
                     seed = g.seed,
                     youFirst = g.youFirst,
                     expected = g.outcome,
