@@ -104,6 +104,24 @@ fun ReplayScreen(
                             )
                         }
                     },
+                    // ROTATION RE-LAYS-OUT, IT DOES NOT RELOAD. update runs on
+                    // every recomposition, including the one a rotation causes,
+                    // and swapping the orientation stylesheet leaves the battle
+                    // exactly where the player paused it. Calling load again
+                    // here would restart it from turn one.
+                    //
+                    // The resize event is for the viewer's benefit, not the
+                    // browser's: ReplayV2 lays the board out from measurements
+                    // it takes when it draws, and a CSS-only change does not by
+                    // itself tell it to take them again.
+                    update = { wv ->
+                        val css = JSONObject.quote(orientCss(
+                            (avail - CHROME_DP).coerceAtLeast(220), portrait))
+                        wv.evaluateJavascript(
+                            "(function(){var s=document.getElementById('orient');" +
+                            "if(!s)return;s.textContent=$css;" +
+                            "window.dispatchEvent(new Event('resize'));})()", null)
+                    },
                 )
                 GameLink("Close", Modifier.align(Alignment.TopEnd).padding(10.dp)) {
                     onDismiss()
@@ -112,6 +130,38 @@ fun ReplayScreen(
         }
     }
 }
+
+
+/**
+ * The rules that change when the phone turns, and nothing else.
+ *
+ * Kept in one string because a rotation swaps it wholesale into the page's
+ * <style id="orient">. The alternative -- rebuilding the document -- would
+ * restart the battle, and a replay that jumps back to turn one because you
+ * tilted the phone is worse than one that does not rotate at all.
+ */
+private fun orientCss(arenaDp: Int, portrait: Boolean): String {
+    val stacked = if (!portrait) "" else
+        "/* replay2.css puts the halves side by side on short landscape " +
+        "screens, and that query matches even in portrait here, so on a " +
+        "portrait phone the stacked layout is put back -- and only then, " +
+        "so a real landscape phone still gets the board the viewer " +
+        "intends. */\n" +
+        "@media (orientation:landscape) and (max-height:520px){" +
+        ".r2{flex-direction:column}" +
+        ".r2-half--top{border-bottom:1px solid rgba(255,255,255,.07);border-right:0}" +
+        ".r2-half--bottom .r2-stats{order:9}" +
+        ".r2-bubbles{right:76px;width:auto}}"
+    return "html,body{height:${arenaDp + CHROME_DP}px}\n" +
+        "#arena{height:${arenaDp}px}\n" + stacked
+}
+
+/**
+ * Vertical room the host page's own furniture needs: the game picker, the
+ * control bar, the speed row and the margins between them. Subtracted from
+ * the space the dialog reports so the arena takes what is actually left.
+ */
+private const val CHROME_DP = 96 + 58 + 46 + 16
 
 private const val BASE = "https://autobattle.online/"
 
@@ -126,7 +176,9 @@ private fun page(
     // below -- transport and speed. Reserving for one row put the speed
     // buttons off the bottom of the screen and pushed the transport row
     // under the navigation bar.
-    val arenaDp = (availDp - 96 - 58 - 46 - 16).coerceAtLeast(220)
+    // Same arithmetic as the rotation path, from the same constant, so
+    // the first paint and every rotation after it agree.
+    val arenaDp = (availDp - CHROME_DP).coerceAtLeast(220)
     // A is always the side that moves first, so the seat decides which deck
     // is A -- not which one is yours.
     val a = if (youFirst) mine else rival
@@ -136,17 +188,7 @@ private fun page(
     val planA = (a.battlePlan ?: JSONObject()).toString()
     val planB = (b.battlePlan ?: JSONObject()).toString()
     val seed2 = (seed.toLong() xor 0x80000000L) and 0xFFFFFFFFL
-    val stacked = if (!portrait) "" else
-        "/* replay2.css puts the halves side by side on short landscape " +
-        "screens, and that query matches even in portrait here, so on a " +
-        "portrait phone the stacked layout is put back -- and only then, " +
-        "so a real landscape phone still gets the board the viewer " +
-        "intends. */\n" +
-        "@media (orientation:landscape) and (max-height:520px){" +
-        ".r2{flex-direction:column}" +
-        ".r2-half--top{border-bottom:1px solid rgba(255,255,255,.07);border-right:0}" +
-        ".r2-half--bottom .r2-stats{order:9}" +
-        ".r2-bubbles{right:76px;width:auto}}"
+    val orient = orientCss(arenaDp, portrait)
     val youAreSlot = if (youFirst) 0 else 1
     val expectedJs = JSONObject.quote(expected)
     return """
@@ -162,8 +204,10 @@ private fun page(
      is used rather than a flex chain: the flex version collapsed the arena
      to a sliver, because nothing in the chain had a resolved height to give
      it. */
+  /* No height here -- it is in #orient below, because it changes when the
+     phone turns. */
   html,body{margin:0;background:#07081a;color:#e8e4d9;
-            font-family:Georgia,serif;height:${availDp}px;overflow:hidden}
+            font-family:Georgia,serif;overflow:hidden}
   /* WHY html/body CARRY AN EXPLICIT HEIGHT.
      replay2.css flips the board to side-by-side on short landscape screens:
        @media (orientation:landscape) and (max-height:520px){.r2{flex-direction:row}}
@@ -189,9 +233,19 @@ private fun page(
   .ctl button.on{background:#2b2a4a;color:#fff}
   .ctl input[type=range]{flex:1 1 auto;min-width:0;accent-color:#ffe28c}
   .ctl .pos{font-size:11px;color:#8a8aa8;min-width:92px;text-align:right}
-  #arena{height:${arenaDp}px;margin:0 4px 2px}
-  $stacked
-</style></head><body>
+  #arena{margin:0 4px 2px}
+  /* Lets the two halves actually shrink to their share of the width. Without
+     it a flex item keeps its content's width and spills past the screen,
+     which is why the second player hung off the right edge in landscape.
+     Targets the children directly, since the stylesheet names only the
+     --top and --bottom modifiers. */
+  #arena > *{min-width:0}
+</style>
+<!-- EVERYTHING THAT DEPENDS ON THE PHONE'S ORIENTATION LIVES HERE, alone, so
+     a rotation can replace it without touching the rest. Reloading the page
+     would re-run the battle from turn one, which is not what rotating your
+     phone should mean. -->
+<style id="orient">$orient</style></head><body>
 <div id="msg">Loading the viewer\u2026</div>
 <div id="warn"></div>
 <div id="agree"></div>
@@ -222,6 +276,42 @@ private fun page(
 <script>
 (function () {
   var msg = document.getElementById('msg');
+  /* FIT THE BOARD TO THE SCREEN, BY MEASURING IT.
+     Turned sideways the viewer puts the two players side by side -- which is
+     its own design for a short landscape screen, and the right one -- but the
+     halves do not shrink, so on a phone the second player ran off the right
+     edge. The scale is read off the overflow rather than guessed: a fixed
+     zoom that fits one board clips another with more cards in play, and the
+     board changes as the game is played. Re-run whenever the layout changes. */
+  function fit() {
+    var a = document.getElementById('arena');
+    if (!a) return;
+    a.style.zoom = '';
+    /* MEASURE THE HALVES, NOT THE ARENA. Side by side, each player is a flex
+       item, and a flex item defaults to min-width:auto -- it refuses to
+       shrink below its content, so it overflows its half while the ARENA's
+       own scrollWidth still equals its clientWidth and reports no problem.
+       The first attempt measured the arena and therefore never fired. */
+    var halves = a.children, want = 0, have = a.clientWidth;
+    for (var i = 0; i < halves.length; i++) {
+      var h = halves[i];
+      if (!h.clientWidth) continue;
+      /* How much wider the half's content is than the half, expressed back in
+         arena widths. Measured off the arena's own CHILDREN rather than a
+         class name: replay2.css only ever names .r2-half--top and
+         .r2-half--bottom, so a selector for a base .r2-half matched nothing
+         and this silently did nothing at all. */
+      want = Math.max(want, h.scrollWidth / h.clientWidth * have);
+    }
+    if (!want) want = a.scrollWidth;
+    if (want > have && have > 0) {
+      /* Floored at 0.55: below that the card text stops being readable, and a
+         board you cannot read is no better than one you cannot see. */
+      a.style.zoom = Math.max(0.55, have / want).toFixed(3);
+    }
+  }
+  window.addEventListener('resize', fit);
+
   if (!window.BattleEngine || !window.ReplayV2) {
     msg.textContent = 'Could not load the replay viewer.'; return;
   }
@@ -293,6 +383,7 @@ private fun page(
       arena.innerHTML = '<div id="msg">Viewer failed to start: ' + e + '</div>';
       return;
     }
+    fit();
     // Wire the controls to THIS game's viewer, then start it running --
     // opening a replay and landing on a frozen turn 1 is a step with no
     // decision in it.
