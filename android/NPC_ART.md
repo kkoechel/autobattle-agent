@@ -14,9 +14,12 @@ what `filterQuality` the composable asks for.
 | `npc_disappointed.png` | placement dropped |
 | `npc_stuck.png` | 3+ training runs with no improvement |
 
-**Spec:** 32×32 px, transparent background, PNG. Larger is fine if it is an
-exact multiple of 32 (64, 96, …) so the on-screen size stays an integer
+**Spec:** 48×48 px, transparent background, PNG. Larger is fine if it is an
+exact multiple of 48 (96, 144, …) so the on-screen size stays an integer
 scale — a non-integer scale reintroduces the blur the nodpi folder avoids.
 
-The files here now are placeholders generated with PIL. Replace them keeping
-the same names and nothing in the code needs to change.
+The files here now are placeholders drawn by `tools/npc_draw.py` — a hooded
+archivist with spectacles, three tones per material, lit from the upper left,
+with a one-pixel outline grown from the silhouette. Re-run that script to
+alter them, or replace the PNGs outright keeping the same names; nothing in
+the code needs to change either way.
