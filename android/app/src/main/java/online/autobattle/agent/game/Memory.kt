@@ -31,6 +31,8 @@ data class Memory(
      * "poison + card draw" has.
      */
     val triedCombos: Set<String> = emptySet(),
+    /** The newest ban this player has been shown, so it is announced once. */
+    val lastBanSeen: Int = 0,
     /** Round id when a spontaneous idea was last floated, so it stays rare. */
     val lastIdeaRound: Int = 0,
     /** Questions declined, so the agent does not nag on the same trigger. */
@@ -46,6 +48,7 @@ data class Memory(
         .put("barrenRuns", barrenRuns)
         .put("triedThemes", JSONArray(triedThemes.toList()))
         .put("triedCombos", JSONArray(triedCombos.toList()))
+        .put("lastBanSeen", lastBanSeen)
         .put("lastIdeaRound", lastIdeaRound)
         .put("dismissed", JSONArray(dismissed.toList()))
 
@@ -70,6 +73,7 @@ data class Memory(
                 barrenRuns = o.optInt("barrenRuns", 0),
                 triedThemes = strings(o, "triedThemes"),
                 triedCombos = strings(o, "triedCombos"),
+                lastBanSeen = o.optInt("lastBanSeen", 0),
                 lastIdeaRound = o.optInt("lastIdeaRound", 0),
                 dismissed = strings(o, "dismissed"),
             )

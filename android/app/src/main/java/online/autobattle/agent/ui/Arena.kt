@@ -20,6 +20,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import online.autobattle.agent.data.Secrets
+import online.autobattle.agent.engine.Catalogue
+import online.autobattle.agent.game.CardIndex
+import online.autobattle.agent.engine.Repair
 import online.autobattle.agent.game.Compete
 import online.autobattle.agent.game.Directive
 import online.autobattle.agent.game.GameClient
@@ -87,6 +90,12 @@ fun ArenaPane(modifier: Modifier = Modifier) {
     var newsBusy by remember { mutableStateOf(false) }
     var watching by remember { mutableStateOf<Compete.Game?>(null) }
     var saved by remember { mutableStateOf<JSONArray?>(null) }
+    var banned by remember { mutableStateOf<Set<Int>>(emptySet()) }
+    var rawCards by remember { mutableStateOf<JSONArray?>(null) }
+    var banList by remember { mutableStateOf<JSONArray?>(null) }
+    // The newest ban this player has already been told about, so the
+    // announcement fires once rather than on every refresh.
+    var banNotice by remember { mutableStateOf<JSONObject?>(null) }
     var openSaved by remember { mutableStateOf<Int?>(null) }
     var shelfBusy by remember { mutableStateOf(false) }
     var keywords by remember { mutableStateOf<Map<String, Keyword>>(emptyMap()) }
@@ -133,12 +142,26 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                     runCatching { c.leaderboard() }.onFailure(::watch).getOrNull() else null
                 val hi = if (token != null)
                     runCatching { c.history() }.onFailure(::watch).getOrNull() else null
-                Triple(st, mine, Triple(f, lb, hi))
+                val bn = runCatching { c.bans() }.getOrNull()
+                Triple(st, mine, listOf(f, lb, hi, bn))
             }
         }.onSuccess { (st, mine, extra) ->
             standings = st
             myDeck = mine?.optJSONObject("deck")
-            val (f, lb, hi) = extra
+            val f = extra[0] as? JSONArray
+            val lb = extra[1] as? JSONArray
+            val hi = extra[2] as? JSONArray
+            (extra[3] as? JSONArray)?.let { bl ->
+                // A ban the player has not been told about yet. Compared by
+                // the newest id rather than by count: a rotation can add one
+                // and release one, leaving the count unchanged.
+                val newest = if (bl.length() > 0) bl.getJSONObject(0) else null
+                val seen = mem.lastBanSeen
+                if (newest != null && newest.optInt("card_id") != seen) {
+                    banNotice = newest
+                }
+                banList = bl
+            }
             if (hi != null) history = hi
             if (f != null) {
                 field = (0 until f.length()).associate {
@@ -189,9 +212,18 @@ fun ArenaPane(modifier: Modifier = Modifier) {
         runCatching {
             withContext(Dispatchers.IO) {
                 val c = GameClient(token)
-                c.cardIndex() to runCatching { c.keywords() }.getOrDefault(emptyMap())
+                // The raw array and the ban list come back together, and both
+                // are needed later: the catalogue to repair a kept deck, the
+                // bans to know it needs repairing.
+                val (arr, ban) = c.cards()
+                Triple(arr, ban, runCatching { c.keywords() }.getOrDefault(emptyMap()))
             }
-        }.onSuccess { (idx, kw) -> cardsById = idx; keywords = kw }
+        }.onSuccess { (arr, ban, kw) ->
+            cardsById = CardIndex.parse(arr)
+            rawCards = arr
+            banned = ban
+            keywords = kw
+        }
     }
 
     LaunchedEffect(token) { refresh() }
@@ -693,6 +725,55 @@ fun ArenaPane(modifier: Modifier = Modifier) {
             }
         }
 
+        // A ban changes the format under the player, so the agent says so
+        // once, in its own voice, rather than leaving them to notice their
+        // deck has quietly become illegal.
+        banNotice?.let { b ->
+            Dialog(onDismissRequest = {
+                mem = mem.copy(lastBanSeen = b.optInt("card_id"))
+                Memory.save(ctx, mem); banNotice = null
+            }) {
+                SnesWindow {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        AgentPortrait(Mood.ASKING, size = 48.dp)
+                        Text("\u201c${b.optString("name")} has been struck from " +
+                            "the format.\u201d", style = snesText(15, androidx.compose.ui.graphics.Color(0xFFFFE28C)))
+                    }
+                    b.optString("reason").takeIf { it.isNotBlank() }?.let {
+                        Text(it, style = snesText(12, androidx.compose.ui.graphics.Color(0xFF8A8AA8)))
+                    }
+                    val inMine = myDeck?.optJSONArray("cards")?.let { cs ->
+                        (0 until cs.length()).any {
+                            cs.getJSONObject(it).optInt("card_id") == b.optInt("card_id")
+                        }
+                    } ?: false
+                    Text(
+                        if (inMine) "\u201cIt is in the deck we are playing, so " +
+                            "that deck is now illegal. I can build around the " +
+                            "hole when you are ready.\u201d"
+                        else "\u201cWe were not playing it. Nothing of ours " +
+                            "changes.\u201d",
+                        style = snesText(13))
+                    SnesChoiceBox {
+                        SnesChoice(
+                            label = "Show me the card",
+                            onClick = {
+                                scope.launch {
+                                    ensureNames()
+                                    cardsById[b.optInt("card_id")]?.let { showCard = it }
+                                }
+                            })
+                        SnesChoice(
+                            label = "Understood",
+                            onClick = {
+                                mem = mem.copy(lastBanSeen = b.optInt("card_id"))
+                                Memory.save(ctx, mem); banNotice = null
+                            })
+                    }
+                }
+            }
+        }
+
         if (showHelp) {
             Dialog(onDismissRequest = { showHelp = false }) {
                 Column(
@@ -870,8 +951,70 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                                 sv.optJSONArray("cards")?.let { cards ->
                                     RivalPockets(cards, cardsById) { showCard = it }
                                 }
+                                // A kept deck can go illegal under it while
+                                // it sits there: that is what a rotating ban
+                                // pool does. The snapshot is left alone and a
+                                // repaired copy is built from it, so the
+                                // original is still there if the card comes
+                                // back.
+                                val hit = sv.optJSONArray("cards")?.let { cs ->
+                                    (0 until cs.length())
+                                        .map { cs.getJSONObject(it).optInt("card_id") }
+                                        .filter { it in banned }
+                                } ?: emptyList()
+                                if (hit.isNotEmpty()) {
+                                    Text("\u201c" + hit.joinToString(", ") {
+                                            cardsById[it]?.name ?: "card $it"
+                                        } + (if (hit.size == 1) " is" else " are") +
+                                        " banned now, so this one cannot go back as " +
+                                        "it stands.\u201d",
+                                        style = snesText(12, androidx.compose.ui.graphics.Color(0xFFCE6A5C)))
+                                }
                                 SnesChoiceBox {
-                                    SnesChoice(
+                                    if (hit.isNotEmpty()) SnesChoice(
+                                        label = "Rebuild it without them",
+                                        detail = "Keeps this copy on the shelf " +
+                                            "untouched and plays a repaired " +
+                                            "version, filled from what the deck " +
+                                            "already leans on.",
+                                        enabled = !shelfBusy && !busy && rawCards != null,
+                                        onClick = {
+                                            shelfBusy = true; error = null
+                                            scope.launch {
+                                                runCatching {
+                                                    withContext(Dispatchers.Default) {
+                                                        val cat = Catalogue(rawCards!!)
+                                                        val cs = sv.getJSONArray("cards")
+                                                        val entries = (0 until cs.length()).map {
+                                                            val e = cs.getJSONObject(it)
+                                                            e.optInt("card_id") to e.optInt("quantity")
+                                                        }
+                                                        val r = Repair.repair(entries, banned, cat)
+                                                            ?: error("that deck cannot be made legal")
+                                                        val flat = r.cards.flatMap { (id, q) ->
+                                                            List(q) { id }
+                                                        }
+                                                        GameClient(token).putDeck(
+                                                            sv.optString("name"), flat,
+                                                            sv.optJSONObject("battle_plan"))
+                                                        r
+                                                    }
+                                                }.onSuccess { r ->
+                                                    note = "\u201cRebuilt it without " +
+                                                        r.removed.joinToString(", ") {
+                                                            cardsById[it]?.name ?: "card $it"
+                                                        } + ", leaning on " +
+                                                        r.added.take(2).joinToString(" and ") {
+                                                            cardsById[it.first]?.name ?: "card"
+                                                        } + " instead. The copy on the " +
+                                                        "shelf is untouched.\u201d"
+                                                    openSaved = null
+                                                    refresh()
+                                                }.onFailure { error = readable(it) }
+                                                shelfBusy = false
+                                            }
+                                        })
+                                    if (hit.isEmpty()) SnesChoice(
                                         label = "Put this one back",
                                         detail = "Replaces the deck in play. " +
                                             "Checked for legality first \u2014 a deck " +
@@ -912,6 +1055,56 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                                         })
                                 }
                             }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (place == Place.BANS) {
+            LaunchedEffect(token) { ensureNames() }
+            SnesWindow {
+                Text("Out of the format", style = snesText(15, androidx.compose.ui.graphics.Color(0xFFFFE28C)))
+                Text("Cards are suspended by measurement, not opinion: a deck " +
+                    "is rebuilt without the card and replayed, and the gap is " +
+                    "what it was worth. The pool rotates \u2014 the oldest comes " +
+                    "back when a new one goes out.",
+                    style = snesText(12, androidx.compose.ui.graphics.Color(0xFF8A8AA8)))
+            }
+            val bl = banList
+            if (bl == null) {
+                SnesWindow { Text("\u201cLet me check what is out\u2026\u201d",
+                    style = snesText(13)) }
+            } else if (bl.length() == 0) {
+                SnesWindow {
+                    Text("\u201cNothing is banned. Everything in the catalogue " +
+                        "is fair game.\u201d", style = snesText(13))
+                }
+            } else {
+                for (i in 0 until bl.length()) {
+                    val b = bl.getJSONObject(i)
+                    val cid = b.optInt("card_id")
+                    SnesWindow {
+                        Text(b.optString("name"),
+                            Modifier.fillMaxWidth().clickable {
+                                cardsById[cid]?.let { showCard = it }
+                            },
+                            style = snesText(15, androidx.compose.ui.graphics.Color(0xFFFFE28C)))
+                        b.optString("reason").takeIf { it.isNotBlank() }?.let {
+                            Text(it, style = snesText(12, androidx.compose.ui.graphics.Color(0xFFD8D8E8)))
+                        }
+                        Text("banned ${b.optString("banned_at")}",
+                            style = snesText(11, androidx.compose.ui.graphics.Color(0xFF8A8AA8)))
+                        // In your deck right now? That is the thing a player
+                        // actually wants off this screen.
+                        val inMine = myDeck?.optJSONArray("cards")?.let { cs ->
+                            (0 until cs.length()).any {
+                                cs.getJSONObject(it).optInt("card_id") == cid
+                            }
+                        } ?: false
+                        if (inMine) {
+                            Text("This is in the deck you are playing.",
+                                style = snesText(12, androidx.compose.ui.graphics.Color(0xFFCE6A5C)))
                         }
                     }
                 }

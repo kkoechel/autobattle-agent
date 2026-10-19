@@ -92,6 +92,14 @@ class GameClient(private val token: String?, private val base: String = BASE) {
         CardIndex.parseKeywords(call("GET", "/keywords").getJSONObject("keywords"))
 
     /**
+     * What is currently out of the format, with names and why.
+     *
+     * Public, because a player whose deck just became illegal needs to be
+     * able to find out what happened without owning the deck that caused it.
+     */
+    fun bans(): JSONArray = call("GET", "/bans").getJSONArray("banned")
+
+    /**
      * The decks this player has kept.
      *
      * Snapshots held by the coordinator rather than on the phone: a deck

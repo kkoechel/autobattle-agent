@@ -321,7 +321,7 @@ fun SnesChoice(
 
 /** The places a player can be. */
 enum class Place(val label: String) {
-    AGENT("Agent"), DOJO("Dojo"), BINDER("Binder"),
+    AGENT("Agent"), DOJO("Dojo"), BINDER("Binder"), BANS("Banned"),
 }
 
 /**
@@ -368,7 +368,8 @@ fun SnesMenu(current: Place, onGo: (Place) -> Unit) {
                 Text(
                     p.label,
                     Modifier.align(Alignment.Center).padding(vertical = UNIT * 4),
-                    style = snesText(14, if (here) Color(0xFFFFE28C) else Color(0xFF8A8AA8)),
+                    style = snesText(13, if (here) Color(0xFFFFE28C) else Color(0xFF8A8AA8)),
+                    maxLines = 1, softWrap = false,
                 )
             }
         }
