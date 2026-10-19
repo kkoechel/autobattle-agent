@@ -885,9 +885,16 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                         Text("\u201c${b.optString("name")} has been struck from " +
                             "the format.\u201d", style = snesText(15, androidx.compose.ui.graphics.Color(0xFFFFE28C)))
                     }
-                    b.optString("reason").takeIf { it.isNotBlank() }?.let {
-                        Text(it, style = snesText(12, androidx.compose.ui.graphics.Color(0xFF8A8AA8)))
-                    }
+                    // NO JUSTIFICATION SHOWN. The figure behind a ban is a
+                    // single sample from a wide distribution -- measured on
+                    // the live field, one card's contribution came out
+                    // anywhere from +1.60 to +8.93 wins depending only on
+                    // which two decks were drawn -- so printing "it cost its
+                    // deck 2.40 wins" states the reason far more precisely
+                    // than the evidence supports. The ban itself is sound;
+                    // the number is not, and a card being out of the format
+                    // is the whole of what a player needs. The reason is
+                    // still recorded server-side, where it is ours to read.
                     val inMine = myDeck?.optJSONArray("cards")?.let { cs ->
                         (0 until cs.length()).any {
                             cs.getJSONObject(it).optInt("card_id") == b.optInt("card_id")
@@ -1325,10 +1332,8 @@ fun ArenaPane(modifier: Modifier = Modifier) {
             LaunchedEffect(token) { ensureNames() }
             SnesWindow {
                 Text("Out of the format", style = snesText(15, androidx.compose.ui.graphics.Color(0xFFFFE28C)))
-                Text("Cards are suspended by measurement, not opinion: a deck " +
-                    "is rebuilt without the card and replayed, and the gap is " +
-                    "what it was worth. The pool rotates \u2014 the oldest comes " +
-                    "back when a new one goes out.",
+                Text("These cards cannot be played. The list rotates \u2014 the " +
+                    "oldest comes back when a new one goes out.",
                     style = snesText(12, androidx.compose.ui.graphics.Color(0xFF8A8AA8)))
             }
             val bl = banList
@@ -1350,9 +1355,6 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                                 cardsById[cid]?.let { showCard = it }
                             },
                             style = snesText(15, androidx.compose.ui.graphics.Color(0xFFFFE28C)))
-                        b.optString("reason").takeIf { it.isNotBlank() }?.let {
-                            Text(it, style = snesText(12, androidx.compose.ui.graphics.Color(0xFFD8D8E8)))
-                        }
                         Text("banned ${b.optString("banned_at")}",
                             style = snesText(11, androidx.compose.ui.graphics.Color(0xFF8A8AA8)))
                         // In your deck right now? That is the thing a player

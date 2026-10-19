@@ -1,5 +1,5 @@
 [Unit]
-Description=AutoBattle Agent game — measure the field and apply one ban
+Description=AutoBattle Agent game — suspend one card the good decks lean on
 After=network-online.target mysql.service
 Wants=network-online.target
 
@@ -12,13 +12,15 @@ EnvironmentFile=/etc/agentgame-round.env
 
 ExecStart=/usr/bin/python3 -u /var/www/games/agentgame/bin/ban.py
 
-# Heavier and far less urgent than a round: it rebuilds decks and replays
-# them, and nobody is waiting on the answer. Below the round job on every
-# axis so a ban measurement can never delay a score.
+# It used to rebuild decks and replay them, which took about five minutes of
+# one core; counting cards across a round snapshot takes under a second. The
+# limits are kept low anyway -- nobody is waiting on this answer, and the box
+# also serves four live games -- but the generous timeout is gone, because a
+# run that now takes minutes is a run that has gone wrong.
 Nice=18
 CPUWeight=20
-MemoryMax=700M
-TimeoutStartSec=2400
+MemoryMax=300M
+TimeoutStartSec=300
 
 NoNewPrivileges=yes
 PrivateTmp=yes

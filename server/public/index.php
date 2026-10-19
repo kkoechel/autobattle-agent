@@ -416,16 +416,29 @@ if ($path === 'bans' && $method === 'POST') {
 }
 
 // ---- GET /bans ----------------------------------------------------------
-// What is out, with names and why. Public: a player needs to know why their
-// deck became illegal.
+// What is out, and when. Public: a player needs to know which cards their
+// deck may not contain.
+//
+// DELIBERATELY NOT the reason. The figure behind a ban is one sample from a
+// wide distribution -- measured against the live field, a single card's
+// contribution came out anywhere between +1.60 and +8.93 wins depending only
+// on which two decks were drawn -- so publishing "it cost its deck 2.40 wins
+// a round" asserts a precision the measurement does not have. The ban stands
+// on the ranking, which is stable; the magnitude does not, and a card being
+// out of the format is the whole of what a player needs to act.
+//
+// The reason is still written to the row and to the journal. Withholding it
+// here is about not publishing a shaky number, not about not keeping one --
+// it is exactly what we need when deciding whether the pool is measuring
+// signal.
 if ($path === 'bans' && $method === 'GET') {
     $cards = catalogue();
     $out = [];
     foreach (db()->query(
-        'SELECT card_id, banned_at, reason FROM bans ORDER BY banned_at DESC') as $r) {
+        'SELECT card_id, banned_at FROM bans ORDER BY banned_at DESC') as $r) {
         $id = (int)$r['card_id'];
         $out[] = ['card_id' => $id, 'name' => $cards[$id]['name'] ?? "card $id",
-                  'banned_at' => $r['banned_at'], 'reason' => $r['reason']];
+                  'banned_at' => $r['banned_at']];
     }
     reply(['ok' => true, 'banned' => $out]);
 }
@@ -624,7 +637,15 @@ if ($path === 'history' && $method === 'GET') {
 // anticipate the question. Storing 9x8x21 match records per round to answer a
 // question the phone can answer locally would be the worse trade.
 if ($path === 'replay' && $method === 'GET') {
-    $p = require_player();
+    // Readable with the ADMIN token as well as a player's, because bin/ban.py
+    // needs exactly this: the decks as they played a round, paired with how
+    // they placed. Reading the live /field instead would pair current decks
+    // with last round's placements, and an agent that retrained in between
+    // would be a different deck wearing an old result.
+    $admin = hash_equals((string)(cfg()['admin_token'] ?? '_'),
+                         (string)($_SERVER['HTTP_X_ADMIN_TOKEN'] ?? ''))
+             && (string)(cfg()['admin_token'] ?? '') !== '';
+    $p = $admin ? ['id' => 0] : require_player();
     $want = (int)($_GET['round'] ?? 0);
     if ($want > 0) {
         $st = db()->prepare('SELECT id, seed0, seeds, n_decks, finished_at
