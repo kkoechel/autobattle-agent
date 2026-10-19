@@ -91,6 +91,17 @@ class GameClient(private val token: String?, private val base: String = BASE) {
     fun keywords(): Map<String, online.autobattle.agent.game.Keyword> =
         CardIndex.parseKeywords(call("GET", "/keywords").getJSONObject("keywords"))
 
+    /**
+     * This player's own round-by-round record, newest first.
+     *
+     * Separate from leaderboard() because an average answers a different
+     * question: a steady climb and a flat line with one good round average
+     * the same, and "is it getting better" is the thing a player actually
+     * wants to know.
+     */
+    fun history(rounds: Int = 40): JSONArray =
+        call("GET", "/history?rounds=$rounds").getJSONArray("rounds")
+
     fun leaderboard(rounds: Int = 48): JSONArray =
         call("GET", "/leaderboard?rounds=$rounds").getJSONArray("table")
 

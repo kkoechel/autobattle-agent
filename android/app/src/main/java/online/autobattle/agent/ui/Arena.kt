@@ -29,6 +29,7 @@ import online.autobattle.agent.game.Training
 import online.autobattle.agent.game.TrainingService
 import androidx.compose.runtime.collectAsState
 import online.autobattle.agent.game.Questions
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -60,6 +61,11 @@ fun ArenaPane(modifier: Modifier = Modifier) {
     var cardsById by remember { mutableStateOf<Map<Int, CardInfo>>(emptyMap()) }
     var showCard by remember { mutableStateOf<CardInfo?>(null) }
     var showThemes by remember { mutableStateOf(false) }
+    // Where the player currently is. The agent is a person you talk to; the
+    // dojo and the binder are places you go to look things up. Keeping them
+    // on one scroll meant the conversation was always buried under a table.
+    var place by remember { mutableStateOf(Place.AGENT) }
+    var history by remember { mutableStateOf<JSONArray?>(null) }
     var trialBusy by remember { mutableStateOf(false) }
     var trialStep by remember { mutableStateOf<String?>(null) }
     var trial by remember { mutableStateOf<Compete.Trial?>(null) }
@@ -105,12 +111,15 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                     runCatching { c.field() }.onFailure(::watch).getOrNull() else null
                 val lb = if (token != null)
                     runCatching { c.leaderboard() }.onFailure(::watch).getOrNull() else null
-                Triple(st, mine, f to lb)
+                val hi = if (token != null)
+                    runCatching { c.history() }.onFailure(::watch).getOrNull() else null
+                Triple(st, mine, Triple(f, lb, hi))
             }
         }.onSuccess { (st, mine, extra) ->
             standings = st
             myDeck = mine?.optJSONObject("deck")
-            val (f, lb) = extra
+            val (f, lb, hi) = extra
+            if (hi != null) history = hi
             if (f != null) {
                 field = (0 until f.length()).associate {
                     val d = f.getJSONObject(it); d.optString("handle") to d
@@ -236,6 +245,9 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                     }
                 }, text = "Record it")
         } else {
+            SnesMenu(place) { place = it }
+
+            if (place == Place.AGENT) {
             Row(verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 // The handle gives way, not the buttons: a long one used to
@@ -453,7 +465,10 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 Text(it, style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.primary)
             }
+            }   // end Place.AGENT
 
+        // The overlays belong to no place: a card tapped in the binder opens
+        // the same popup as one tapped in the dialogue.
         showCard?.let { c ->
             // Drawn by the main game's own renderer, so the card looks exactly
             // like it does there. Which names inside the text are linkable is
@@ -563,8 +578,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 style = MaterialTheme.typography.bodyMedium)
         }
 
-            myDeck?.let { d ->
-                HorizontalDivider()
+            if (place == Place.BINDER) myDeck?.let { d ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("“I have built you ${d.optString("name")}.”",
@@ -601,7 +615,43 @@ fun ArenaPane(modifier: Modifier = Modifier) {
             }
         }
 
-        HorizontalDivider()
+        // Signed out, the standings are the only thing worth showing, so they
+        // stay on the one screen there is.
+        if (token == null || place == Place.DOJO) {
+        // Your own record first, before the table of everyone else. The
+        // question a player comes here with is "is my deck getting better",
+        // and an average over a window cannot answer it -- a steady climb
+        // and a flat line with one good round average the same.
+        history?.takeIf { it.length() > 0 }?.let { h ->
+            SnesWindow {
+                Text("Your last ${minOf(h.length(), 8)} rounds",
+                    style = snesText(14, androidx.compose.ui.graphics.Color(0xFFFFE28C)))
+                for (i in 0 until minOf(h.length(), 8)) {
+                    val r = h.getJSONObject(i)
+                    val place_ = r.optInt("placement")
+                    val of = r.optInt("of")
+                    Row(Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("#${r.optInt("round_id")}", Modifier.width(54.dp),
+                            style = snesText(13, androidx.compose.ui.graphics.Color(0xFF8A8AA8)))
+                        Text("${place_}/${of}", Modifier.width(54.dp),
+                            style = snesText(13,
+                                // Top third of the field is worth marking.
+                                if (of > 0 && place_ * 3 <= of)
+                                    androidx.compose.ui.graphics.Color(0xFF8CE8A0)
+                                else androidx.compose.ui.graphics.Color(0xFFF2EFE4)))
+                        Text("${"%.0f".format(r.optDouble("wins"))}-" +
+                             "${"%.0f".format(r.optDouble("losses"))}-" +
+                             "${"%.0f".format(r.optDouble("draws"))}",
+                            Modifier.width(72.dp), style = snesText(13))
+                        Text("r${r.optInt("revision")} ${r.optString("deck_name")}",
+                            style = snesText(13,
+                                androidx.compose.ui.graphics.Color(0xFFA8A8C8)),
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+        }
         val s = standings
         val rows = s?.optJSONArray("standings")
         if (!loaded) {
@@ -685,6 +735,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 }
             }
         }
+        }   // end Place.DOJO
     }
 }
 

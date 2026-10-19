@@ -337,6 +337,44 @@ if ($path === 'starters' && $method === 'POST') {
     reply(['ok' => true, 'starters' => count($rows)]);
 }
 
+// ---- GET /history -------------------------------------------------------
+// The caller's OWN round-by-round record: what each deck actually did, round
+// by round, newest first.
+//
+// /leaderboard already gives an average over a window, and an average is the
+// wrong shape for the question a player is really asking -- "is it getting
+// better?" -- because a steady climb and a flat line with one good round
+// average the same. The deck revision rides along so a run of results can be
+// attributed to the list that played them rather than to whatever is in the
+// slot now.
+if ($path === 'history' && $method === 'GET') {
+    $p = require_player();
+    $n = max(1, min(200, (int)($_GET['rounds'] ?? 40)));
+    $st = db()->prepare(
+        'SELECT r.round_id, r.deck_name, r.revision, r.wins, r.losses,
+                r.draws, r.placement, rd.finished_at, rd.n_decks
+           FROM results r JOIN rounds rd ON rd.id = r.round_id
+          WHERE r.player_id = ?
+          ORDER BY r.round_id DESC
+          LIMIT ' . $n);
+    $st->execute([$p['id']]);
+    $rows = [];
+    foreach ($st->fetchAll() as $r) {
+        $rows[] = [
+            'round_id'    => (int)$r['round_id'],
+            'finished_at' => $r['finished_at'],
+            'deck_name'   => $r['deck_name'],
+            'revision'    => (int)$r['revision'],
+            'wins'        => (float)$r['wins'],
+            'losses'      => (float)$r['losses'],
+            'draws'       => (float)$r['draws'],
+            'placement'   => (int)$r['placement'],
+            'of'          => (int)$r['n_decks'],
+        ];
+    }
+    reply(['ok' => true, 'rounds' => $rows]);
+}
+
 // ---- GET /idea ----------------------------------------------------------
 // A specific card the agent could build around, with a reason.
 //

@@ -233,3 +233,60 @@ fun SnesChoice(
         }
     }
 }
+
+
+/** The places a player can be. */
+enum class Place(val label: String) {
+    AGENT("Agent"), DOJO("Dojo"), BINDER("Binder"),
+}
+
+/**
+ * The destination bar: one framed strip, the current place marked.
+ *
+ * Deliberately not a Material tab row. A tab row says "this is an app with
+ * sections"; a command strip with a cursor says "this is somewhere you are
+ * standing", which is the whole point of splitting the screen up.
+ */
+@Composable
+fun SnesMenu(current: Place, onGo: (Place) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(UNIT * 3),
+    ) {
+        for (p in Place.entries) {
+            val here = p == current
+            Box(
+                Modifier
+                    .weight(1f)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                    ) { onGo(p) },
+            ) {
+                Canvas(Modifier.matchParentSize()) {
+                    val u = UNIT.toPx()
+                    drawRect(FRAME_OUT, size = size)
+                    drawRect(
+                        if (here) Brush.verticalGradient(listOf(FILL_TOP, FILL_BOT))
+                        else Brush.verticalGradient(listOf(Color(0xFF191932), Color(0xFF101020))),
+                        topLeft = Offset(u, u),
+                        size = Size(size.width - 2 * u, size.height - 2 * u),
+                    )
+                    if (here) {
+                        drawRect(
+                            FRAME_LIT,
+                            topLeft = Offset(u * 2, u * 2),
+                            size = Size(size.width - 4 * u, size.height - 4 * u),
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = u),
+                        )
+                    }
+                }
+                Text(
+                    p.label,
+                    Modifier.align(Alignment.Center).padding(vertical = UNIT * 4),
+                    style = snesText(14, if (here) Color(0xFFFFE28C) else Color(0xFF8A8AA8)),
+                )
+            }
+        }
+    }
+}
