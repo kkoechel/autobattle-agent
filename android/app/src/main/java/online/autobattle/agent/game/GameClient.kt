@@ -117,6 +117,11 @@ class GameClient(private val token: String?, private val base: String = BASE) {
     fun restoreDeck(id: Int): JSONObject =
         call("POST", "/decks/saved/restore", JSONObject().put("id", id))
 
+    /** Retitle a kept deck. Empty clears the note. */
+    fun noteDeck(id: Int, note: String): JSONObject =
+        call("POST", "/decks/saved/note",
+            JSONObject().put("id", id).put("note", note))
+
     fun deleteSaved(id: Int): JSONObject =
         call("POST", "/decks/saved/delete", JSONObject().put("id", id))
 

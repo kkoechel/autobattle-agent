@@ -150,6 +150,9 @@ fun ArenaPane(modifier: Modifier = Modifier) {
     var banNotice by remember { mutableStateOf<JSONObject?>(null) }
     var openSaved by remember { mutableStateOf<Int?>(null) }
     var shelfBusy by remember { mutableStateOf(false) }
+    // The kept deck whose note is being written, and the text so far.
+    var noteFor by remember { mutableStateOf<Int?>(null) }
+    var noteText by remember { mutableStateOf("") }
     var keywords by remember { mutableStateOf<Map<String, Keyword>>(emptyMap()) }
     var showDeck by remember { mutableStateOf(false) }
     var loaded by remember { mutableStateOf(false) }
@@ -1026,6 +1029,58 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 })
         }
 
+        // WRITING THE NOTE IS A DIALOG, not an inline field. The shelf rows
+        // are tight and a text field inside one pushed the rest off screen
+        // the moment the keyboard appeared.
+        noteFor?.let { id ->
+            AlertDialog(
+                containerColor = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(12.dp),
+                onDismissRequest = { noteFor = null },
+                title = { Text("\u201cWhat shall I write against it?\u201d") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("\u201cYour words, not mine. I name decks after the " +
+                            "card they lean on, which is no help when three of " +
+                            "them lean on the same one.\u201d",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        OutlinedTextField(
+                            value = noteText,
+                            onValueChange = {
+                                // Clipped here as well as on the server, so
+                                // the limit is visible while typing instead
+                                // of silently truncating on save.
+                                if (it.length <= 120) noteText = it
+                            },
+                            singleLine = false, maxLines = 3,
+                            enabled = !shelfBusy,
+                            supportingText = { Text("${noteText.length}/120") },
+                            modifier = Modifier.fillMaxWidth())
+                    }
+                },
+                confirmButton = {
+                    TextButton(enabled = !shelfBusy, onClick = {
+                        shelfBusy = true
+                        val text = noteText.trim()
+                        scope.launch {
+                            runCatching {
+                                withContext(Dispatchers.IO) {
+                                    val c = GameClient(token)
+                                    c.noteDeck(id, text); c.savedDecks()
+                                }
+                            }.onSuccess { saved = it; noteFor = null }
+                             .onFailure { error = readable(it) }
+                            shelfBusy = false
+                        }
+                    }) { Text(if (noteText.isBlank()) "Leave it blank" else "Write it") }
+                },
+                dismissButton = {
+                    TextButton(enabled = !shelfBusy,
+                        onClick = { noteFor = null }) { Text("Never mind") }
+                })
+        }
+
         if (confirmReset) {
             AlertDialog(
                 onDismissRequest = { confirmReset = false },
@@ -1088,11 +1143,18 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                                     runCatching {
                                         withContext(Dispatchers.IO) {
                                             val c = GameClient(token)
-                                            c.saveDeck()
-                                            c.savedDecks()
+                                            val r = c.saveDeck()
+                                            r.optInt("id") to c.savedDecks()
                                         }
-                                    }.onSuccess { saved = it }
-                                     .onFailure { error = readable(it) }
+                                    }.onSuccess { (newId, shelf) ->
+                                        saved = shelf
+                                        // Asked right after keeping it, which
+                                        // is the one moment the player is
+                                        // certainly thinking about why. It is
+                                        // a dialog they can dismiss, so the
+                                        // note stays optional.
+                                        if (newId > 0) { noteText = ""; noteFor = newId }
+                                    }.onFailure { error = readable(it) }
                                     shelfBusy = false
                                 }
                             })
@@ -1117,6 +1179,19 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                                 style = snesText(13,
                                     if (openSaved == id) androidx.compose.ui.graphics.Color(0xFFFFE28C)
                                     else androidx.compose.ui.graphics.Color(0xFFF2EFE4)))
+                            // The note on the row itself, not hidden behind
+                            // opening the deck. Why a deck was kept is the
+                            // thing a player scans the shelf for; a name like
+                            // "Turingue, the Crypt Lord" is the agent's and
+                            // tells them nothing they chose.
+                            sv.optString("note").takeIf {
+                                it.isNotBlank() && it != "null"
+                            }?.let { n ->
+                                Text("\u201c$n\u201d",
+                                    Modifier.fillMaxWidth().padding(bottom = 2.dp),
+                                    style = snesText(12,
+                                        androidx.compose.ui.graphics.Color(0xFF8CE8A0)))
+                            }
                             if (openSaved == id) {
                                 sv.optJSONArray("cards")?.let { cards ->
                                     RivalPockets(cards, cardsById) { showCard = it }
@@ -1205,6 +1280,21 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                                                 }.onFailure { error = readable(it) }
                                                 shelfBusy = false
                                             }
+                                        })
+                                    SnesChoice(
+                                        label = sv.optString("note").let {
+                                            if (it.isNotBlank() && it != "null")
+                                                "Change the note" else "Say why you kept it"
+                                        },
+                                        detail = "A line for you, not for the " +
+                                            "agent. The shelf is named by the " +
+                                            "agent and those names run together.",
+                                        enabled = !shelfBusy && !busy,
+                                        onClick = {
+                                            noteText = sv.optString("note")
+                                                .takeIf { it.isNotBlank() && it != "null" }
+                                                ?: ""
+                                            noteFor = id
                                         })
                                     SnesChoice(
                                         label = "Take it off the shelf",

@@ -506,6 +506,35 @@ if ($path === 'decks/saved' && $method === 'POST') {
     reply(['ok' => true, 'id' => (int)db()->lastInsertId()]);
 }
 
+// Rename the note on a deck already kept.
+//
+// A note could only be set at the moment of saving, which is the moment a
+// player knows least about why the deck mattered -- that is usually learned
+// a few rounds later, when it turns out to be the one that beat the mill
+// decks. Separate from restore and delete because it changes nothing about
+// the deck itself.
+if ($path === 'decks/saved/note' && $method === 'POST') {
+    $p = require_player();
+    $b = body();
+    $id = (int)($b['id'] ?? 0);
+    // Scoped to the caller's own shelf, so an id from someone else's simply
+    // does not match rather than erroring in a way that confirms it exists.
+    $st = db()->prepare(
+        'UPDATE saved_decks SET note = ? WHERE id = ? AND player_id = ?');
+    $note = trim((string)($b['note'] ?? ''));
+    $st->execute([$note === '' ? null : mb_substr($note, 0, 120), $id, $p['id']]);
+    if ($st->rowCount() === 0) {
+        // No row changed can mean "not yours" or "same text as before", and
+        // the second is not an error, so check which before complaining.
+        $own = db()->prepare(
+            'SELECT 1 FROM saved_decks WHERE id = ? AND player_id = ?');
+        $own->execute([$id, $p['id']]);
+        if (!$own->fetch()) fail(404, 'no such kept deck');
+    }
+    reply(['ok' => true, 'id' => $id,
+           'note' => $note === '' ? null : mb_substr($note, 0, 120)]);
+}
+
 if ($path === 'decks/saved/restore' && $method === 'POST') {
     $p = require_player();
     $id = (int)(body()['id'] ?? 0);
