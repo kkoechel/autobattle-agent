@@ -2,6 +2,7 @@ package online.autobattle.agent.ui
 
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -253,10 +254,10 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 // The handle gives way, not the buttons: a long one used to
                 // push "Start over" off the edge, and a clipped control is
                 // worse than a shortened name.
-                Text(handle.ifBlank { "You" }, Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                // A nameplate, not loose text. It was the only unframed
+                // thing left on the screen, which made it read as a caption
+                // for the buttons beside it rather than as who you are.
+                Nameplate(handle.ifBlank { "You" }, Modifier.weight(1f))
                 GameLink("Any news?", enabled = !busy) { scope.launch { refresh() } }
                 GameLink("Start again", enabled = !busy) { confirmReset = true }
             }
@@ -640,8 +641,9 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
             val round = s.optJSONObject("round")
-            Text("Round ${round?.optInt("id") ?: 0} — ${round?.optInt("decks") ?: 0} decks",
-                style = MaterialTheme.typography.titleSmall)
+            SnesWindow {
+            Text("Round ${round?.optInt("id") ?: 0} \u2014 ${round?.optInt("decks") ?: 0} decks",
+                style = snesText(14, androidx.compose.ui.graphics.Color(0xFFFFE28C)))
             // Without this the table looks frozen: a player trains, submits,
             // and then stares at an unchanged standing with nothing saying a
             // round is coming.
@@ -650,42 +652,50 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 if (n >= 2) {
                     Text("You: ${"%.1f".format(f.optDouble("avg_place"))} average " +
                         "place over the last $n rounds, best ${f.optInt("best_place")}.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.primary)
+                        style = snesText(13, androidx.compose.ui.graphics.Color(0xFF8CE8A0)))
                 }
             }
             round?.optString("next_at")?.takeIf { it.isNotBlank() }?.let { nx ->
                 // Relative, not "03:17 UTC". A player holding a phone should
                 // not have to do timezone arithmetic to find out whether it
                 // is worth waiting.
-                Text(untilRound(nx),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(untilRound(nx), style = snesText(12, androidx.compose.ui.graphics.Color(0xFF8A8AA8)))
             }
             for (i in 0 until rows.length()) {
                 val r = rows.getJSONObject(i)
                 val who = r.optString("handle")
                 val mine = who == handle
+                // Your own row is marked by the cursor and lit type, the
+                // same way the dialogue marks the option you are on. Scanning
+                // a table of twenty for your own name is the one thing this
+                // page should never ask.
                 Row(Modifier.fillMaxWidth()
+                    .background(
+                        if (mine) androidx.compose.ui.graphics.Color(0x33FFE28C) else androidx.compose.ui.graphics.Color.Transparent)
                     .clickable {
                         openDeck = if (openDeck == who) null else who
                         if (openDeck != null) scope.launch { ensureNames() }
-                    },
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("${r.optInt("placement")}.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = if (mine) FontWeight.Bold else FontWeight.Normal)
+                    }
+                    .padding(vertical = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(if (mine) "\u25b6" else " ", Modifier.width(14.dp),
+                        style = snesText(12, androidx.compose.ui.graphics.Color(0xFFFFE28C)))
+                    Text("${r.optInt("placement")}".padStart(2), Modifier.width(26.dp),
+                        style = snesText(13,
+                            if (mine) androidx.compose.ui.graphics.Color(0xFFFFE28C) else androidx.compose.ui.graphics.Color(0xFFF2EFE4)))
                     Column(Modifier.weight(1f)) {
                         Text(r.optString("handle") +
                             if (r.optInt("is_bot") == 1) "  (house)" else "",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = if (mine) FontWeight.Bold else FontWeight.Normal)
+                            style = snesText(13,
+                                if (mine) androidx.compose.ui.graphics.Color(0xFFFFE28C) else androidx.compose.ui.graphics.Color(0xFFF2EFE4)),
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(r.optString("deck_name"),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            style = snesText(11, androidx.compose.ui.graphics.Color(0xFF8A8AA8)),
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     Text("${r.optInt("wins")}-${r.optInt("losses")}-${r.optInt("draws")}",
-                        style = MaterialTheme.typography.bodyMedium)
+                        style = snesText(12,
+                            if (mine) androidx.compose.ui.graphics.Color(0xFFFFE28C) else androidx.compose.ui.graphics.Color(0xFFD8D8E8)))
                 }
                 if (openDeck == who) {
                     val cards = field[who]?.optJSONArray("cards")
@@ -710,6 +720,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                     }
                 }
             }
+            }   // end the league table window
         }
         }   // end Place.DOJO
     }

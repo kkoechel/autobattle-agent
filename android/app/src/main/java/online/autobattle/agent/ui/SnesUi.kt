@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
@@ -288,5 +289,23 @@ fun SnesMenu(current: Place, onGo: (Place) -> Unit) {
                 )
             }
         }
+    }
+}
+
+
+/** Who you are, on a plate. */
+@Composable
+fun Nameplate(name: String, modifier: Modifier = Modifier) {
+    Box(
+        modifier
+            .background(FRAME_OUT)
+            .padding(UNIT)
+            .background(Brush.verticalGradient(listOf(FILL_TOP, FILL_BOT)))
+            .padding(horizontal = UNIT * 3, vertical = UNIT * 3),
+    ) {
+        // 13, not 14: the plate shares its row with two buttons, and at 14
+        // a nine-character handle already ellipsised.
+        Text(name, style = snesText(13, Color(0xFFF2EFE4)),
+            maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }

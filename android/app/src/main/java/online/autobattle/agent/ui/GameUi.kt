@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 // was drawn with a modern toolkit.
 private val Frame = RoundedCornerShape(0.dp)
 
+private val FRAME_INK = Color(0xFF0A0A12)
 private val WIN_TOP = Color(0xFF2B2A4A)
 private val WIN_BOT = Color(0xFF14142A)
 
@@ -123,14 +124,18 @@ fun GameLink(text: String, modifier: Modifier = Modifier, enabled: Boolean = tru
              onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
+    // Square and plated like everything else. These kept a rounded gold
+    // outline of their own after the conversion, which left the two most
+    // used controls on the screen as the only round things on it.
     Box(
         modifier
-            .clip(RoundedCornerShape(7.dp))
-            .border(BorderStroke(1.dp, if (pressed) GoldBright else GoldDim),
-                RoundedCornerShape(7.dp))
+            .background(FRAME_INK)
+            .padding(1.dp)
+            .background(plate(pressed))
+            .border(BorderStroke(1.dp, if (pressed) GoldBright else GoldDim))
             .clickable(enabled = enabled, interactionSource = interaction,
                 indication = null, onClick = onClick)
-            .padding(horizontal = 9.dp, vertical = 7.dp),
+            .padding(horizontal = 8.dp, vertical = 8.dp),
     ) {
         // Single line, always. Letter-spaced capitals are wide, and three of
         // these sit in one row -- "Start over" wrapped to two lines and made
