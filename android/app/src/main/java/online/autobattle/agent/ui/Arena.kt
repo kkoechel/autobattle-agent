@@ -507,13 +507,14 @@ fun ArenaPane(
                         }
                         justBuilt = when {
                             nowRound > wasRound && mine != null ->
-                                "\u201cRound $nowRound is scored. You placed " +
-                                    "${mine.optInt("placement")} of " +
-                                    "${standings?.optJSONObject("round")?.optInt("decks") ?: 0}" +
-                                    ", on ${mine.optInt("wins")}-${mine.optInt("losses")}" +
-                                    "-${mine.optInt("draws")}.\u201d"
-                            nowRound > wasRound -> "\u201cRound $nowRound is scored.\u201d"
-                            else -> "\u201cNothing new yet. " +
+                                "\u201c${voice.scored(nowRound,
+                                    mine.optInt("placement"),
+                                    standings?.optJSONObject("round")?.optInt("decks") ?: 0,
+                                    mine.optInt("wins"), mine.optInt("losses"),
+                                    mine.optInt("draws"))}\u201d"
+                            nowRound > wasRound ->
+                                "\u201c${voice.scoredBare(nowRound)}\u201d"
+                            else -> "\u201c${voice.nothingNew()} " +
                                 (standings?.optJSONObject("round")?.optString("next_at")
                                     ?.takeIf { it.isNotBlank() }?.let { untilRound(it) + "." }
                                     ?: "A round is scored every fifteen minutes.") + "\u201d"
@@ -563,14 +564,14 @@ fun ArenaPane(
                 if (myDeck != null || directive.seedCard != null) ensureNames()
             }
             val line = when {
-                newsBusy -> "\u201cLet me look\u2026\u201d"
-                busy -> "\u201c${progress?.step ?: "Working"}\u2026\u201d"
+                newsBusy -> "\u201c${voice.letMeLook()}\u201d"
+                busy -> "\u201c${voice.working(progress?.step ?: "Working")}\u201d"
                 q != null -> q.text
                 justBuilt != null -> justBuilt!!
                 planPending ->
                     "\u201cNoted \u2014 $plannedNow I will build it once this " +
                         "one has had its round.\u201d"
-                awaitingRound -> "\u201cIt has not been played yet.\u201d"
+                awaitingRound -> "\u201c${voice.notPlayedYet()}\u201d"
                 else -> "\u201c${directive.summary()}\u201d"
             }
 
@@ -945,6 +946,10 @@ fun ArenaPane(
                     seed = g.seed,
                     youFirst = g.youFirst,
                     expected = g.outcome,
+                    // Measured HERE, in the activity's window, because the
+                    // dialog's own window spans the whole display and reports
+                    // no insets at all.
+                    edge = WindowInsets.safeDrawing.asPaddingValues(),
                     onDismiss = { watching = null },
                 )
             } else {
@@ -982,11 +987,7 @@ fun ArenaPane(
                         }
                     } ?: false
                     Text(
-                        if (inMine) "\u201cIt is in the deck we are playing, so " +
-                            "that deck is now illegal. I can build around the " +
-                            "hole when you are ready.\u201d"
-                        else "\u201cWe were not playing it. Nothing of ours " +
-                            "changes.\u201d",
+                        "\u201c${voice.banLanded(b.optString("name"), inMine)}\u201d",
                         style = snesText(13))
                     SnesChoiceBox {
                         SnesChoice(

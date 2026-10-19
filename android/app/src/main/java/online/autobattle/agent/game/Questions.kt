@@ -128,9 +128,8 @@ object Questions {
             d.target == null && "passed" !in mem.dismissed) {
             val who = leader.optString("handle")
             return Question("passed",
-                "“We have slipped to ${me.optInt("placement")}. $who leads " +
-                    "with ${leader.optString("deck_name")}. Shall I build " +
-                    "expressly against them?”",
+                "“${voice.slipped(me.optInt("placement"), who,
+                    leader.optString("deck_name"))}”",
                 listOf(
                     Choice("Go after $who", "Aimed at their deck. A specimen bred " +
                         "against one rival tends to lose ground to the rest.") {
@@ -145,8 +144,7 @@ object Questions {
 
         if (mem.barrenRuns >= 2 && "stuck" !in mem.dismissed) {
             return Question("stuck",
-                "“${mem.barrenRuns} attempts, no improvement. I would call " +
-                    "this deck finished. Shall I change my method?”",
+                "“${voice.stuck(mem.barrenRuns)}”",
                 listOf(
                     Choice("Something else entirely",
                         "Discards the present direction and casts wide.") {
@@ -166,7 +164,7 @@ object Questions {
         if (d.target != null && me != null && mem.lastPlacement > 0 &&
             me.optInt("placement") >= mem.lastPlacement && "giveup" !in mem.dismissed) {
             return Question("giveup",
-                "“Pursuing ${d.target} has not moved us up. Persist?”",
+                "“${voice.giveUp(d.target)}”",
                 listOf(
                     Choice("Let them be", "Back to the field entire.") {
                         it.copy(target = null)
@@ -178,8 +176,7 @@ object Questions {
         // --- ONBOARDING -----------------------------------------------
         if ("breadth" !in mem.answered) {
             return Question("breadth",
-                "“I can sketch a great many decks, or take one idea and " +
-                    "refine it properly. Not both in one sitting. Which?”",
+                "“${voice.breadth()}”",
                 listOf(
                     Choice("Many rough ideas", "Sixty drafts. Sensible when neither " +
                         "of us yet knows what we are looking for.") {
@@ -197,8 +194,7 @@ object Questions {
         }
         if ("original" !in mem.answered) {
             return Question("original",
-                "“Shall I draw on the cards the winning decks already use, " +
-                    "or avoid them and find something of our own?”",
+                "“${voice.original()}”",
                 listOf(
                     Choice("What is known to work", "Quicker to a sound deck. You " +
                         "will resemble everyone else.") { it.copy(original = false) },
@@ -399,8 +395,7 @@ object Questions {
         if (structural.isEmpty() && pairings.isEmpty() && adds.isEmpty()) {
             if ("angle-done" in mem.answered) return null
             return Question("angle-done",
-                "\u201cI have tried every angle I have on $plan. Shall we " +
-                    "leave it and look elsewhere?\u201d",
+                "\u201c${voice.anglesDone(plan)}\u201d",
                 listOf(
                     Choice("Leave it", "Clears the plan, and I will start " +
                         "suggesting cards again.") {

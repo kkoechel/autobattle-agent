@@ -56,6 +56,19 @@ fun ReplayScreen(
     youFirst: Boolean,
     /** What the Go engine scored, from your side: won / lost / drew. */
     expected: String,
+    /**
+     * The safe area, measured in the ACTIVITY and handed in.
+     *
+     * A Dialog gets its own window and that window is the whole display --
+     * read off the device, the activity's frame is [81,72][2196,1080] while
+     * this dialog's is [0,0][2340,1080]. So it extends 144px past where the
+     * activity stops, under the cutout, and WindowInsets inside it reports
+     * nothing to correct that: neither safeDrawing nor
+     * decorFitsSystemWindows = false made any difference. Measuring outside,
+     * where the insets are real, and padding by the result is the thing that
+     * actually works.
+     */
+    edge: PaddingValues,
     onDismiss: () -> Unit,
 ) {
     // The viewer is a flex column whose two halves split the height between
@@ -74,15 +87,27 @@ fun ReplayScreen(
 
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+        // decorFitsSystemWindows = false, or the inset padding below reads
+        // ZERO. A Dialog gets its own window, and by default that window
+        // "fits" the system windows itself -- which consumes the insets
+        // before Compose sees them, so windowInsetsPadding had nothing to
+        // apply and the page ran under the display cutout regardless.
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false,
+        ),
     ) {
         Box(
             Modifier
                 .fillMaxSize()
                 .background(Color(0xFF07081A))
-                // The system bars are not ours to draw under: the bottom
-                // player's stat row was sitting beneath the navigation bar.
-                .windowInsetsPadding(WindowInsets.systemBars),
+                // The safe area, passed in rather than queried here --
+                // see `edge`. The page itself never overflowed: measured on
+                // the device it is 780 CSS px wide with content fitting in
+                // 772 and every element reporting scrollWidth equal to
+                // clientWidth. The window was simply wider than the drawn
+                // part of the screen.
+                .padding(edge),
         ) {
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 // MEASURED, not guessed. screenHeightDp includes the system
@@ -116,7 +141,8 @@ fun ReplayScreen(
                     // itself tell it to take them again.
                     update = { wv ->
                         val css = JSONObject.quote(orientCss(
-                            (avail - CHROME_DP).coerceAtLeast(220), portrait))
+                            (avail - (if (portrait) CHROME_DP else CHROME_LAND_DP))
+                                .coerceAtLeast(if (portrait) 220 else 120), portrait))
                         wv.evaluateJavascript(
                             "(function(){var s=document.getElementById('orient');" +
                             "if(!s)return;s.textContent=$css;" +
@@ -141,6 +167,21 @@ fun ReplayScreen(
  * tilted the phone is worse than one that does not rotate at all.
  */
 private fun orientCss(arenaDp: Int, portrait: Boolean): String {
+    /* THE CHROME IS SIZED FOR PORTRAIT and has to give ground sideways.
+       Turned landscape this phone offers about 336dp of height, and the game
+       picker, the transport row, the speed row and their margins want 216 of
+       it -- so the arena was floored taller than what was left and pushed the
+       controls off the bottom of the screen. Shrunk rather than hidden: the
+       controls are the only way to pause or scrub, and a replay you cannot
+       pause is worse than one with small buttons. */
+    val slim = if (portrait) "" else
+        ".picker{padding:3px 92px 3px 10px;gap:6px}" +
+        ".picker button{padding:3px;font-size:12px}" +
+        ".ctl{padding:2px 8px;gap:4px}" +
+        ".ctl button{font-size:13px;padding:2px 7px;min-width:32px}" +
+        ".ctl .pos{font-size:10px;min-width:74px}" +
+        "#agree,#warn{display:none}"
+
     val stacked = if (!portrait) "" else
         "/* replay2.css puts the halves side by side on short landscape " +
         "screens, and that query matches even in portrait here, so on a " +
@@ -152,8 +193,9 @@ private fun orientCss(arenaDp: Int, portrait: Boolean): String {
         ".r2-half--top{border-bottom:1px solid rgba(255,255,255,.07);border-right:0}" +
         ".r2-half--bottom .r2-stats{order:9}" +
         ".r2-bubbles{right:76px;width:auto}}"
-    return "html,body{height:${arenaDp + CHROME_DP}px}\n" +
-        "#arena{height:${arenaDp}px}\n" + stacked
+    val chrome = if (portrait) CHROME_DP else CHROME_LAND_DP
+    return "html,body{height:${arenaDp + chrome}px}\n" +
+        "#arena{height:${arenaDp}px}\n" + slim + stacked
 }
 
 /**
@@ -162,6 +204,9 @@ private fun orientCss(arenaDp: Int, portrait: Boolean): String {
  * the space the dialog reports so the arena takes what is actually left.
  */
 private const val CHROME_DP = 96 + 58 + 46 + 16
+
+/** The same furniture once the landscape rules above have shrunk it. */
+private const val CHROME_LAND_DP = 52 + 40 + 34 + 8
 
 private const val BASE = "https://autobattle.online/"
 
@@ -178,7 +223,8 @@ private fun page(
     // under the navigation bar.
     // Same arithmetic as the rotation path, from the same constant, so
     // the first paint and every rotation after it agree.
-    val arenaDp = (availDp - CHROME_DP).coerceAtLeast(220)
+    val arenaDp = (availDp - (if (portrait) CHROME_DP else CHROME_LAND_DP))
+        .coerceAtLeast(if (portrait) 220 else 120)
     // A is always the side that moves first, so the seat decides which deck
     // is A -- not which one is yours.
     val a = if (youFirst) mine else rival

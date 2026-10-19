@@ -65,7 +65,7 @@ enum class Voice {
 
     /** The agent is mid-task. */
     fun working(step: String): String = when (this) {
-        WIZARD -> step
+        WIZARD -> "$step…"
         BRUTE -> "$step. Give it a moment."
         SPRITE -> "$step…"
     }
@@ -104,6 +104,106 @@ enum class Voice {
             "One of our cards has been struck from the format, so the deck " +
             "isn't legal any more. Shall we rebuild around what's left, or " +
             "begin something new?"
+    }
+
+    /** You have been overtaken, and the leader is named. */
+    fun slipped(place: Int, who: String, deck: String): String = when (this) {
+        WIZARD -> "We have slipped to $place. $who leads with $deck. " +
+            "Shall I build expressly against them?"
+        BRUTE -> "We're down to $place. $who is ahead with $deck. " +
+            "Want me to go straight at them?"
+        SPRITE -> "We've slipped to $place \u2014 $who is ahead now, with $deck. " +
+            "Shall we build something aimed at them?"
+    }
+
+    /** Several runs in a row have found nothing. */
+    fun stuck(runs: Int): String = when (this) {
+        WIZARD -> "$runs attempts, no improvement. I would call this deck " +
+            "finished. Shall I change my method?"
+        BRUTE -> "$runs tries, nothing gained. This deck's done. " +
+            "Want me to work differently?"
+        SPRITE -> "That's $runs attempts without a gain. I think this deck " +
+            "has given us what it has. Shall we try another way?"
+    }
+
+    /** Hunting one rival has not paid off. */
+    fun giveUp(target: String): String = when (this) {
+        WIZARD -> "Pursuing $target has not moved us up. Persist?"
+        BRUTE -> "Chasing $target isn't working. Keep at it?"
+        SPRITE -> "Going after $target hasn't moved us up. Shall we keep trying?"
+    }
+
+    /** The opening question: breadth against depth. */
+    fun breadth(): String = when (this) {
+        WIZARD -> "I can sketch a great many decks, or take one idea and " +
+            "refine it properly. Not both in one sitting. Which?"
+        BRUTE -> "I can rough out a lot of decks, or take one and work it " +
+            "properly. Not both. Which is it?"
+        SPRITE -> "I could sketch lots of decks, or take a single idea and " +
+            "really refine it \u2014 not both at once, I'm afraid. Which sounds better?"
+    }
+
+    /** The other opening question: copy the field, or avoid it. */
+    fun original(): String = when (this) {
+        WIZARD -> "Shall I draw on the cards the winning decks already use, " +
+            "or avoid them and find something of our own?"
+        BRUTE -> "Do I use what the winning decks run, or keep clear and " +
+            "find our own?"
+        SPRITE -> "Would you like me to borrow from the decks that are " +
+            "winning, or steer clear and find something of our own?"
+    }
+
+    /** Every angle on the current plan has been tried. */
+    fun anglesDone(plan: String): String = when (this) {
+        WIZARD -> "I have tried every angle I have on $plan. Shall we leave " +
+            "it and look elsewhere?"
+        BRUTE -> "That's every angle I've got on $plan. Drop it?"
+        SPRITE -> "I've tried every angle I can think of on $plan. Shall we " +
+            "leave it there and look somewhere new?"
+    }
+
+    /** A round landed and you are in it. */
+    fun scored(round: Int, place: Int, of: Int, w: Int, l: Int, d: Int): String =
+        when (this) {
+            WIZARD -> "Round $round is scored. You placed $place of $of, " +
+                "on $w-$l-$d."
+            BRUTE -> "Round $round is in. $place of $of, $w-$l-$d."
+            SPRITE -> "Round $round is scored \u2014 you came $place of $of, " +
+                "on $w-$l-$d."
+        }
+
+    /** A round landed but you were not in it. */
+    fun scoredBare(round: Int): String = when (this) {
+        WIZARD -> "Round $round is scored."
+        BRUTE -> "Round $round is in."
+        SPRITE -> "Round $round is scored."
+    }
+
+    /** The agent is looking something up. */
+    fun letMeLook(): String = when (this) {
+        WIZARD -> "Let me look\u2026"
+        BRUTE -> "Hold on\u2026"
+        SPRITE -> "Let me have a look\u2026"
+    }
+
+    /** The deck is submitted and the round has not come round yet. */
+    fun notPlayedYet(): String = when (this) {
+        WIZARD -> "It has not been played yet."
+        BRUTE -> "Hasn't played yet."
+        SPRITE -> "It hasn't had its round yet."
+    }
+
+    /** A banned card, and whether it was in your list. */
+    fun banLanded(name: String, inMine: Boolean): String = when {
+        inMine && this == WIZARD -> "It is in the deck we are playing, so that " +
+            "deck is now illegal. I can build around the hole when you are ready."
+        inMine && this == BRUTE -> "It's in the deck we're running, so that " +
+            "deck's illegal now. Say when and I'll build round the hole."
+        inMine -> "It's in the deck we're playing, so that deck isn't legal " +
+            "any more. I can build around the gap whenever you're ready."
+        this == WIZARD -> "We were not playing it. Nothing of ours changes."
+        this == BRUTE -> "We weren't running it. Changes nothing for us."
+        else -> "We weren't playing it, so nothing of ours changes."
     }
 
     /** How it addresses the player when it wants a decision. */
