@@ -1,13 +1,27 @@
 [Unit]
-Description=Ban one card every six hours, if the field warrants it
+Description=Ban one card every seventeen hours, if the field warrants it
 
 [Timer]
-# Six hours, not every round. A format that changes every fifteen minutes
-# gives nobody time to react to it, and the measurement needs decks that have
-# settled -- a ban measured against decks that are themselves mid-rebuild is
-# measuring the rebuild.
-OnCalendar=*-*-* 00,06,12,18:20:00
-Persistent=true
+# SEVENTEEN HOURS, so the field has most of a day to settle before it is
+# measured again. At six hours the agents were still rebuilding around the
+# last ban when the next measurement ran -- the candidate pool turned over
+# within hours of banning Deceptive Friend -- and a ban measured against
+# decks that are themselves mid-rebuild is measuring the rebuild.
+#
+# Not OnCalendar: seventeen does not divide twenty-four, so there is no
+# calendar expression for it. OnUnitActiveSec counts from the last time the
+# service RAN, which also means the interval is really seventeen hours plus
+# the few minutes the measurement takes. That is the intended reading --
+# "at least seventeen hours between bans" -- rather than a fixed wall-clock
+# slot, and it walks the ban around the clock instead of always landing on
+# the same timezone's small hours.
+#
+# Persistent= does not apply to OnUnitActiveSec, so a missed window is not
+# caught up on boot. OnBootSec covers the restart case instead: the box
+# auto-reboots, and without it a reboot would leave the timer with no
+# previous activation to count from.
+OnBootSec=30min
+OnUnitActiveSec=17h
 RandomizedDelaySec=300
 
 [Install]
