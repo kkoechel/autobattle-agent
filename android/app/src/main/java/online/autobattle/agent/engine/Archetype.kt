@@ -81,7 +81,7 @@ object Archetype {
         stapleSlots: Int = 30,
         pool: Int = 14,
         /**
-         * An extra tag to weigh the supporting cards toward.
+         * Extra tags to weigh the supporting cards toward.
          *
          * The archetype is normally read off the seed's own tags, which is
          * why "build around Turingue AND pursue poison" used to be a
@@ -90,12 +90,12 @@ object Archetype {
          * into the affinity set makes it re-rank the other 99 instead, which
          * is a real difference in the deck that comes back.
          */
-        bias: String? = null,
+        bias: List<String> = emptyList(),
     ): Built? {
         if (!cat.isPlayable(seed)) return null
         val theme = themeOf(seed, cat)
         if (theme.isEmpty()) return null
-        val tset = (theme + listOfNotNull(bias)).toSet()
+        val tset = (theme + bias).toSet()
 
         val picks = ArrayList<Pair<Int, Int>>()
         picks.add(seed to cat.deckLimit(seed))

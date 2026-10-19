@@ -270,8 +270,10 @@ object Compete {
         // the seed carries the theme and the rest of the deck is still chosen
         // on merit. Narrowing the whole pool would mean 79 poison cards and
         // nothing to support them.
-        val themed = directive.theme?.let { t ->
-            allSeeds.filter { t in cat.tags(it) }
+        // Any of the chosen tags makes a card a candidate seed. Requiring
+        // all of them would empty the pool the moment a player combined two.
+        val themed = directive.themes.takeIf { it.isNotEmpty() }?.let { tags ->
+            allSeeds.filter { id -> cat.tags(id).any { it in tags } }
         }?.takeIf { it.size >= 8 }
         val cheap = directive.maxSeedCost?.let { mx ->
             (themed ?: allSeeds).filter { cat.cost(it) <= mx }
@@ -298,7 +300,7 @@ object Compete {
                 // With a named seed the theme no longer picks seeds, so it
                 // weighs the support instead -- otherwise "around Turingue,
                 // pursuing poison" would change nothing at all.
-                bias = directive.theme)
+                bias = directive.themes)
                 ?: return@forEachIndexed
             if (b.cards.size != 100 || b.cards.any { it in banned }) return@forEachIndexed
             // Originality is a filter on what may be SUBMITTED, applied before
@@ -320,7 +322,7 @@ object Compete {
             picked.forEach { s ->
                 val b = Archetype.build(s, cat, meta,
                     stapleSlots = directive.stapleSlots, pool = directive.pool,
-                    bias = directive.theme)
+                    bias = directive.themes)
                     ?: return@forEach
                 if (b.cards.size == 100 && b.cards.none { it in banned }) built.add(b)
             }

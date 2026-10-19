@@ -14,9 +14,19 @@ import org.json.JSONObject
  * than being a plausible-sounding dial.
  */
 data class Directive(
-    /** A tag to build around, or null for "whatever looks best". */
-    val theme: String? = null,
-    val themeLabel: String? = null,
+    /**
+     * The tags to build around -- a COMBINATION, not one choice.
+     *
+     * A single tag made every themed deck a variation on one idea, and a
+     * player iterating would cycle through sixteen of them and come back
+     * round. Poison plus ramp plus card draw is a different deck from any
+     * of the three, and there are far more combinations than tags, which is
+     * what keeps iterating from going stale.
+     *
+     * Empty means "whatever looks best".
+     */
+    val themes: List<String> = emptyList(),
+    val themeLabels: List<String> = emptyList(),
     /** Many shallow sketches, or few ideas refined hard. */
     val breadth: Breadth = Breadth.BALANCED,
     /** Copy what wins, or stay away from what the field already plays. */
@@ -29,6 +39,13 @@ data class Directive(
     val style: Style = Style.ANY,
 ) {
     enum class Breadth { WIDE, BALANCED, DEEP }
+
+    /** The first tag, for the one place that can only use one: seed choice. */
+    val theme: String? get() = themes.firstOrNull()
+
+    /** All of them, for anything the player reads. */
+    val themeLabel: String? get() =
+        themeLabels.joinToString(" + ").ifBlank { null }
 
     /**
      * Each style maps to a real change in how the deck is built. None of
@@ -74,6 +91,7 @@ data class Directive(
         })
         seedCardName?.let { bits.add("building around $it") }
         if (seedCardName == null) themeLabel?.let { bits.add("building around $it") }
+        else themeLabel?.let { bits.add("pursuing $it") }
         when (style) {
             Style.AGGRO -> bits.add("keeping the curve low")
             Style.COMBO -> bits.add("going for a tight combo shell")
@@ -97,8 +115,8 @@ data class Directive(
      * real default.
      */
     fun toJson(): JSONObject = JSONObject()
-        .putOpt("theme", theme)
-        .putOpt("themeLabel", themeLabel)
+        .put("themes", org.json.JSONArray(themes))
+        .put("themeLabels", org.json.JSONArray(themeLabels))
         .put("breadth", breadth.name)
         .put("original", original)
         .putOpt("target", target)
@@ -115,8 +133,10 @@ data class Directive(
                 .getString(KEY, null) ?: return Directive()
             val o = JSONObject(raw)
             Directive(
-                theme = str(o, "theme"),
-                themeLabel = str(o, "themeLabel"),
+                // Migrates a directive saved when a theme was one tag.
+                themes = list(o, "themes") ?: listOfNotNull(str(o, "theme")),
+                themeLabels = list(o, "themeLabels")
+                    ?: listOfNotNull(str(o, "themeLabel")),
                 breadth = Breadth.valueOf(o.optString("breadth", "BALANCED")),
                 original = o.optBoolean("original", false),
                 target = str(o, "target"),
@@ -137,6 +157,12 @@ data class Directive(
          * that has been running since before the fix repairs itself the
          * first time its directive is loaded, without anyone clearing data.
          */
+        /** A saved list, or null if this save predates it. */
+        private fun list(o: JSONObject, key: String): List<String>? {
+            val a = o.optJSONArray(key) ?: return null
+            return (0 until a.length()).mapNotNull { a.optString(it).takeIf(String::isNotBlank) }
+        }
+
         private fun str(o: JSONObject, key: String): String? {
             if (o.isNull(key)) return null
             val v = o.optString(key, "")

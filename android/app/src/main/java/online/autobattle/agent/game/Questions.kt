@@ -109,8 +109,8 @@ object Questions {
                     Choice("Rebuild around it", "Keeps the present direction and " +
                         "works around the gap.") { it },
                     Choice("Begin again", "Abandons the idea and starts from nothing.") {
-                        it.copy(seedCard = null, seedCardName = null, theme = null,
-                            themeLabel = null)
+                        it.copy(seedCard = null, seedCardName = null,
+                            themes = emptyList(), themeLabels = emptyList())
                     },
                 ), dismissible = false)
         }
@@ -142,8 +142,9 @@ object Questions {
                 listOf(
                     Choice("Something else entirely",
                         "Discards the present direction and casts wide.") {
-                        it.copy(seedCard = null, seedCardName = null, theme = null,
-                            themeLabel = null, breadth = Directive.Breadth.WIDE)
+                        it.copy(seedCard = null, seedCardName = null,
+                            themes = emptyList(), themeLabels = emptyList(),
+                            breadth = Directive.Breadth.WIDE)
                     },
                     Choice("Deeper on this one",
                         "Fewer drafts, far more refinement. The next " +
@@ -224,7 +225,7 @@ object Questions {
                 listOf(
                     Choice("Investigate $nm", idea.optString("text")) {
                         it.copy(seedCard = idea.optInt("card_id"), seedCardName = nm,
-                            theme = null, themeLabel = null)
+                            themes = emptyList(), themeLabels = emptyList())
                     },
                     Choice("Not that one", "We carry on as we are.") { it },
                 ))
@@ -272,7 +273,8 @@ object Questions {
         // pairings nearly every time -- a menu of variations on one idea,
         // which is not a choice of directions.
         val structural = ArrayList<Angle>()
-        val pairings = ArrayList<Angle>()
+        val adds = ArrayList<Angle>()      // build the combination up
+        val pairings = ArrayList<Angle>()  // swap one out, or drop one
         val options = structural
         if (d.style != Directive.Style.COMBO) options += Angle(
             "Build a tight shell",
@@ -295,17 +297,46 @@ object Questions {
             "Keep clear of the field",
             "Refuses any deck sharing too much with a rival.",
             { it.copy(original = true) })
-        // Pairings. These weigh the supporting cards, which is a real change
-        // to the ninety-nine around the card you named.
-        for ((tag, label) in THEMES) {
-            if (tag == d.theme) continue
-            pairings += Angle(
-                "Pursue a $label angle",
-                "Weighs the supporting cards toward $label.",
-                { it.copy(theme = tag, themeLabel = label) })
+        // ADD, DROP, SWAP -- the three moves on a combination.
+        //
+        // Three tags is the cap. Past that the affinity set is wide enough
+        // that nearly every card scores against it, which is the same as
+        // having no theme at all, and the deck stops being about anything.
+        val cur = d.themes
+        val lab = d.themeLabels
+        fun key(tags: List<String>) = tags.sorted().joinToString(",")
+        if (cur.size < 3) {
+            for ((tag, label) in THEMES) {
+                if (tag in cur) continue
+                if (key(cur + tag) in mem.triedCombos) continue
+                adds += Angle(
+                    if (cur.isEmpty()) "Pursue a $label angle" else "Add $label to it",
+                    if (cur.isEmpty()) "Weighs the supporting cards toward $label."
+                    else "Weighs them toward ${(lab + label).joinToString(" + ")}.",
+                    { it.copy(themes = cur + tag, themeLabels = lab + label) })
+            }
+        }
+        // Dropping matters as much as adding: a player who has stacked three
+        // tags and lost ground needs a way back that is not "start over".
+        if (cur.size > 1) {
+            for (i in cur.indices) {
+                pairings += Angle(
+                    "Drop ${lab[i]}",
+                    "Leaves ${(lab - lab[i]).joinToString(" + ")}.",
+                    { it.copy(themes = cur - cur[i], themeLabels = lab - lab[i]) })
+            }
+        }
+        if (cur.size == 1) {
+            for ((tag, label) in THEMES) {
+                if (tag in cur || key(listOf(tag)) in mem.triedCombos) continue
+                pairings += Angle(
+                    "Try $label instead",
+                    "Drops ${lab.joinToString(" + ")} for $label.",
+                    { it.copy(themes = listOf(tag), themeLabels = listOf(label)) })
+            }
         }
 
-        if (structural.isEmpty() && pairings.isEmpty()) {
+        if (structural.isEmpty() && pairings.isEmpty() && adds.isEmpty()) {
             if ("angle-done" in mem.answered) return null
             return Question("angle-done",
                 "\u201cI have tried every angle I have on $plan. Shall we " +
@@ -314,7 +345,7 @@ object Questions {
                     Choice("Leave it", "Clears the plan, and I will start " +
                         "suggesting cards again.") {
                         it.copy(seedCard = null, seedCardName = null,
-                            theme = null, themeLabel = null)
+                            themes = emptyList(), themeLabels = emptyList())
                     },
                     Choice("Stay with it", "We keep building around $plan.") { it },
                 ))
@@ -323,12 +354,20 @@ object Questions {
         // Seeded on the round so the menu is stable while a player reads it;
         // a fresh shuffle on every recomposition would move the options
         // under their thumb.
-        // Two ways of changing the deck and one new pairing, so the menu
-        // always contains more than one kind of idea.
+        // One structural angle and two combination moves. Combinations are
+        // where the variety is -- there are far more of them than there are
+        // ways to change the build -- and taking two structural first put
+        // the interesting half of the menu behind a coin flip.
         val rng = Random(roundId.toLong())
-        val shown = (structural.shuffled(rng).take(2) + pairings.shuffled(rng).take(2))
-            .take(3)
-            .ifEmpty { (structural + pairings).shuffled(rng).take(3) }
+        // One of each kind where possible: a move that GROWS the combination,
+        // a move that changes it, and a change to how it is built. Drawn
+        // purely at random the menu kept showing three ways to swap one tag
+        // for another, which is the loop this was meant to break.
+        val pick = adds.shuffled(rng).take(1) +
+            pairings.shuffled(rng).take(1) +
+            structural.shuffled(rng).take(1)
+        val shown = (pick + (adds + pairings + structural).shuffled(rng))
+            .distinct().take(3).shuffled(rng)
         return Question("angles",
             "\u201c$plan, then. Which way shall I take it?\u201d",
             shown.map { Choice(it.take, it.why, it.apply) } +
@@ -347,7 +386,7 @@ object Questions {
                     "Shall we?”",
                 listOf(
                     Choice("Attempt it", styleBlurb) {
-                        it.copy(theme = tag, themeLabel = label, style = style,
+                        it.copy(themes = listOf(tag), themeLabels = listOf(label), style = style,
                             seedCard = null, seedCardName = null)
                     },
                     Choice("Another time", "We carry on as we are.") { it },

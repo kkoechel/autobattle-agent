@@ -24,6 +24,13 @@ data class Memory(
     val barrenRuns: Int = 0,
     /** Themes the agent has actually been asked to build. */
     val triedThemes: Set<String> = emptySet(),
+    /**
+     * Combinations already put into play, each as its sorted tags joined by
+     * commas. Tracking single tags was not enough once a plan could hold
+     * several: "poison" having been tried says nothing about whether
+     * "poison + card draw" has.
+     */
+    val triedCombos: Set<String> = emptySet(),
     /** Round id when a spontaneous idea was last floated, so it stays rare. */
     val lastIdeaRound: Int = 0,
     /** Questions declined, so the agent does not nag on the same trigger. */
@@ -38,6 +45,7 @@ data class Memory(
         .putOpt("lastLeader", lastLeader)
         .put("barrenRuns", barrenRuns)
         .put("triedThemes", JSONArray(triedThemes.toList()))
+        .put("triedCombos", JSONArray(triedCombos.toList()))
         .put("lastIdeaRound", lastIdeaRound)
         .put("dismissed", JSONArray(dismissed.toList()))
 
@@ -61,6 +69,7 @@ data class Memory(
                     .takeIf { it.isNotBlank() && it != "null" },
                 barrenRuns = o.optInt("barrenRuns", 0),
                 triedThemes = strings(o, "triedThemes"),
+                triedCombos = strings(o, "triedCombos"),
                 lastIdeaRound = o.optInt("lastIdeaRound", 0),
                 dismissed = strings(o, "dismissed"),
             )

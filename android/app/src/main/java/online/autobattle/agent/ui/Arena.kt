@@ -371,7 +371,17 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                                         dismissed = if (declined) mem.dismissed + q.id
                                                     else mem.dismissed - q.id,
                                         triedThemes = mem.triedThemes +
-                                            listOfNotNull(directive.theme),
+                                            directive.themes,
+                                        // The COMBINATION, so the agent does
+                                        // not walk a player back round a
+                                        // loop it has already taken them
+                                        // through. Single tags cannot say
+                                        // whether "poison + card draw" has
+                                        // been tried.
+                                        triedCombos = mem.triedCombos +
+                                            listOfNotNull(directive.themes
+                                                .takeIf { it.isNotEmpty() }
+                                                ?.sorted()?.joinToString(",")),
                                         lastIdeaRound = if (q.id.startsWith("idea"))
                                             (standings?.optJSONObject("round")
                                                 ?.optInt("id") ?: 0)
@@ -394,7 +404,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                                     // agent working exactly as agreeing to
                                     // a card does.
                                     val newPlan = directive.seedCard != before.seedCard ||
-                                        directive.theme != before.theme ||
+                                        directive.themes != before.themes ||
                                         directive.style != before.style ||
                                         directive.breadth != before.breadth ||
                                         directive.original != before.original
@@ -497,7 +507,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                         fun choose(tag: String?, label: String?) {
                             directive = directive.copy(
-                                theme = tag, themeLabel = label,
+                                themes = listOfNotNull(tag), themeLabels = listOfNotNull(label),
                                 seedCard = null, seedCardName = null)
                             Directive.save(ctx, directive)
                             mem = mem.copy(triedThemes = mem.triedThemes +
@@ -511,7 +521,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                         // hard to spot among them.
                         @Composable
                         fun row(tag: String?, label: String) {
-                            val on = directive.theme == tag
+                            val on = tag != null && tag in directive.themes
                             Row(
                                 Modifier.fillMaxWidth()
                                     .clip(RoundedCornerShape(6.dp))
