@@ -394,28 +394,36 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 scoredAt <= submittedAt
 
             if (awaitingRound) {
-                GamePanel {
-                    Text("“It has not been played yet.”",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.primary)
-                    Text("“The league is scored as a whole, so your result " +
-                        "arrives with the next round. Were I to build another " +
-                        "now, this one would be discarded unexamined.”",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                // The agent says this, so it is said the way the agent says
+                // things: its own window, with its face on it. As a bordered
+                // panel of grey text it read as a system notice about the
+                // deck rather than as the agent declining to throw it away.
+                SnesWindow {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        AgentPortrait(Mood.IDLE, size = 48.dp)
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("“It has not been played yet.”",
+                                style = snesText(15, androidx.compose.ui.graphics.Color(0xFFFFE28C)))
+                            Text("“The league is scored as a whole, so your " +
+                                "result arrives with the next round. Were I to " +
+                                "build another now, this one would be discarded " +
+                                "unexamined.”",
+                                style = snesText(13))
+                        }
+                    }
                     // Its own sentence. Appending it lower-cased read as
                     // "...seen it play. next round in about 2 minutes."
                     standings?.optJSONObject("round")
                         ?.optString("next_at")?.takeIf { it.isNotBlank() }?.let {
                             Text(untilRound(it) + ".",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                style = snesText(12, androidx.compose.ui.graphics.Color(0xFF8A8AA8)))
                         }
-                    GameButton(
-                        text = if (trialBusy) (trialStep ?: "Playing it out…")
-                               else "Show me what it can do",
+                    SnesChoiceBox {
+                    SnesChoice(
+                        label = if (trialBusy) (trialStep ?: "Playing it out…")
+                                else "Show me what it can do",
                         enabled = !trialBusy && !busy,
-                        modifier = Modifier.fillMaxWidth()) {
+                        onClick = {
                         error = null; note = null; trial = null; trialBusy = true
                         scope.launch {
                             runCatching {
@@ -427,7 +435,9 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                              .onFailure { error = readable(it) }
                             trialBusy = false; trialStep = null
                         }
+                    })
                     }
+                    if (trialBusy) SnesProgress(0, 1)
                     // Shown HERE rather than in the note at the foot of the
                     // screen: the note sits below the fold, so the answer to
                     // a button you just pressed scrolled away out of sight.
@@ -436,15 +446,13 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                             "the ${t.opponents}. ${t.lostTo} are unfavourable" +
                             (if (t.even > 0) ", and ${t.even} could go either way" else "") +
                             ".”",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.primary)
+                            style = snesText(14, androidx.compose.ui.graphics.Color(0xFF8CE8A0)))
                         Text("“That is ${"%.1f".format(t.wins)} wins a round across " +
                             "${t.seeds} draws it has not seen" +
                             (t.worstAgainst?.let { ". $it remains the difficulty" } ?: "") +
                             ". A rehearsal only \u2014 the league plays its own " +
                             "games at the next round.”",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            style = snesText(12, androidx.compose.ui.graphics.Color(0xFFA8A8C8)))
                     }
                 }
             }
@@ -700,21 +708,15 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 if (openDeck == who) {
                     val cards = field[who]?.optJSONArray("cards")
                     if (cards == null) {
-                        Text("    their deck is not on file", style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("    their deck is not on file",
+                            style = snesText(12, androidx.compose.ui.graphics.Color(0xFF8A8AA8)))
                     } else {
-                        for (e in (0 until cards.length()).map { cards.getJSONObject(it) }
-                            .sortedByDescending { it.optInt("quantity") }) {
-                            Row(Modifier.fillMaxWidth().padding(start = 22.dp),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Text("${e.optInt("quantity")}x",
-                                    style = MaterialTheme.typography.bodySmall)
-                                Text(cardsById[e.optInt("card_id")]?.name ?: "loading…",
-                                    Modifier.clickable {
-                                        cardsById[e.optInt("card_id")]?.let { c -> showCard = c }
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.primary)
+                        // Their deck as pockets too. Twenty card names in a
+                        // list tell you nothing at a glance; the art tells
+                        // you what you are up against before you read a word.
+                        Box(Modifier.padding(start = 14.dp, top = 4.dp, bottom = 8.dp)) {
+                            Column {
+                                RivalPockets(cards, cardsById) { showCard = it }
                             }
                         }
                     }

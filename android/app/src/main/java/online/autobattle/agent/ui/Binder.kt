@@ -57,26 +57,63 @@ fun BinderPage(
         Text("${entries.sumOf { it.second }} cards, ${entries.size} distinct",
             style = snesText(12, Color(0xFF8A8AA8)))
         Spacer(Modifier.height(2.dp))
-        for (row in entries.chunked(2)) {
-            Row(
-                Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                for ((id, qty) in row) {
-                    Pocket(cardsById[id], qty, Modifier.weight(1f)) {
-                        cardsById[id]?.let(onOpen)
-                    }
-                }
-                // Keeps a final odd card the same width as the rest instead
-                // of letting it stretch across the page.
-                if (row.size == 1) Spacer(Modifier.weight(1f))
+        PocketGrid(entries, cardsById, columns = 2, onOpen = onOpen)
+    }
+}
+
+/**
+ * The same page of pockets, for somebody else's deck.
+ *
+ * Three across rather than two: a rival's deck is something you glance over
+ * to see what you are up against, not something you read card by card, and
+ * it has to fit inside a row of the standings without burying the table.
+ */
+@Composable
+fun RivalPockets(
+    cards: org.json.JSONArray,
+    cardsById: Map<Int, CardInfo>,
+    onOpen: (CardInfo) -> Unit,
+) {
+    val entries = remember(cards.toString(), cardsById.size) {
+        (0 until cards.length()).map { cards.getJSONObject(it) }
+            .map { it.optInt("card_id") to it.optInt("quantity") }
+            .sortedWith(compareByDescending<Pair<Int, Int>> { it.second }
+                .thenBy { cardsById[it.first]?.name ?: "" })
+    }
+    PocketGrid(entries, cardsById, columns = 3, onOpen = onOpen)
+}
+
+@Composable
+private fun PocketGrid(
+    entries: List<Pair<Int, Int>>,
+    cardsById: Map<Int, CardInfo>,
+    columns: Int,
+    onOpen: (CardInfo) -> Unit,
+) {
+    for (row in entries.chunked(columns)) {
+        Row(
+            Modifier.fillMaxWidth().padding(bottom = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            for ((id, qty) in row) {
+                Pocket(cardsById[id], qty, Modifier.weight(1f),
+                    small = columns > 2) { cardsById[id]?.let(onOpen) }
             }
+            // Keeps a final short row the same cell width as the rest
+            // instead of letting it stretch across the page.
+            repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
         }
     }
 }
 
 @Composable
-private fun Pocket(card: CardInfo?, qty: Int, modifier: Modifier, onClick: () -> Unit) {
+private fun Pocket(
+    card: CardInfo?,
+    qty: Int,
+    modifier: Modifier,
+    small: Boolean = false,
+    onClick: () -> Unit,
+) {
     var art by remember(card?.id) { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(card?.id) {
         val path = card?.imageUrl ?: return@LaunchedEffect
@@ -114,7 +151,7 @@ private fun Pocket(card: CardInfo?, qty: Int, modifier: Modifier, onClick: () ->
         Text(
             card?.name ?: "loading…",
             Modifier.fillMaxWidth().padding(top = 3.dp),
-            style = snesText(12, Color(0xFFD8D8E8)),
+            style = snesText(if (small) 10 else 12, Color(0xFFD8D8E8)),
             maxLines = 2, overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center,
         )
