@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -15,7 +16,14 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Watch one of the games the trial just played.
+ * Watch one of the games the trial just played, in the game's own v2
+ * replay viewer (js/replay2.js, `ReplayV2`).
+ *
+ * NOT js/battle-visualizer.js, which is the older live viewer: different
+ * global, different CSS prefix, different DOM, and it draws cards as emoji.
+ * v2 renders real cards when window.buildCardSVG is available, so
+ * card-popup.js is loaded alongside it -- the same file the card sheet in
+ * this app already uses.
  *
  * The phone's Go engine decides the result; the main game's JS engine is
  * the only one that produces a text log, so the replay RE-RUNS the game in
@@ -48,13 +56,34 @@ fun ReplayScreen(
     expected: String,
     onDismiss: () -> Unit,
 ) {
+    // The viewer is a flex column whose two halves split the height between
+    // them -- top player and bottom player. It therefore needs a REAL
+    // height, and CSS viewport units cannot supply one here: measured on
+    // the device, the arena came back 352x0 because a WebView sized by its
+    // own content has a zero-height viewport, so 72vh resolved to 0 and the
+    // board spread sideways instead of stacking.
+    val cfg = LocalConfiguration.current
+    val tall = cfg.screenHeightDp - 104
+    // Whether the PHONE is portrait, taken from Compose rather than from the
+    // page. The WebView's own media features are unreliable here -- measured
+    // on the device, the viewport reads 360x780 and yet matchMedia reports
+    // both (orientation:landscape) and (max-height:520px) as true -- so the
+    // only orientation signal worth trusting is the one Android gives the app.
+    val portrait = cfg.screenHeightDp >= cfg.screenWidthDp
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
         Box(Modifier.fillMaxSize()) {
             AndroidView(
-                modifier = Modifier.fillMaxSize(),
+                // An EXPLICIT height, not fillMaxSize. Inside this dialog the
+                // WebView was measured at zero height, and Android evaluates
+                // CSS media features against that measurement -- so
+                // replay2.css's "(orientation:landscape) and
+                // (max-height:520px)" matched on a portrait phone and the two
+                // players sat side by side. matchMedia confirmed it:
+                // vp=360x780 yet land=true, short=true.
+                modifier = Modifier.fillMaxWidth().height(tall.dp + 104.dp),
                 factory = { ctx ->
                     WebView(ctx).apply {
                         settings.javaScriptEnabled = true
@@ -62,7 +91,7 @@ fun ReplayScreen(
                         setBackgroundColor(android.graphics.Color.BLACK)
                         loadDataWithBaseURL(
                             BASE,
-                            page(mine, rival, cardDefs, subtypes, seed, youFirst, expected),
+                            page(mine, rival, cardDefs, subtypes, seed, youFirst, expected, tall, portrait),
                             "text/html", "utf-8", null,
                         )
                     }
@@ -79,7 +108,7 @@ private fun flat(d: Deck) = JSONArray().apply { d.cards.forEach { put(it) } }
 
 private fun page(
     mine: Deck, rival: Deck, cardDefs: String, subtypes: String, seed: Int,
-    youFirst: Boolean, expected: String,
+    youFirst: Boolean, expected: String, tallDp: Int, portrait: Boolean,
 ): String {
     // A is always the side that moves first, so the seat decides which deck
     // is A -- not which one is yours.
@@ -90,53 +119,78 @@ private fun page(
     val planA = (a.battlePlan ?: JSONObject()).toString()
     val planB = (b.battlePlan ?: JSONObject()).toString()
     val seed2 = (seed.toLong() xor 0x80000000L) and 0xFFFFFFFFL
+    val stacked = if (!portrait) "" else
+        "/* replay2.css puts the halves side by side on short landscape " +
+        "screens, and that query matches even in portrait here, so on a " +
+        "portrait phone the stacked layout is put back -- and only then, " +
+        "so a real landscape phone still gets the board the viewer " +
+        "intends. */\n" +
+        "@media (orientation:landscape) and (max-height:520px){" +
+        ".r2{flex-direction:column}" +
+        ".r2-half--top{border-bottom:1px solid rgba(255,255,255,.07);border-right:0}" +
+        ".r2-half--bottom .r2-stats{order:9}" +
+        ".r2-bubbles{right:76px;width:auto}}"
     val youAreSlot = if (youFirst) 0 else 1
     val expectedJs = JSONObject.quote(expected)
     return """
 <!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="stylesheet" href="/css/battle-visualizer.css">
+<link rel="stylesheet" href="/css/replay2.css">
 <style>
+  /* THE MOUNT NEEDS A DEFINITE HEIGHT.
+     ReplayV2 adds .r2 to the element it is given, and .r2 is a flex column
+     whose two halves are flex:1 1 50% -- the top player and the bottom
+     player. With no height to divide, the halves cannot split it and the
+     board spreads sideways instead of stacking. An explicit viewport height
+     is used rather than a flex chain: the flex version collapsed the arena
+     to a sliver, because nothing in the chain had a resolved height to give
+     it. */
   html,body{margin:0;background:#07081a;color:#e8e4d9;
-            font-family:Georgia,serif;overflow-x:hidden}
+            font-family:Georgia,serif;height:${tallDp + 104}px}
+  /* WHY html/body CARRY AN EXPLICIT HEIGHT.
+     replay2.css flips the board to side-by-side on short landscape screens:
+       @media (orientation:landscape) and (max-height:520px){.r2{flex-direction:row}}
+     A WebView whose height comes from its content reports a degenerate
+     viewport -- measured here as 352x0 -- so width exceeded height, the page
+     read as short landscape, and the two players sat beside each other
+     instead of stacking. With a real height the viewport reads 360x780 and
+     the rule correctly does not apply. The rule itself is left alone: it is
+     right for an actual landscape phone. */
   #msg{padding:14px;font-size:14px}
-  #wrap{padding:6px}
-  .picker{display:flex;gap:8px;padding:8px 92px 8px 14px}
   #warn{margin:8px 14px;padding:8px;border:2px solid #ce6a5c;color:#ffd7d0;
         font-size:13px;display:none}
   #agree{margin:6px 14px 0;font-size:12px;color:#8a8aa8}
+  .picker{display:flex;gap:8px;padding:8px 92px 8px 14px}
   .picker button{flex:1;padding:8px;background:#141428;color:#ffe28c;
                  border:2px solid #6e5522;font-family:inherit;font-size:14px}
+  #arena{height:${tallDp}px;margin:0 4px 4px}
+  $stacked
 </style></head><body>
-<div id="msg">Loading the engine…</div>
+<div id="msg">Loading the viewer\u2026</div>
 <div id="warn"></div>
 <div id="agree"></div>
 <div class="picker" id="pick" style="display:none">
   <button onclick="show(0)">Game 1</button>
   <button onclick="show(1)">Game 2</button>
 </div>
-<div id="wrap"></div>
+<div id="arena"></div>
+<!-- card-popup.js first: ReplayV2 draws real cards through buildCardSVG
+     when it is present, and falls back to plain boxes when it is not. -->
+<script src="/js/card-popup.js"></script>
 <script src="/js/battle-engine.js"></script>
-<script src="/js/battle-visualizer.js"></script>
+<script src="/js/replay2.js"></script>
 <script>
 (function () {
   var msg = document.getElementById('msg');
-  if (!window.BattleEngine || !window.BattleVisualizer) {
-    msg.textContent = 'Could not load the battle engine.'; return;
+  if (!window.BattleEngine || !window.ReplayV2) {
+    msg.textContent = 'Could not load the replay viewer.'; return;
   }
   var defs  = $cardDefs;
-  // The visualiser picks each card's glyph from def.name, then falls back to
-  // def.SUBTYPE -- but the engine's own field is card_type, so without this
-  // every card that is not in its name table drew the generic sparkle. Added
-  // here rather than in PayloadBuilder so the definitions the two engines
-  // compute from stay byte-identical; this is display only.
   var subtypes = $subtypes;
   for (var id in subtypes) if (defs[id]) defs[id].subtype = subtypes[id];
   var cardsA = ${flat(a)}, cardsB = ${flat(b)};
   var planA = $planA, planB = $planB;
-  var slotA = { deck_name: $aName, owner: $aName };
-  var slotB = { deck_name: $bName, owner: $bName };
-  var games, viz = null;
+  var games, v = null;
   try {
     // firstPlayer is passed explicitly (0 then 1) and game two carries the
     // XORed seed -- together they are what keep this identical to the match
@@ -150,16 +204,17 @@ private fun page(
   } catch (e) {
     msg.textContent = 'The replay could not be built: ' + e; return;
   }
+
   // DOES THE REPLAY MATCH THE GAME THAT WAS SCORED?
   //
   // The Go engine on the phone decided this result; the JS engine is
   // re-running it to draw it. If they ever disagree the player is being
-  // shown a game that did not happen, so the page says so rather than
-  // quietly playing the wrong one.
+  // shown a game that did not happen, so the page says so either way --
+  // an absent warning is indistinguishable from a check that threw.
   try {
     var m = BattleEngine.simulateMatch(cardsA, cardsB, defs, $seed, planA, planB,
       null, null, null, null, null, null, null);
-    var youAre = $youAreSlot;                 // 0 if you moved first
+    var youAre = $youAreSlot;
     var got = m.winner === -1 ? 'drew' : (m.winner === youAre ? 'won' : 'lost');
     if (got !== $expectedJs) {
       var w = document.getElementById('warn');
@@ -167,29 +222,34 @@ private fun page(
       w.textContent = 'This replay disagrees with the scored result (' +
         $expectedJs + ' vs ' + got + '), so it is not the game that counted.';
     } else {
-      // Said out loud. A missing warning is indistinguishable from a check
-      // that threw before it could run.
       document.getElementById('agree').textContent =
         'Replay agrees with the scored result (' + got + ').';
     }
   } catch (e) {
-    // Drawing is still worth doing, but do not let a failed check read as a
-    // passed one.
     document.getElementById('agree').textContent =
       'Could not verify this replay against the scored result: ' + e;
   }
 
   window.show = function (i) {
     var rec = games[i];
-    if (viz) viz.destroy();
-    var wrap = document.getElementById('wrap');
-    wrap.innerHTML = '';
-    viz = new BattleVisualizer(wrap, {
-      turnData: rec.turnData, lines: rec.lines, result: rec.result,
-      cardDefs: defs, slotA: slotA, slotB: slotB,
-      maxLife: 100, maxHonor: 100,
-    });
-    viz.play(1);
+    if (v) { try { v.destroy(); } catch (e) {} }
+    var arena = document.getElementById('arena');
+    arena.innerHTML = '';
+    try {
+      v = new window.ReplayV2(arena, {
+        turnData: rec.turnData, lines: rec.lines, cardDefs: defs,
+        maxLife: 100,
+        // recordBattle's own {winner, reason}, so the end panel states the
+        // result from the engine rather than inferring it from the log.
+        result: rec.result || null,
+      });
+    } catch (e) {
+      arena.innerHTML = '<div id="msg">Viewer failed to start: ' + e + '</div>';
+      return;
+    }
+    v.seek(0);
+    v.play();
+
   };
   msg.style.display = 'none';
   document.getElementById('pick').style.display = '';
