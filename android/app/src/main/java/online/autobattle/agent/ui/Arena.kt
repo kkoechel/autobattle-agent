@@ -38,6 +38,16 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
+ * A game being watched, and the run that produced it.
+ *
+ * The two travel together because the replay needs the DECKS, and the decks
+ * differ by source: a rehearsal plays today's lists, a league replay plays the
+ * lists that were scored. Holding the game alone meant the overlay guessed at
+ * the decks from whichever run was last in hand.
+ */
+data class Watch(val game: Compete.Game, val from: Compete.Trial)
+
+/**
  * The Agent game: your deck against everybody else's, scored server-side.
  *
  * Training is explicitly a button rather than something that happens in the
@@ -95,7 +105,15 @@ fun ArenaPane(modifier: Modifier = Modifier) {
     var askNow by remember { mutableStateOf(false) }
     var showHelp by remember { mutableStateOf(false) }
     var newsBusy by remember { mutableStateOf(false) }
-    var watching by remember { mutableStateOf<Compete.Game?>(null) }
+    // A watched game carries the run it came from. There are two sources
+    // now -- a rehearsal of the current deck, and a scored league round
+    // replayed from its snapshot -- and the overlay must draw the decks
+    // that played THAT game, not whichever run happens to be in hand.
+    var watching by remember { mutableStateOf<Watch?>(null) }
+    // One scored round, re-played on this device from its snapshot.
+    var roundReplay by remember { mutableStateOf<Compete.RoundReplay?>(null) }
+    var roundBusy by remember { mutableStateOf<Int?>(null) }
+    var roundStep by remember { mutableStateOf<String?>(null) }
     var saved by remember { mutableStateOf<JSONArray?>(null) }
     var banned by remember { mutableStateOf<Set<Int>>(emptySet()) }
     var rawCards by remember { mutableStateOf<JSONArray?>(null) }
@@ -462,12 +480,12 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                     Text("Watch a game:", style = snesText(12, androidx.compose.ui.graphics.Color(0xFF8A8AA8)))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (won.isNotEmpty()) GameLink("We won") {
-                            watching = won.random()
+                            watching = Watch(won.random(), t)
                         }
                         if (lost.isNotEmpty()) GameLink("We lost") {
-                            watching = lost.random()
+                            watching = Watch(lost.random(), t)
                         }
-                        GameLink("Any") { watching = t.games.random() }
+                        GameLink("Any") { watching = Watch(t.games.random(), t) }
                     }
                 }
                 trial?.let { t ->
@@ -767,10 +785,11 @@ fun ArenaPane(modifier: Modifier = Modifier) {
         }
 
         // Watching is an overlay, like the card popup: it belongs to no place.
-        watching?.let { g ->
-            val t = trial
-            val rival = t?.rivals?.firstOrNull { it.name == g.opponent }
-            if (t?.mine != null && rival != null) {
+        watching?.let { w ->
+            val g = w.game
+            val t = w.from
+            val rival = t.rivals.firstOrNull { it.name == g.opponent }
+            if (t.mine != null && rival != null) {
                 ReplayScreen(
                     mine = t.mine,
                     rival = rival,
@@ -1232,11 +1251,98 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                     // The deck's name on its own line. Sharing the row with
                     // the numbers clipped every name worth reading -- and
                     // the name is how a player tells one run from another.
-                    Text("r${r.optInt("revision")}  ${r.optString("deck_name")}",
-                        Modifier.fillMaxWidth().padding(start = 54.dp, bottom = 3.dp),
+                    Row(Modifier.fillMaxWidth().padding(start = 54.dp, bottom = 3.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Text("r${r.optInt("revision")}  ${r.optString("deck_name")}",
+                            Modifier.weight(1f, fill = false),
+                            style = snesText(12,
+                                androidx.compose.ui.graphics.Color(0xFFA8A8C8)),
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        // WATCH offered only where the round can actually be
+                        // watched. Snapshots began part-way through the
+                        // league's history and are pruned at the far end, so
+                        // the server says which rounds have one rather than
+                        // letting the player discover it by tapping.
+                        val rid = r.optInt("round_id")
+                        if (r.optBoolean("replayable")) {
+                            if (roundBusy == rid) {
+                                Text(roundStep ?: "Playing it back\u2026",
+                                    style = snesText(12,
+                                        androidx.compose.ui.graphics.Color(0xFFFFE28C)))
+                            } else GameLink("Watch") {
+                                error = null
+                                roundReplay = null; roundBusy = rid
+                                scope.launch {
+                                    runCatching {
+                                        withContext(Dispatchers.Default) {
+                                            Compete.replayRound(
+                                                GameClient(token), handle, rid,
+                                                onProgress = { roundStep = it.step })
+                                        }
+                                    }.onSuccess { roundReplay = it }
+                                     .onFailure { error = readable(it) }
+                                    roundBusy = null; roundStep = null
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            roundReplay?.let { rr ->
+                SnesWindow {
+                    val t = rr.trial
+                    Text("Round ${rr.roundId} \u2014 ${t.deckName}",
+                        style = snesText(14,
+                            androidx.compose.ui.graphics.Color(0xFFFFE28C)))
+                    // THE RE-DERIVATION IS CHECKED, NOT ASSUMED. The round was
+                    // scored by the validator on the coordinator; this is the
+                    // same engine on the phone. Agreement is expected, and a
+                    // replay that quietly disagrees with the standings would be
+                    // worse than no replay, so the disagreement is shown.
+                    if (!rr.agrees) {
+                        val (sw, sl, sd) = rr.scored!!
+                        val (dw, dl, dd) = rr.derived
+                        Text("\u201cPlaying it back here gives $dw-$dl-$dd, but the " +
+                            "league recorded $sw-$sl-$sd. Treat what follows as " +
+                            "an illustration, not the record.\u201d",
+                            style = snesText(12,
+                                androidx.compose.ui.graphics.Color(0xFFFF9C6E)))
+                    }
+                    val won = t.games.filter { it.outcome == "won" }
+                    val lost = t.games.filter { it.outcome == "lost" }
+                    val drew = t.games.filter { it.outcome == "drew" }
+                    Text("${won.size} won, ${lost.size} lost, ${drew.size} drawn " +
+                        "across ${t.opponents} opponents.",
                         style = snesText(12,
-                            androidx.compose.ui.graphics.Color(0xFFA8A8C8)),
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            androidx.compose.ui.graphics.Color(0xFF8A8AA8)))
+                    if (t.games.isEmpty()) {
+                        Text("No game from that round could be reconstructed.",
+                            style = snesText(12,
+                                androidx.compose.ui.graphics.Color(0xFFFF9C6E)))
+                    } else {
+                        Text("Watch a game:", style = snesText(12,
+                            androidx.compose.ui.graphics.Color(0xFF8A8AA8)))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            if (won.isNotEmpty()) GameLink("We won") {
+                                watching = Watch(won.random(), t)
+                            }
+                            if (lost.isNotEmpty()) GameLink("We lost") {
+                                watching = Watch(lost.random(), t)
+                            }
+                            GameLink("Any") { watching = Watch(t.games.random(), t) }
+                        }
+                        t.worstAgainst?.let { w ->
+                            lost.filter { it.opponent == w }.randomOrNull()?.let { g ->
+                                // The matchup that cost the most is the one
+                                // worth watching, and "we lost" picked at
+                                // random rarely lands on it.
+                                Row { GameLink("Our worst matchup ($w)") {
+                                    watching = Watch(g, t)
+                                } }
+                            }
+                        }
+                    }
                 }
             }
         }

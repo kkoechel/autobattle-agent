@@ -269,21 +269,163 @@ object Compete {
         return Trial(me.optString("name"), s.wins, opponents.size, block.size,
             beaten, lost, even, best, worst,
             games = games, mine = mine, rivals = opponents,
-            cardDefs = builder.cardDefs,
-            display = JSONObject().apply {
-                for (i in 0 until cardsJson.length()) {
-                    val c = cardsJson.getJSONObject(i)
-                    val d = JSONObject()
-                    for (k in listOf("subtype", "rules_text", "rarity",
-                                     "image_url", "thumbnail_url", "flavor_text")) {
-                        val v = c.optString(k)
-                        // optString yields the four-character word "null" for
-                        // a JSON null, which would print as card text.
-                        if (v.isNotBlank() && v != "null") d.put(k, v)
-                    }
-                    if (d.length() > 0) put(c.getInt("id").toString(), d)
+            cardDefs = builder.cardDefs, display = displayMap(cardsJson))
+    }
+
+    /**
+     * id -> the fields buildCardSVG draws with, which the engine does not carry.
+     *
+     * Shared by both replay paths rather than written twice: the rehearsal and
+     * the league replay must draw cards the same way, and two copies of this
+     * would drift the first time a field was added.
+     */
+    private fun displayMap(cardsJson: JSONArray): String =
+        JSONObject().apply {
+            for (i in 0 until cardsJson.length()) {
+                val c = cardsJson.getJSONObject(i)
+                val d = JSONObject()
+                for (k in listOf("subtype", "rules_text", "rarity",
+                                 "image_url", "thumbnail_url", "flavor_text")) {
+                    val v = c.optString(k)
+                    // optString yields the four-character word "null" for a
+                    // JSON null, which would print as card text.
+                    if (v.isNotBlank() && v != "null") d.put(k, v)
                 }
-            }.toString())
+                if (d.length() > 0) put(c.getInt("id").toString(), d)
+            }
+        }.toString()
+
+    /**
+     * One LEAGUE round, replayed from the decks that actually played it.
+     *
+     * Different from testDeck in the one way that matters: the decks and the
+     * seed block come from the round's snapshot rather than from the field as
+     * it stands now, so these are the games the league scored, not fresh ones
+     * between today's lists.
+     *
+     * Per-match outcomes are re-derived here rather than stored server-side.
+     * The round was scored by the Go validator on the coordinator and this is
+     * the Go engine on the phone, so agreement is expected but not assumed --
+     * the aggregate is compared against what the league recorded, and a
+     * disagreement is reported instead of being papered over. A replay that
+     * silently disagrees with the standings is worse than no replay.
+     */
+    data class RoundReplay(
+        val roundId: Int,
+        val finishedAt: String,
+        val trial: Trial,
+        /** Wins/losses/draws as the LEAGUE recorded them, if it recorded any. */
+        val scored: Triple<Int, Int, Int>?,
+        /** The same, re-derived on this device. */
+        val derived: Triple<Int, Int, Int>,
+    ) {
+        val agrees: Boolean get() = scored == null || scored == derived
+    }
+
+    private fun flatten(entries: JSONArray?): List<Int> {
+        val out = ArrayList<Int>(100)
+        for (i in 0 until (entries?.length() ?: 0)) {
+            val e = entries!!.getJSONObject(i)
+            repeat(e.getInt("quantity")) { out.add(e.getInt("card_id")) }
+        }
+        return out
+    }
+
+    fun replayRound(
+        client: GameClient,
+        myHandle: String?,
+        round: Int = 0,
+        workers: Int = 4,
+        onProgress: (Progress) -> Unit = {},
+    ): RoundReplay {
+        onProgress(Progress("Consulting the catalogue", 0, 1))
+        val (cardsJson, _) = client.cards()
+        val cat = Catalogue(cardsJson)
+
+        onProgress(Progress("Opening the record", 0, 1))
+        val env = client.replay(round)
+        val arr = env.getJSONArray("decks")
+        var mine: Deck? = null
+        var scored: Triple<Int, Int, Int>? = null
+        val rivals = ArrayList<Deck>()
+        for (i in 0 until arr.length()) {
+            val d = arr.getJSONObject(i)
+            val cards = flatten(d.optJSONArray("cards"))
+            if (cards.isEmpty()) continue
+            if (d.optBoolean("is_me")) {
+                mine = Deck("me", cards, d.optJSONObject("battle_plan"),
+                    d.optString("deck_name"), null)
+                if (!d.isNull("wins")) {
+                    scored = Triple(d.optInt("wins"), d.optInt("losses"),
+                        d.optInt("draws"))
+                }
+            } else {
+                rivals.add(Deck("o${rivals.size}", cards,
+                    d.optJSONObject("battle_plan"), d.optString("handle"), null))
+            }
+        }
+        requireNotNull(mine) { "your deck did not play that round" }
+        require(rivals.isNotEmpty()) { "nobody else played that round" }
+
+        // THE ROUND'S OWN SEEDS, not a fresh block. Recorded with the round
+        // precisely because they came from an environment variable: replaying
+        // on a guess would produce a different game from the one scored.
+        val seed0 = env.optInt("seed0")
+        val count = env.optInt("seeds")
+        require(count > 0) { "that round recorded no seeds" }
+        val seeds = (0 until count).map { seed0 + it }
+
+        onProgress(Progress("Playing the round back", 0, 1))
+        val builder = PayloadBuilder(cat.raw)
+        val payload = builder.build(listOf(mine), rivals, seeds)
+        val out = JSONObject(Mobile.run(payload, workers.toLong()))
+        val raw = out.getJSONArray("results")
+        val s = Aggregator.aggregate(raw.toString(), listOf(mine), seeds, rivals.size)["me"]
+            ?: error("the engine returned no result")
+
+        val nameOfSlot = rivals.associate { it.slotId to it.name }
+        // Seats alternate by seed INDEX, not by seed value -- the same rule
+        // sim() uses, and getting it wrong replays a different game.
+        val seatOf = seeds.withIndex().associate { (i, sd) -> sd to (i % 2 == 0) }
+        val games = ArrayList<Game>(raw.length())
+        for (i in 0 until raw.length()) {
+            val r = raw.getJSONObject(i)
+            val parts = r.getString("match_id").split("|")
+            if (parts.size != 3) continue
+            val (sid, oid, seedStr) = parts
+            if (sid != "me") continue
+            val sd = seedStr.toIntOrNull() ?: continue
+            val winner = if (r.isNull("winner_slot")) null else r.getString("winner_slot")
+            games.add(Game(sd, nameOfSlot[oid] ?: oid, seatOf[sd] ?: true,
+                when (winner) { null -> "drew"; sid -> "won"; else -> "lost" }))
+        }
+
+        var beaten = 0; var lost = 0; var even = 0
+        var best: String? = null; var bestMargin = Int.MIN_VALUE
+        var worst: String? = null; var worstMargin = Int.MAX_VALUE
+        for ((slot, wld) in s.perOpponent) {
+            val (w, l, _) = wld
+            if (w > l) beaten++ else if (l > w) lost++ else even++
+            val margin = w - l
+            val nm = nameOfSlot[slot] ?: slot
+            if (margin > bestMargin) { bestMargin = margin; best = nm }
+            if (margin < worstMargin) { worstMargin = margin; worst = nm }
+        }
+
+        // Rounded the way bin/round.py rounds, so a comparison against the
+        // stored row is a comparison of the same quantity. Draws take the
+        // remainder there and must take it here too, or every round would
+        // look like a disagreement.
+        val dw = Math.round(s.wins).toInt()
+        val dl = Math.round(s.losses).toInt()
+        val derived = Triple(dw, dl, maxOf(0, rivals.size - dw - dl))
+
+        val trial = Trial(mine.name, s.wins, rivals.size, seeds.size,
+            beaten, lost, even, best, worst,
+            games = games, mine = mine, rivals = rivals,
+            cardDefs = builder.cardDefs, display = displayMap(cardsJson))
+        return RoundReplay(env.optInt("round_id"),
+            env.optString("finished_at"), trial, scored, derived)
     }
 
     /**

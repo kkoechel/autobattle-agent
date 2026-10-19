@@ -131,6 +131,17 @@ class GameClient(private val token: String?, private val base: String = BASE) {
     fun history(rounds: Int = 40): JSONArray =
         call("GET", "/history?rounds=$rounds").getJSONArray("rounds")
 
+    /**
+     * A scored round's decks, exactly as they played, plus its seed block.
+     *
+     * Needed because `results` records which REVISION played and `/field`
+     * holds only the current list, so a finished round could be read but not
+     * watched. Omit the round for the newest one that has a snapshot -- which
+     * is not necessarily the newest round, since snapshots are pruned.
+     */
+    fun replay(round: Int = 0): JSONObject =
+        call("GET", if (round > 0) "/replay?round=$round" else "/replay")
+
     fun leaderboard(rounds: Int = 48): JSONArray =
         call("GET", "/leaderboard?rounds=$rounds").getJSONArray("table")
 
