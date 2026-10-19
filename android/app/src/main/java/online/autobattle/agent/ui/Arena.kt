@@ -386,8 +386,18 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                                     // look ignored -- the brief changed, but
                                     // the deck on screen was still the old
                                     // one and nothing said why.
+                                    // Style and breadth count as a new plan
+                                    // too: they change the staple budget,
+                                    // the seed pool and how much of the
+                                    // budget goes into refinement, so
+                                    // agreeing to an angle should set the
+                                    // agent working exactly as agreeing to
+                                    // a card does.
                                     val newPlan = directive.seedCard != before.seedCard ||
-                                        directive.theme != before.theme
+                                        directive.theme != before.theme ||
+                                        directive.style != before.style ||
+                                        directive.breadth != before.breadth ||
+                                        directive.original != before.original
                                     if (newPlan && !awaitingRound) {
                                         error = null; note = null; trial = null
                                         TrainingService.start(ctx)

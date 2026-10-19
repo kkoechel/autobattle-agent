@@ -204,16 +204,16 @@ object Questions {
         // becoming a popup.
         if (roundId <= mem.lastIdeaRound) return null
 
-        // ONCE A PLAN IS SET, STOP PITCHING.
+        // ONCE A PLAN IS SET, ITERATE ON IT INSTEAD OF PITCHING PAST IT.
         //
-        // The ideas register exists to give a player something to react to
-        // when they have no direction of their own. A player who has said
-        // "build around Turingue" HAS a direction, and being asked about
-        // Void Mage the next round reads as the agent having forgotten --
-        // worse, taking the new suggestion silently replaces the plan they
-        // chose. They can always ask for something else through "Build
-        // around...", or clear it back to "whatever looks best".
-        if (d.seedCard != null || d.theme != null) return null
+        // Suggesting a different card to a player who has already chosen one
+        // reads as the agent having forgotten, and accepting would silently
+        // replace the plan they picked. But going silent is just as wrong:
+        // choosing a card should open the question of HOW to build it, not
+        // close the conversation. So while a plan is set the agent offers
+        // angles on that plan, and nothing else.
+        val plan = d.seedCardName ?: d.themeLabel
+        if (plan != null) return angle(d, mem, plan)
 
         if (idea != null && idea.optInt("card_id") > 0) {
             val nm = idea.optString("name")
@@ -228,6 +228,95 @@ object Questions {
                 ))
         }
 
+        return themeIdea(mem)
+    }
+
+    /**
+     * Angles on a plan the player has already chosen.
+     *
+     * Each angle is asked at most once, by giving it its own question id and
+     * letting the existing `answered` set remember it -- no new state, and a
+     * declined angle does not come round again. When they are exhausted the
+     * agent says so and offers to move on, which is the only way back to
+     * fresh card suggestions short of clearing the plan by hand.
+     *
+     * Every angle is a REAL change to how the deck is built, not a flavour
+     * label: style decides the staple budget and the seed pool, breadth
+     * decides how much of the budget goes into refinement.
+     */
+    private fun angle(d: Directive, mem: Memory, plan: String): Question? {
+        data class Angle(
+            val id: String,
+            val ask: String,
+            val take: String,
+            val why: String,
+            val apply: (Directive) -> Directive,
+        )
+        val angles = listOf(
+            Angle("angle-combo",
+                "\u201c$plan, then. Shall I build a tight shell around it \u2014 " +
+                    "few distinct cards, each at its limit?\u201d",
+                "Build the tight shell",
+                "Spends no slots on the field's staples. Measured stronger " +
+                    "on average than spreading them.",
+                { it.copy(style = Directive.Style.COMBO) }),
+            Angle("angle-aggro",
+                "\u201cShall I keep the curve low around $plan? Nothing " +
+                    "expensive, and we win early or not at all.\u201d",
+                "Keep the curve low",
+                "Seeds only from cheap cards.",
+                { it.copy(style = Directive.Style.AGGRO) }),
+            Angle("angle-defensive",
+                "\u201cShall I build $plan defensively \u2014 shields and " +
+                    "structures, and outlasting them?\u201d",
+                "Play the long game",
+                "Shields and structures over pressure.",
+                { it.copy(style = Directive.Style.DEFENSIVE) }),
+            Angle("angle-deep",
+                "\u201cI could stop sketching alternatives and refine $plan " +
+                    "properly instead. Twelve passes on one list.\u201d",
+                "Refine it properly",
+                "Fewer drafts, far more refinement. Refinement is where most " +
+                    "of the strength is found.",
+                { it.copy(breadth = Directive.Breadth.DEEP) }),
+            Angle("angle-original",
+                "\u201cShall I keep $plan away from what the winning decks " +
+                    "play, even if it costs us a little?\u201d",
+                "Something of our own",
+                "Refuses any deck sharing too much with a rival.",
+                { it.copy(original = true) }),
+        ).filterNot { it.id in mem.answered }
+
+        if (angles.isEmpty()) {
+            if ("angle-done" in mem.answered) return null
+            return Question("angle-done",
+                "\u201cI have tried every angle I have on $plan. Shall we " +
+                    "leave it and look elsewhere?\u201d",
+                listOf(
+                    Choice("Leave it", "Clears the plan, and I will start " +
+                        "suggesting cards again.") {
+                        it.copy(seedCard = null, seedCardName = null,
+                            theme = null, themeLabel = null)
+                    },
+                    Choice("Stay with it", "We keep building around $plan.") { it },
+                ))
+        }
+
+        val a = angles.random()
+        return Question(a.id, a.ask,
+            listOf(
+                Choice(a.take, a.why, a.apply),
+                Choice("Not that angle", "We carry on as we are.") { it },
+                Choice("Stop building around $plan",
+                    "Back to whatever looks best.") {
+                    it.copy(seedCard = null, seedCardName = null,
+                        theme = null, themeLabel = null)
+                },
+            ))
+    }
+
+    /** A theme nobody here has tried yet, for a player with no plan. */
+    private fun themeIdea(mem: Memory): Question? {
         val untried = THEMES.filter { it.first !in mem.triedThemes }
         if (untried.isNotEmpty()) {
             val (tag, label) = untried.random()
