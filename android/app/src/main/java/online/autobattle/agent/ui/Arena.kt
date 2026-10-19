@@ -48,6 +48,30 @@ import org.json.JSONObject
 data class Watch(val game: Compete.Game, val from: Compete.Trial)
 
 /**
+ * "Watch a game that demonstrates..." -- the same menu wherever games exist.
+ *
+ * Shared rather than written at each site because the two differ only in
+ * where the games came from, and the earlier pair had already drifted: the
+ * Dojo offered a worst-matchup pick the rehearsal did not.
+ *
+ * Laid out two to a row rather than one long row: the labels are phrases
+ * now, and a single row ran them off the edge of the phone, where they were
+ * both unreachable and invisible.
+ */
+@Composable
+private fun WatchPicker(t: Compete.Trial, onPick: (Compete.Game) -> Unit) {
+    val picks = remember(t) { Compete.picks(t.games) }
+    if (picks.isEmpty()) return
+    Text("Watch a game:",
+        style = snesText(12, androidx.compose.ui.graphics.Color(0xFF8A8AA8)))
+    for (pair in picks.chunked(2)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            for (p in pair) GameLink(p.label) { onPick(p.game) }
+        }
+    }
+}
+
+/**
  * The Agent game: your deck against everybody else's, scored server-side.
  *
  * Training is explicitly a button rather than something that happens in the
@@ -472,21 +496,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 // so the seeds that won and lost are already known -- picking
                 // one out is a filter, not another simulation.
                 trial?.takeIf { it.games.isNotEmpty() }?.let { t ->
-                    val lost = t.games.filter { it.outcome == "lost" }
-                    val won = t.games.filter { it.outcome == "won" }
-                    // A label and three short links. Three full sentences in
-                    // one row ran "Watch any" off the right edge of the
-                    // phone, where it was unreachable and invisible.
-                    Text("Watch a game:", style = snesText(12, androidx.compose.ui.graphics.Color(0xFF8A8AA8)))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (won.isNotEmpty()) GameLink("We won") {
-                            watching = Watch(won.random(), t)
-                        }
-                        if (lost.isNotEmpty()) GameLink("We lost") {
-                            watching = Watch(lost.random(), t)
-                        }
-                        GameLink("Any") { watching = Watch(t.games.random(), t) }
-                    }
+                    WatchPicker(t) { g -> watching = Watch(g, t) }
                 }
                 trial?.let { t ->
                     Text("\u201c${t.deckName} is favourable against ${t.beaten} of " +
@@ -1309,10 +1319,10 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                             style = snesText(12,
                                 androidx.compose.ui.graphics.Color(0xFFFF9C6E)))
                     }
-                    val won = t.games.filter { it.outcome == "won" }
-                    val lost = t.games.filter { it.outcome == "lost" }
-                    val drew = t.games.filter { it.outcome == "drew" }
-                    Text("${won.size} won, ${lost.size} lost, ${drew.size} drawn " +
+                    val won = t.games.count { it.outcome == "won" }
+                    val lost = t.games.count { it.outcome == "lost" }
+                    val drew = t.games.count { it.outcome == "drew" }
+                    Text("$won won, $lost lost, $drew drawn " +
                         "across ${t.opponents} opponents.",
                         style = snesText(12,
                             androidx.compose.ui.graphics.Color(0xFF8A8AA8)))
@@ -1321,26 +1331,17 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                             style = snesText(12,
                                 androidx.compose.ui.graphics.Color(0xFFFF9C6E)))
                     } else {
-                        Text("Watch a game:", style = snesText(12,
-                            androidx.compose.ui.graphics.Color(0xFF8A8AA8)))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            if (won.isNotEmpty()) GameLink("We won") {
-                                watching = Watch(won.random(), t)
-                            }
-                            if (lost.isNotEmpty()) GameLink("We lost") {
-                                watching = Watch(lost.random(), t)
-                            }
-                            GameLink("Any") { watching = Watch(t.games.random(), t) }
-                        }
+                        WatchPicker(t) { g -> watching = Watch(g, t) }
                         t.worstAgainst?.let { w ->
-                            lost.filter { it.opponent == w }.randomOrNull()?.let { g ->
-                                // The matchup that cost the most is the one
-                                // worth watching, and "we lost" picked at
-                                // random rarely lands on it.
-                                Row { GameLink("Our worst matchup ($w)") {
-                                    watching = Watch(g, t)
-                                } }
-                            }
+                            t.games.filter { it.outcome == "lost" && it.opponent == w }
+                                .randomOrNull()?.let { g ->
+                                    // The matchup that cost the most is the
+                                    // one worth watching, and a loss picked
+                                    // at random rarely lands on it.
+                                    Row { GameLink("Our worst matchup ($w)") {
+                                        watching = Watch(g, t)
+                                    } }
+                                }
                         }
                     }
                 }

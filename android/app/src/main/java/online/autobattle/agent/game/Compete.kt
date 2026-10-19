@@ -142,6 +142,38 @@ object Compete {
         val youFirst: Boolean,
         /** "won", "lost" or "drew", from your side. */
         val outcome: String,
+        /**
+         * HOW it ended: "health", "deck_out", "honor", "dishonor" or "draw".
+         *
+         * The engine has always reported this, along with the tallies below,
+         * and nothing read them. They are what lets a player ask for a game
+         * that SHOWS something rather than one that merely went a certain
+         * way, and they cost nothing -- they arrive with the result.
+         */
+        val reason: String = "",
+        val turns: Int = 0,
+        /**
+         * What that side DID, and the units differ -- read engine.go's
+         * withStats() before using them for anything but picking a game.
+         *
+         *   bestTurn / poisonTurn   a PER-TURN PEAK, not a total: the
+         *                           biggest single turn, measured as the
+         *                           snapshot delta against the opponent at
+         *                           each turn boundary.
+         *   mill / honor            cumulative totals.
+         *
+         * All four are the MAX across the two games of the best-of-2, not a
+         * sum. Attribution verified across 2,646 matches of round 255 -- the
+         * winner holds the higher number in 626/700 deck_out, 779/850 health
+         * and 57/57 honor finishes -- and the exceptions are what a
+         * best-of-2 peak allows, which is why these choose a game to WATCH
+         * and are never presented as the story of the match.
+         */
+        val yourBestTurn: Int = 0,
+        val theirBestTurn: Int = 0,
+        val yourPoisonTurn: Int = 0,
+        val yourMill: Int = 0,
+        val yourHonor: Int = 0,
     )
 
     data class Trial(
@@ -172,6 +204,84 @@ object Compete {
          */
         val display: String = "",
     )
+
+    /**
+     * "Watch a game that demonstrates X", derived from the games in hand.
+     *
+     * Built from what was actually played rather than from a fixed menu, so
+     * an option that would match nothing is never offered -- the alternative
+     * is a button that silently does nothing, which reads as a broken app
+     * rather than as an empty set.
+     *
+     * Where a label is comparative ("the longest") it picks the extreme
+     * rather than filtering on a threshold. A fixed threshold ages badly:
+     * games ran 30 to 198 turns in one round of this league and there is no
+     * reason the next format should sit in the same band.
+     */
+    data class Pick(val label: String, val why: String, val game: Game)
+
+    fun picks(games: List<Game>): List<Pick> {
+        if (games.isEmpty()) return emptyList()
+        val out = ArrayList<Pick>()
+        fun add(label: String, why: String, g: Game?) {
+            if (g != null) out.add(Pick(label, why, g))
+        }
+        games.filter { it.outcome == "won" }.randomOrNull()
+            ?.let { add("We won", "A match we took.", it) }
+        games.filter { it.outcome == "lost" }.randomOrNull()
+            ?.let { add("We lost", "A match that got away.", it) }
+        add("The longest", "It went ${games.maxOf { it.turns }} turns.",
+            games.maxByOrNull { it.turns })
+        add("The quickest", "Over in ${games.minOf { it.turns }} turns.",
+            games.minByOrNull { it.turns })
+        games.filter { it.yourPoisonTurn > 0 }.maxByOrNull { it.yourPoisonTurn }
+            ?.let { add("Poison at work",
+                "${it.yourPoisonTurn} poison in a single turn.", it) }
+        games.filter { it.reason == "deck_out" && it.yourMill > it.turns }
+            .maxByOrNull { it.yourMill }
+            ?.let { add("Decking them out", "We milled ${it.yourMill} cards.", it) }
+        games.filter { it.reason == "honor" }.maxByOrNull { it.yourHonor }
+            ?.let { add("Won on honour", "Not a drop of damage needed.", it) }
+        // Phrased as the TURN it was, because that is what the number is --
+        // the biggest single turn, not the damage dealt over the match.
+        games.maxByOrNull { it.yourBestTurn }?.takeIf { it.yourBestTurn > 0 }
+            ?.let { add("Our biggest turn",
+                "${it.yourBestTurn} off them in one turn.", it) }
+        games.maxByOrNull { it.theirBestTurn }?.takeIf { it.theirBestTurn > 0 }
+            ?.let { add("Their biggest turn",
+                "${it.theirBestTurn} off us in one turn.", it) }
+        // Two labels landing on the same match reads as a bug, so the first
+        // -- the more specific -- keeps it. "Any" is appended AFTER the
+        // dedupe and never removed by it: it is the one option that should
+        // always be there, and it vanished whenever its draw happened to
+        // collide with a named pick.
+        return out.distinctBy { it.game.seed to it.game.opponent } +
+            Pick("Any", "Whatever comes up.", games.random())
+    }
+
+    /**
+     * One result row as a Game, with the tallies attributed to YOU.
+     *
+     * The _a/_b suffixes are POSITIONAL -- verified by running the same two
+     * decks in the same two seats under different slot ids and getting
+     * identical numbers -- and the payload seats you first on even seed
+     * indices, so you are slot_a exactly when youFirst.
+     */
+    private fun gameOf(r: JSONObject, opponent: String, seed: Int,
+                       youFirst: Boolean, mySlot: String): Game {
+        val winner = if (r.isNull("winner_slot")) null else r.getString("winner_slot")
+        fun mine(k: String) = r.optInt(if (youFirst) "${k}_a" else "${k}_b")
+        fun theirs(k: String) = r.optInt(if (youFirst) "${k}_b" else "${k}_a")
+        return Game(
+            seed = seed, opponent = opponent, youFirst = youFirst,
+            outcome = when (winner) { null -> "drew"; mySlot -> "won"; else -> "lost" },
+            reason = r.optString("reason"),
+            turns = r.optInt("turns"),
+            yourBestTurn = mine("dmg"), theirBestTurn = theirs("dmg"),
+            yourPoisonTurn = mine("poison"), yourMill = mine("mill"),
+            yourHonor = mine("honor"),
+        )
+    }
 
     /**
      * Play the current deck against the field WITHOUT changing it.
@@ -237,17 +347,8 @@ object Compete {
             val (sid, oid, seedStr) = parts
             if (sid != "me") continue
             val seed = seedStr.toIntOrNull() ?: continue
-            val winner = if (r.isNull("winner_slot")) null else r.getString("winner_slot")
-            games.add(Game(
-                seed = seed,
-                opponent = nameOfSlot[oid] ?: oid,
-                youFirst = seatOf[seed] ?: true,
-                outcome = when (winner) {
-                    null -> "drew"
-                    sid -> "won"
-                    else -> "lost"
-                },
-            ))
+            games.add(gameOf(r, nameOfSlot[oid] ?: oid, seed,
+                seatOf[seed] ?: true, sid))
         }
 
         val handleOf = opponents.associate { it.slotId to it.name }
@@ -395,9 +496,8 @@ object Compete {
             val (sid, oid, seedStr) = parts
             if (sid != "me") continue
             val sd = seedStr.toIntOrNull() ?: continue
-            val winner = if (r.isNull("winner_slot")) null else r.getString("winner_slot")
-            games.add(Game(sd, nameOfSlot[oid] ?: oid, seatOf[sd] ?: true,
-                when (winner) { null -> "drew"; sid -> "won"; else -> "lost" }))
+            games.add(gameOf(r, nameOfSlot[oid] ?: oid, sd,
+                seatOf[sd] ?: true, sid))
         }
 
         var beaten = 0; var lost = 0; var even = 0
