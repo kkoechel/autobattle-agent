@@ -408,7 +408,25 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                                             listOfNotNull(directive.themes
                                                 .takeIf { it.isNotEmpty() }
                                                 ?.sorted()?.joinToString(",")),
-                                        lastIdeaRound = if (q.id.startsWith("idea"))
+                                        // ONLY A DECLINE QUIETENS IT.
+                                        //
+                                        // The per-round cap exists so the
+                                        // agent does not nag, and "not just
+                                        // now" needs to visibly do something
+                                        // -- without the cap it re-rendered
+                                        // the very same question and the tap
+                                        // looked dead.
+                                        //
+                                        // But capping on ACCEPT was worse in
+                                        // the other direction: agreeing to an
+                                        // angle shut the conversation down
+                                        // until the next round, which is the
+                                        // opposite of being able to iterate.
+                                        // Saying yes keeps it talking; saying
+                                        // "not now" is what buys quiet.
+                                        lastIdeaRound = if (declined &&
+                                            (q.id.startsWith("idea") ||
+                                                q.id.startsWith("angle")))
                                             (standings?.optJSONObject("round")
                                                 ?.optInt("id") ?: 0)
                                             else mem.lastIdeaRound,
