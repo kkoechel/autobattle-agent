@@ -270,26 +270,30 @@ fun ArenaPane(modifier: Modifier = Modifier) {
             )
 
             if (q != null) {
-                GamePanel {
+                SnesWindow {
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         AgentPortrait(mood)
-                        Text(q.text, style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onBackground)
+                        TypedLine(q.text)
                     }
                         // The agent names a card; the player must be able to
                         // look at it before answering.
                         idea?.optInt("card_id")?.takeIf {
                             it > 0 && q.id == "idea-card"
                         }?.let { cid ->
-                            GameLink("Show me ${idea?.optString("name") ?: "the card"}") {
-                                scope.launch {
-                                    ensureNames()
-                                    cardsById[cid]?.let { c -> showCard = c }
-                                }
-                            }
+                            Text(
+                                "• Show me ${idea?.optString("name") ?: "the card"}",
+                                style = snesText(13, androidx.compose.ui.graphics.Color(0xFFA8C8E8)),
+                                modifier = Modifier.clickable {
+                                    scope.launch {
+                                        ensureNames()
+                                        cardsById[cid]?.let { c -> showCard = c }
+                                    }
+                                },
+                            )
                         }
+                        SnesChoiceBox {
                         for (c in q.choices) {
-                            GameChoice(
+                            SnesChoice(
                                 label = c.label,
                                 detail = c.blurb,
                                 onClick = {
@@ -318,6 +322,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                                     Memory.save(ctx, mem)
                                     if (q.id.startsWith("idea")) idea = null
                                 })
+                        }
                         }
                 }
             } else {

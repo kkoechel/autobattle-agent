@@ -6,7 +6,9 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import online.autobattle.agent.R
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
@@ -60,6 +62,15 @@ private val scheme = darkColorScheme(
  * a game and a settings screen.
  */
 private val serif = FontFamily.Serif
+
+/**
+ * Pixelify Sans (OFL, licence in android/OFL-PixelifySans.txt), used by the
+ * dialogue window. One weight only: it ships as a variable font with no
+ * static instances, and selecting a weight from one needs API 26 while this
+ * app supports 24. That costs nothing, because the era it is imitating had
+ * no bold either -- emphasis was colour and a cursor.
+ */
+val Pixel = FontFamily(Font(R.font.pixelify_sans))
 
 private val typography = Typography(
     titleLarge = TextStyle(fontFamily = serif, fontWeight = FontWeight.Bold,
