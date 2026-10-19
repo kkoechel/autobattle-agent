@@ -752,14 +752,29 @@ fun ArenaPane(
                                         directive.style != before.style ||
                                         directive.breadth != before.breadth ||
                                         directive.original != before.original
-                                    if (newPlan) {
+                                    // A BANNED CARD MAKES THE DECK ILLEGAL, so
+                                    // both of its answers have to rebuild --
+                                    // whether or not the brief changed.
+                                    //
+                                    // This is what made them look like dead
+                                    // buttons. "Rebuild around it" applies an
+                                    // identity transform, and "Begin again"
+                                    // clears a seed card and themes that a
+                                    // player who never set a plan did not have,
+                                    // so neither changed the directive and
+                                    // newPlan stayed false. Nothing ran, the
+                                    // deck still held the banned card, and the
+                                    // same question came straight back.
+                                    val forced = q.id == "banned"
+                                    if (newPlan || forced) {
                                         error = null; note = null; trial = null
-                                        // The brake still holds -- an unplayed
-                                        // deck is not discarded because a new
-                                        // angle was agreed -- but the agent
-                                        // now says it has the instruction and
-                                        // offers to act on it anyway.
-                                        if (awaitingRound) planPending = true
+                                        // The brake still holds for an ordinary
+                                        // change of plan -- an unplayed deck is
+                                        // not discarded because a new angle was
+                                        // agreed. It does NOT hold here: waiting
+                                        // out a round for a deck that may not
+                                        // legally play it is not patience.
+                                        if (awaitingRound && !forced) planPending = true
                                         else TrainingService.start(ctx)
                                     }
                                 })
