@@ -89,6 +89,14 @@ object Questions {
         standings: JSONObject?,
         myDeckCardIds: Set<Int>,
         idea: JSONObject?,
+        /**
+         * Ask even if one has already been asked this round.
+         *
+         * The per-round cap stops the agent nagging, but it also meant a
+         * player who WANTED to talk had nothing to tap: the screen offered
+         * only "rehearse it" and "discard it". Asking is not nagging.
+         */
+        force: Boolean = false,
     ): Question? {
         val rows = standings?.optJSONArray("standings")
         val all = (0 until (rows?.length() ?: 0)).map { rows!!.getJSONObject(it) }
@@ -205,7 +213,7 @@ object Questions {
         // --- IDEAS ----------------------------------------------------
         // At most one per scored round, so the agent has opinions without
         // becoming a popup.
-        if (roundId <= mem.lastIdeaRound) return null
+        if (!force && roundId <= mem.lastIdeaRound) return null
 
         // ONCE A PLAN IS SET, ITERATE ON IT INSTEAD OF PITCHING PAST IT.
         //

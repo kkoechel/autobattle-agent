@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -80,6 +81,10 @@ fun ArenaPane(modifier: Modifier = Modifier) {
     // appear a few seconds later reads as the options toggling between
     // themselves -- the work in between is invisible because it is fast.
     var justBuilt by remember { mutableStateOf<String?>(null) }
+    // The player asking the agent to talk, rather than waiting to be asked.
+    var askNow by remember { mutableStateOf(false) }
+    var showHelp by remember { mutableStateOf(false) }
+    var newsBusy by remember { mutableStateOf(false) }
     var keywords by remember { mutableStateOf<Map<String, Keyword>>(emptyMap()) }
     var showDeck by remember { mutableStateOf(false) }
     var loaded by remember { mutableStateOf(false) }
@@ -275,7 +280,35 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 // thing left on the screen, which made it read as a caption
                 // for the buttons beside it rather than as who you are.
                 Nameplate(handle.ifBlank { "You" }, Modifier.weight(1f))
-                GameLink("Any news?", enabled = !busy) { scope.launch { refresh() } }
+                // It used to refresh in silence, which is indistinguishable
+                // from a dead button: nothing on screen changes unless a
+                // round happened to land in between. Now it answers.
+                GameLink("Any news?", enabled = !busy && !newsBusy) {
+                    scope.launch {
+                        newsBusy = true
+                        val wasRound = standings?.optJSONObject("round")?.optInt("id") ?: 0
+                        refresh()
+                        val nowRound = standings?.optJSONObject("round")?.optInt("id") ?: 0
+                        val mine = standings?.optJSONArray("standings")?.let { rows ->
+                            (0 until rows.length()).map { rows.getJSONObject(it) }
+                                .firstOrNull { it.optString("handle") == handle }
+                        }
+                        justBuilt = when {
+                            nowRound > wasRound && mine != null ->
+                                "\u201cRound $nowRound is scored. You placed " +
+                                    "${mine.optInt("placement")} of " +
+                                    "${standings?.optJSONObject("round")?.optInt("decks") ?: 0}" +
+                                    ", on ${mine.optInt("wins")}-${mine.optInt("losses")}" +
+                                    "-${mine.optInt("draws")}.\u201d"
+                            nowRound > wasRound -> "\u201cRound $nowRound is scored.\u201d"
+                            else -> "\u201cNothing new yet. " +
+                                (standings?.optJSONObject("round")?.optString("next_at")
+                                    ?.takeIf { it.isNotBlank() }?.let { untilRound(it) + "." }
+                                    ?: "A round is scored every fifteen minutes.") + "\u201d"
+                        }
+                        newsBusy = false
+                    }
+                }
                 GameLink("Start again", enabled = !busy) { confirmReset = true }
             }
 
@@ -286,7 +319,8 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 (0 until a.length()).map { a.getJSONObject(it).optInt("card_id") }.toSet()
             } ?: emptySet()
             val q = if (busy || planPending || justBuilt != null) null else
-                Questions.next(directive, mem, handle, standings, deckIds, idea)
+                Questions.next(directive, mem, handle, standings, deckIds, idea,
+                    force = askNow)
             val mood = moodFor(
                 working = busy,
                 asking = q != null,
@@ -313,7 +347,11 @@ fun ArenaPane(modifier: Modifier = Modifier) {
             // inside a string template cannot be split across a concatenation
             // without the template swallowing the closing brace.
             val plannedNow = directive.summary().replaceFirstChar { it.lowercase() }
+            LaunchedEffect(myDeck?.toString(), directive.seedCard) {
+                if (myDeck != null || directive.seedCard != null) ensureNames()
+            }
             val line = when {
+                newsBusy -> "\u201cLet me look\u2026\u201d"
                 busy -> "\u201c${progress?.step ?: "Working"}\u2026\u201d"
                 q != null -> q.text
                 justBuilt != null -> justBuilt!!
@@ -324,10 +362,26 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 else -> "\u201c${directive.summary()}\u201d"
             }
 
+            // Cards the agent could plausibly be naming: the one the plan is
+            // built around, the one being proposed, and everything in the
+            // deck. Deliberately not the whole catalogue -- there are cards
+            // called Book, Brick and Anthem, and matching those would turn
+            // ordinary words into links.
+            val spoken = remember(cardsById, directive.seedCard, idea, myDeck) {
+                val out = HashMap<String, CardInfo>()
+                fun add(id: Int?) = id?.let { cardsById[it] }?.let { out[it.name] = it }
+                add(directive.seedCard)
+                add(idea?.optInt("card_id")?.takeIf { it > 0 })
+                myDeck?.optJSONArray("cards")?.let { a ->
+                    for (i in 0 until a.length()) add(a.getJSONObject(i).optInt("card_id"))
+                }
+                out
+            }
+
             SnesWindow {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     AgentPortrait(mood)
-                    TypedLine(line)
+                    TypedLine(line, spoken, onOpenCard = { showCard = it })
                 }
                 if (busy) {
                     val pr = progress
@@ -360,19 +414,29 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                         "games at the next round.\u201d",
                         style = snesText(12, androidx.compose.ui.graphics.Color(0xFFA8A8C8)))
                 }
-                // The agent names a card; the player must be able to look at
-                // it before answering.
-                if (q != null && q.id == "idea-card") {
-                    idea?.optInt("card_id")?.takeIf { it > 0 }?.let { cid ->
-                        Text("\u2022 Show me ${idea?.optString("name") ?: "the card"}",
-                            style = snesText(13, androidx.compose.ui.graphics.Color(0xFFA8C8E8)),
-                            modifier = Modifier.clickable {
-                                scope.launch {
-                                    ensureNames()
-                                    cardsById[cid]?.let { c -> showCard = c }
-                                }
-                            })
-                    }
+                // ANY CARD THE AGENT IS TALKING ABOUT IS TAPPABLE.
+                //
+                // It used to be only the card it was proposing, so once you
+                // agreed to build around Turingue there was no way to look
+                // at Turingue again -- the agent kept naming a card you
+                // could no longer see.
+                val named = when {
+                    q != null && q.id == "idea-card" ->
+                        idea?.optInt("card_id")?.takeIf { it > 0 } to
+                            (idea?.optString("name") ?: "the card")
+                    directive.seedCard != null ->
+                        directive.seedCard to (directive.seedCardName ?: "the card")
+                    else -> null to null
+                }
+                named.first?.let { cid ->
+                    Text("\u2022 Show me ${named.second}",
+                        style = snesText(13, androidx.compose.ui.graphics.Color(0xFFA8C8E8)),
+                        modifier = Modifier.clickable {
+                            scope.launch {
+                                ensureNames()
+                                cardsById[cid]?.let { c -> showCard = c }
+                            }
+                        })
                 }
 
                 if (!busy) SnesChoiceBox {
@@ -434,6 +498,7 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                                                      else mem.barrenRuns)
                                     Memory.save(ctx, mem)
                                     if (q.id.startsWith("idea")) idea = null
+                                    askNow = false
                                     // AGREEING TO AN IDEA STARTS THE WORK.
                                     // Saying "investigate this card" and
                                     // watching nothing happen made the answer
@@ -512,6 +577,20 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                                 enabled = !trialBusy,
                                 onClick = { planPending = false })
                         }
+                        if (!planPending && justBuilt == null) {
+                            SnesChoice(
+                                label = "What else could we try?",
+                                detail = "Talk about where to take the deck " +
+                                    "next, without touching this one.",
+                                enabled = !trialBusy,
+                                onClick = { askNow = true })
+                            SnesChoice(
+                                label = "What do these choices do?",
+                                detail = "Plain answers about breadth, style " +
+                                    "and themes.",
+                                enabled = !trialBusy,
+                                onClick = { showHelp = true })
+                        }
                         if (!planPending && justBuilt == null) SnesChoice(
                             // "Build another one anyway" did not say what it
                             // would do with the deck you already have, and
@@ -562,6 +641,27 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 cardsById = cardsById,
                 onOpenCard = { showCard = it },
             )
+        }
+
+        if (showHelp) {
+            Dialog(onDismissRequest = { showHelp = false }) {
+                Column(
+                    Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    SnesWindow {
+                        Text("\u201cWhat the choices do\u201d",
+                            style = snesText(15, androidx.compose.ui.graphics.Color(0xFFFFE28C)))
+                        for ((head, body) in HELP) {
+                            Text(head, style = snesText(13, androidx.compose.ui.graphics.Color(0xFF8CE8A0)))
+                            Text(body, style = snesText(12, androidx.compose.ui.graphics.Color(0xFFD8D8E8)))
+                        }
+                        SnesChoiceBox {
+                            SnesChoice("That's all") { showHelp = false }
+                        }
+                    }
+                }
+            }
         }
 
         // Asking what the agent should build, instead of waiting to be asked.
@@ -807,6 +907,34 @@ fun ArenaPane(modifier: Modifier = Modifier) {
  * Falls back to saying nothing useful rather than guessing if the string
  * cannot be parsed: a wrong countdown is worse than no countdown.
  */
+/** What each knob actually does, in the agent's voice. */
+private val HELP = listOf(
+    "Try lots of ideas / One, properly" to
+        "Breadth. Sixty rough drafts and three passes of refinement, or " +
+        "eighteen drafts and twelve passes. Refinement is where most of the " +
+        "strength is found, so \u201cone, properly\u201d usually wins \u2014 but only " +
+        "once we are pointed somewhere worth refining.",
+    "A tight shell" to
+        "Spends none of the hundred slots on cards the field plays, and " +
+        "takes fewer distinct cards at their full limit. Consistent, and " +
+        "weak to anything that answers the one thing it does.",
+    "Keep the curve low" to
+        "Seeds only from cheap cards. Wins early or not at all.",
+    "Play the long game" to
+        "Shields and structures, and outlasting them.",
+    "Keep clear of the field" to
+        "Refuses to submit a deck sharing too much with any rival. Slower, " +
+        "and the only route to something nobody has seen.",
+    "Pursue a <theme> angle" to
+        "Weighs the other ninety-nine cards toward that tag while keeping " +
+        "your chosen card at the heart of it. Up to three tags at once; " +
+        "past that nearly every card matches and the deck is about nothing.",
+    "Show me what it can do" to
+        "Plays the current deck against the live field on this phone, on " +
+        "seeds it has never seen. It changes nothing \u2014 the league plays " +
+        "its own games at the next round.",
+)
+
 private fun untilRound(utc: String): String = try {
     val fmt = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
         .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }

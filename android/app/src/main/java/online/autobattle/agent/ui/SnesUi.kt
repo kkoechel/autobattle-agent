@@ -22,7 +22,13 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.foundation.text.ClickableText
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withStyle
+import online.autobattle.agent.game.CardInfo
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -131,6 +137,83 @@ fun snesText(size: Int = 15, color: Color = Color(0xFFF2EFE4)) = TextStyle(
     color = color,
     shadow = Shadow(Color(0xFF0A0A12), Offset(2f, 2f), 0f),
 )
+
+/**
+ * The agent's line, revealed a character at a time, with any card it names
+ * tappable in place.
+ *
+ * The candidate names are passed in rather than taken from the whole
+ * catalogue on purpose. Matching all 1,066 would turn ordinary words into
+ * links -- there are cards called Book, Brick and Anthem -- so the caller
+ * supplies the cards actually in play: the one the plan is built around,
+ * the one being proposed, and the deck's own contents. A name the agent
+ * says is nearly always one of those.
+ */
+@Composable
+fun TypedLine(
+    text: String,
+    cards: Map<String, CardInfo>,
+    onOpenCard: (CardInfo) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var shown by remember(text) { mutableStateOf(0) }
+    LaunchedEffect(text) {
+        shown = 0
+        while (shown < text.length) { delay(18); shown++ }
+    }
+    // Whole-word, longest first, no overlaps -- the same rule the card text
+    // uses, so "Mill" cannot match inside "Miller".
+    val hits = remember(text, cards.keys) {
+        val taken = BooleanArray(text.length)
+        val out = ArrayList<Pair<IntRange, CardInfo>>()
+        for (name in cards.keys.sortedByDescending { it.length }) {
+            var from = 0
+            while (true) {
+                val i = text.indexOf(name, from, ignoreCase = true)
+                if (i < 0) break
+                from = i + 1
+                val end = i + name.length
+                val okStart = i == 0 || !text[i - 1].isLetterOrDigit()
+                val okEnd = end >= text.length || !text[end].isLetterOrDigit()
+                if (!okStart || !okEnd) continue
+                if ((i until end).any { taken[it] }) continue
+                for (j in i until end) taken[j] = true
+                out.add((i until end) to cards.getValue(name))
+            }
+        }
+        out.sortedBy { it.first.first }
+    }
+
+    val body = snesText()
+    val annotated = buildAnnotatedString {
+        val visible = text.take(shown)
+        var at = 0
+        for ((range, card) in hits) {
+            if (range.last >= visible.length) break
+            if (range.first > at) append(visible.substring(at, range.first))
+            pushStringAnnotation("card", card.id.toString())
+            withStyle(SpanStyle(color = Color(0xFFA8C8E8),
+                textDecoration = TextDecoration.Underline)) {
+                append(visible.substring(range.first, range.last + 1))
+            }
+            pop()
+            at = range.last + 1
+        }
+        if (at < visible.length) append(visible.substring(at))
+    }
+
+    Box(modifier) {
+        // The full string laid out invisibly underneath, so the window does
+        // not grow line by line as the text arrives.
+        Text(text, style = body.copy(color = Color.Transparent))
+        ClickableText(annotated, style = body) { off ->
+            val hit = annotated.getStringAnnotations("card", off, off).firstOrNull()
+            if (hit != null) cards.values.firstOrNull { it.id.toString() == hit.item }
+                ?.let(onOpenCard)
+            else shown = text.length
+        }
+    }
+}
 
 /**
  * The agent's line, revealed a character at a time.
