@@ -160,8 +160,17 @@ object Compete {
         val mine: Deck? = null,
         val rivals: List<Deck> = emptyList(),
         val cardDefs: String = "",
-        /** id -> subtype, which the visualiser needs and the engine does not. */
-        val subtypes: String = "",
+        /**
+         * id -> the DISPLAY fields: art, rules text, rarity, subtype.
+         *
+         * The engine's definitions carry none of these, which is correct --
+         * it does not need them. But the replay draws its cards with the
+         * main game's buildCardSVG, and that reads thumbnail_url/image_url
+         * for the art, rules_text for the body and rarity for the frame. Sent
+         * separately so the definitions the two ENGINES compute from stay
+         * byte-identical.
+         */
+        val display: String = "",
     )
 
     /**
@@ -261,11 +270,18 @@ object Compete {
             beaten, lost, even, best, worst,
             games = games, mine = mine, rivals = opponents,
             cardDefs = builder.cardDefs,
-            subtypes = JSONObject().apply {
+            display = JSONObject().apply {
                 for (i in 0 until cardsJson.length()) {
                     val c = cardsJson.getJSONObject(i)
-                    val st = c.optString("subtype")
-                    if (st.isNotBlank() && st != "null") put(c.getInt("id").toString(), st)
+                    val d = JSONObject()
+                    for (k in listOf("subtype", "rules_text", "rarity",
+                                     "image_url", "thumbnail_url", "flavor_text")) {
+                        val v = c.optString(k)
+                        // optString yields the four-character word "null" for
+                        // a JSON null, which would print as card text.
+                        if (v.isNotBlank() && v != "null") d.put(k, v)
+                    }
+                    if (d.length() > 0) put(c.getInt("id").toString(), d)
                 }
             }.toString())
     }

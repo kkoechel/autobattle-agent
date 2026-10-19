@@ -2,10 +2,12 @@ package online.autobattle.agent.ui
 
 import android.annotation.SuppressLint
 import android.webkit.WebView
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -48,8 +50,8 @@ fun ReplayScreen(
     mine: Deck,
     rival: Deck,
     cardDefs: String,
-    /** id -> subtype, for the visualiser's per-card glyph. */
-    subtypes: String,
+    /** id -> art, rules text, rarity and subtype, for drawing the cards. */
+    display: String,
     seed: Int,
     youFirst: Boolean,
     /** What the Go engine scored, from your side: won / lost / drew. */
@@ -63,41 +65,50 @@ fun ReplayScreen(
     // own content has a zero-height viewport, so 72vh resolved to 0 and the
     // board spread sideways instead of stacking.
     val cfg = LocalConfiguration.current
-    val tall = cfg.screenHeightDp - 104
     // Whether the PHONE is portrait, taken from Compose rather than from the
     // page. The WebView's own media features are unreliable here -- measured
     // on the device, the viewport reads 360x780 and yet matchMedia reports
     // both (orientation:landscape) and (max-height:520px) as true -- so the
     // only orientation signal worth trusting is the one Android gives the app.
     val portrait = cfg.screenHeightDp >= cfg.screenWidthDp
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        Box(Modifier.fillMaxSize()) {
-            AndroidView(
-                // An EXPLICIT height, not fillMaxSize. Inside this dialog the
-                // WebView was measured at zero height, and Android evaluates
-                // CSS media features against that measurement -- so
-                // replay2.css's "(orientation:landscape) and
-                // (max-height:520px)" matched on a portrait phone and the two
-                // players sat side by side. matchMedia confirmed it:
-                // vp=360x780 yet land=true, short=true.
-                modifier = Modifier.fillMaxWidth().height(tall.dp + 104.dp),
-                factory = { ctx ->
-                    WebView(ctx).apply {
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        setBackgroundColor(android.graphics.Color.BLACK)
-                        loadDataWithBaseURL(
-                            BASE,
-                            page(mine, rival, cardDefs, subtypes, seed, youFirst, expected, tall, portrait),
-                            "text/html", "utf-8", null,
-                        )
-                    }
-                },
-            )
-            GameLink("Close", Modifier.align(Alignment.TopEnd).padding(10.dp)) { onDismiss() }
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color(0xFF07081A))
+                // The system bars are not ours to draw under: the bottom
+                // player's stat row was sitting beneath the navigation bar.
+                .windowInsetsPadding(WindowInsets.systemBars),
+        ) {
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                // MEASURED, not guessed. screenHeightDp includes the system
+                // bars, so sizing from it put the controls off the bottom of
+                // the screen; this is the space the dialog actually has.
+                val avail = maxHeight.value.toInt()
+                AndroidView(
+                    modifier = Modifier.fillMaxWidth().height(maxHeight),
+                    factory = { ctx ->
+                        WebView(ctx).apply {
+                            settings.javaScriptEnabled = true
+                            settings.domStorageEnabled = true
+                            setBackgroundColor(android.graphics.Color.BLACK)
+                            loadDataWithBaseURL(
+                                BASE,
+                                page(mine, rival, cardDefs, display, seed, youFirst,
+                                    expected, avail, portrait),
+                                "text/html", "utf-8", null,
+                            )
+                        }
+                    },
+                )
+                GameLink("Close", Modifier.align(Alignment.TopEnd).padding(10.dp)) {
+                    onDismiss()
+                }
+            }
         }
     }
 }
@@ -107,9 +118,15 @@ private const val BASE = "https://autobattle.online/"
 private fun flat(d: Deck) = JSONArray().apply { d.cards.forEach { put(it) } }
 
 private fun page(
-    mine: Deck, rival: Deck, cardDefs: String, subtypes: String, seed: Int,
-    youFirst: Boolean, expected: String, tallDp: Int, portrait: Boolean,
+    mine: Deck, rival: Deck, cardDefs: String, display: String, seed: Int,
+    youFirst: Boolean, expected: String, availDp: Int, portrait: Boolean,
 ): String {
+    // What the arena gets is what is left after everything else on the page:
+    // the agreement line and game picker above it, and BOTH control rows
+    // below -- transport and speed. Reserving for one row put the speed
+    // buttons off the bottom of the screen and pushed the transport row
+    // under the navigation bar.
+    val arenaDp = (availDp - 96 - 58 - 46 - 16).coerceAtLeast(220)
     // A is always the side that moves first, so the seat decides which deck
     // is A -- not which one is yours.
     val a = if (youFirst) mine else rival
@@ -146,7 +163,7 @@ private fun page(
      to a sliver, because nothing in the chain had a resolved height to give
      it. */
   html,body{margin:0;background:#07081a;color:#e8e4d9;
-            font-family:Georgia,serif;height:${tallDp + 104}px}
+            font-family:Georgia,serif;height:${availDp}px;overflow:hidden}
   /* WHY html/body CARRY AN EXPLICIT HEIGHT.
      replay2.css flips the board to side-by-side on short landscape screens:
        @media (orientation:landscape) and (max-height:520px){.r2{flex-direction:row}}
@@ -163,7 +180,16 @@ private fun page(
   .picker{display:flex;gap:8px;padding:8px 92px 8px 14px}
   .picker button{flex:1;padding:8px;background:#141428;color:#ffe28c;
                  border:2px solid #6e5522;font-family:inherit;font-size:14px}
-  #arena{height:${tallDp}px;margin:0 4px 4px}
+  /* ReplayV2 draws the board and nothing else -- play, step, scrub and
+     speed are the host page's job, which is why there were no controls at
+     all. These mirror testviewer.php's. */
+  .ctl{display:flex;align-items:center;gap:6px;padding:4px 8px}
+  .ctl button{background:#141428;color:#ffe28c;border:2px solid #6e5522;
+              font-family:inherit;font-size:15px;padding:5px 9px;min-width:38px}
+  .ctl button.on{background:#2b2a4a;color:#fff}
+  .ctl input[type=range]{flex:1 1 auto;min-width:0;accent-color:#ffe28c}
+  .ctl .pos{font-size:11px;color:#8a8aa8;min-width:92px;text-align:right}
+  #arena{height:${arenaDp}px;margin:0 4px 2px}
   $stacked
 </style></head><body>
 <div id="msg">Loading the viewer\u2026</div>
@@ -174,6 +200,20 @@ private fun page(
   <button onclick="show(1)">Game 2</button>
 </div>
 <div id="arena"></div>
+<div class="ctl" id="ctl" style="display:none">
+  <button id="first" title="Start">&#9198;</button>
+  <button id="back" title="Step back">&#9664;</button>
+  <button id="play" title="Play or pause">&#9654;</button>
+  <button id="fwd" title="Step forward">&#9654;|</button>
+  <input id="seek" type="range" min="0" max="1" value="0">
+  <span class="pos" id="pos"></span>
+</div>
+<div class="ctl" id="spd" style="display:none">
+  <button data-s="0.5">&#189;&times;</button>
+  <button data-s="1" class="on">1&times;</button>
+  <button data-s="2">2&times;</button>
+  <button data-s="4">4&times;</button>
+</div>
 <!-- card-popup.js first: ReplayV2 draws real cards through buildCardSVG
      when it is present, and falls back to plain boxes when it is not. -->
 <script src="/js/card-popup.js"></script>
@@ -186,8 +226,14 @@ private fun page(
     msg.textContent = 'Could not load the replay viewer.'; return;
   }
   var defs  = $cardDefs;
-  var subtypes = $subtypes;
-  for (var id in subtypes) if (defs[id]) defs[id].subtype = subtypes[id];
+  // The engine's definitions carry no art, no rules text and no rarity --
+  // it does not need them, and buildCardSVG does. Merged in here rather than
+  // in PayloadBuilder so what the two engines compute from stays identical.
+  var display = $display;
+  for (var id in display) {
+    if (!defs[id]) continue;
+    for (var k in display[id]) defs[id][k] = display[id][k];
+  }
   var cardsA = ${flat(a)}, cardsB = ${flat(b)};
   var planA = $planA, planB = $planB;
   var games, v = null;
@@ -247,6 +293,33 @@ private fun page(
       arena.innerHTML = '<div id="msg">Viewer failed to start: ' + e + '</div>';
       return;
     }
+    // Wire the controls to THIS game's viewer, then start it running --
+    // opening a replay and landing on a frozen turn 1 is a step with no
+    // decision in it.
+    var seek = document.getElementById('seek');
+    var play = document.getElementById('play');
+    var pos  = document.getElementById('pos');
+    seek.max = Math.max(0, v.events.length - 1);
+    v.onChange(function (st) {
+      seek.value = st.idx;
+      play.innerHTML = st.playing ? '&#10073;&#10073;' : '&#9654;';
+      pos.textContent = 'turn ' + (st.turn || '-') + ' · ' + st.idx + '/' + (st.total - 1);
+    });
+    document.getElementById('first').onclick = function () { v.seek(0); };
+    document.getElementById('back').onclick  = function () { v.seek(Math.max(0, v.idx - 1), true); };
+    document.getElementById('fwd').onclick   = function () { v.seek(Math.min(v.events.length - 1, v.idx + 1), true); };
+    play.onclick = function () { v.playing ? v.pause() : v.play(); };
+    seek.oninput = function () { v.seek(parseInt(seek.value, 10), true); };
+    Array.prototype.forEach.call(document.querySelectorAll('#spd button'), function (b) {
+      b.onclick = function () {
+        v.setSpeed(parseFloat(b.dataset.s));
+        Array.prototype.forEach.call(document.querySelectorAll('#spd button'),
+          function (x) { x.classList.remove('on'); });
+        b.classList.add('on');
+      };
+    });
+    document.getElementById('ctl').style.display = '';
+    document.getElementById('spd').style.display = '';
     v.seek(0);
     v.play();
 
