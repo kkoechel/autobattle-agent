@@ -579,39 +579,11 @@ fun ArenaPane(modifier: Modifier = Modifier) {
         }
 
             if (place == Place.BINDER) myDeck?.let { d ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("“I have built you ${d.optString("name")}.”",
-                            style = MaterialTheme.typography.titleSmall)
-                        Text("revision ${d.optInt("revision")}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    TextButton(onClick = {
-                        showDeck = !showDeck
-                        if (showDeck) scope.launch { ensureNames() }
-                    }) { Text(if (showDeck) "Hide" else "Show cards") }
-                }
-                if (showDeck) {
-                    val cards = d.optJSONArray("cards")
-                    val entries = (0 until (cards?.length() ?: 0))
-                        .map { cards!!.getJSONObject(it) }
-                        .sortedByDescending { it.optInt("quantity") }
-                    for (e in entries) {
-                        val id = e.optInt("card_id")
-                        Row(Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text("${e.optInt("quantity")}x",
-                                style = MaterialTheme.typography.bodySmall)
-                            Text(cardsById[id]?.name ?: "loading…",
-                                Modifier.clickable {
-                                    cardsById[id]?.let { c -> showCard = c }
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary)
-                        }
-                    }
-                }
+                // The binder needs every card's name and art, so the
+                // catalogue is pulled on arrival rather than behind a
+                // "show cards" tap -- the page IS the content here.
+                LaunchedEffect(d.toString()) { ensureNames() }
+                BinderPage(d, cardsById) { showCard = it }
             }
         }
 
@@ -643,12 +615,16 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                         Text("${"%.0f".format(r.optDouble("wins"))}-" +
                              "${"%.0f".format(r.optDouble("losses"))}-" +
                              "${"%.0f".format(r.optDouble("draws"))}",
-                            Modifier.width(72.dp), style = snesText(13))
-                        Text("r${r.optInt("revision")} ${r.optString("deck_name")}",
-                            style = snesText(13,
-                                androidx.compose.ui.graphics.Color(0xFFA8A8C8)),
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            style = snesText(13))
                     }
+                    // The deck's name on its own line. Sharing the row with
+                    // the numbers clipped every name worth reading -- and
+                    // the name is how a player tells one run from another.
+                    Text("r${r.optInt("revision")}  ${r.optString("deck_name")}",
+                        Modifier.fillMaxWidth().padding(start = 54.dp, bottom = 3.dp),
+                        style = snesText(12,
+                            androidx.compose.ui.graphics.Color(0xFFA8A8C8)),
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }

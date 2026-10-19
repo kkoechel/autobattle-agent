@@ -31,13 +31,18 @@ import androidx.compose.ui.unit.dp
  * thing. Nothing here is a new palette: every colour comes from Theme.kt.
  */
 
-private val Frame = RoundedCornerShape(10.dp)
+// Square. Rounded corners are the single clearest tell that a "retro" UI
+// was drawn with a modern toolkit.
+private val Frame = RoundedCornerShape(0.dp)
+
+private val WIN_TOP = Color(0xFF2B2A4A)
+private val WIN_BOT = Color(0xFF14142A)
 
 private fun plate(pressed: Boolean) = Brush.verticalGradient(
     // Lit from above, like an embossed plate. Pressing flattens the gradient
     // rather than moving the button, which on a phone just looks like a
     // rendering glitch.
-    if (pressed) listOf(PanelFoot, PanelTop) else listOf(PanelTop, PanelFoot)
+    if (pressed) listOf(WIN_BOT, WIN_TOP) else listOf(WIN_TOP, WIN_BOT)
 )
 
 /**
@@ -69,10 +74,10 @@ fun GameButton(
         contentAlignment = Alignment.Center,
     ) {
         Text(text,
-            style = MaterialTheme.typography.labelLarge,
-            textAlign = TextAlign.Center,
-            color = if (enabled) (if (pressed) GoldBright else MaterialTheme.colorScheme.primary)
-                    else Subtle.copy(alpha = 0.6f))
+            style = snesText(15,
+                if (enabled) (if (pressed) GoldBright else Color(0xFFFFE28C))
+                else Color(0xFF6A6A88)),
+            textAlign = TextAlign.Center)
     }
 }
 
@@ -130,10 +135,9 @@ fun GameLink(text: String, modifier: Modifier = Modifier, enabled: Boolean = tru
         // Single line, always. Letter-spaced capitals are wide, and three of
         // these sit in one row -- "Start over" wrapped to two lines and made
         // its own box taller than the button beside it.
-        Text(text, style = MaterialTheme.typography.labelMedium,
-            maxLines = 1, softWrap = false,
-            color = if (enabled) MaterialTheme.colorScheme.primary
-                    else Subtle.copy(alpha = 0.6f))
+        Text(text, maxLines = 1, softWrap = false,
+            style = snesText(13,
+                if (enabled) Color(0xFFFFE28C) else Color(0xFF6A6A88)))
     }
 }
 
@@ -150,12 +154,12 @@ fun GamePanel(
     Column(
         modifier
             .fillMaxWidth()
-            .clip(Frame)
-            .background(MaterialTheme.colorScheme.surface)
-            .border(BorderStroke(1.dp, GoldDim), Frame)
-            .padding(1.dp)
-            .border(BorderStroke(1.dp, Color(0x14FFFFFF)), Frame)
-            .padding(14.dp),
+            .background(Color(0xFF0A0A12))
+            .padding(2.dp)
+            .background(Brush.verticalGradient(listOf(WIN_TOP, WIN_BOT)))
+            .padding(2.dp)
+            .border(BorderStroke(2.dp, Color(0xFFF2EFE4)))
+            .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
         content = content,
     )

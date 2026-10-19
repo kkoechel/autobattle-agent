@@ -21,7 +21,7 @@ import androidx.compose.ui.unit.sp
  * those cards actually use -- the gold of a card's frame and rule text, and
  * the near-black of its body -- so the chrome and the cards belong together.
  */
-private val Ink      = Color(0xFF0B0A12)  // page, close to the site's --bg
+private val Ink      = Color(0xFF0D0D1A)  // page, close to the site's --bg
 private val Panel    = Color(0xFF16141D)  // raised surface
 private val Parchment= Color(0xFFEDE3CC)  // body text, warm not white
 private val Muted    = Color(0xFF9A8F7A)  // secondary text, same warmth
@@ -61,6 +61,11 @@ private val scheme = darkColorScheme(
  * engraved rather than merely bold, which is most of the difference between
  * a game and a settings screen.
  */
+/**
+ * Everything is the pixel face now except the card popup, which is the main
+ * game's own SVG renderer and is left exactly as it draws on the website.
+ * The serif is kept only as the fallback for anything that outlives this.
+ */
 private val serif = FontFamily.Serif
 
 /**
@@ -73,19 +78,19 @@ private val serif = FontFamily.Serif
 val Pixel = FontFamily(Font(R.font.pixelify_sans))
 
 private val typography = Typography(
-    titleLarge = TextStyle(fontFamily = serif, fontWeight = FontWeight.Bold,
-        fontSize = 24.sp, lineHeight = 30.sp, letterSpacing = 1.4.sp),
-    titleMedium = TextStyle(fontFamily = serif, fontWeight = FontWeight.Bold,
-        fontSize = 18.sp, lineHeight = 24.sp, letterSpacing = 0.9.sp),
-    titleSmall = TextStyle(fontFamily = serif, fontWeight = FontWeight.Bold,
-        fontSize = 15.sp, lineHeight = 20.sp, letterSpacing = 0.6.sp),
-    bodyLarge = TextStyle(fontFamily = serif, fontSize = 16.sp, lineHeight = 24.sp),
-    bodyMedium = TextStyle(fontFamily = serif, fontSize = 14.sp, lineHeight = 21.sp),
-    bodySmall = TextStyle(fontFamily = serif, fontSize = 12.5.sp, lineHeight = 18.sp),
-    labelLarge = TextStyle(fontFamily = serif, fontWeight = FontWeight.Bold,
-        fontSize = 14.sp, letterSpacing = 1.2.sp),
-    labelMedium = TextStyle(fontFamily = serif, fontWeight = FontWeight.Bold,
-        fontSize = 12.sp, letterSpacing = 0.6.sp),
+    titleLarge = TextStyle(fontFamily = Pixel, fontWeight = FontWeight.Bold,
+        fontSize = 22.sp, lineHeight = 30.sp),
+    titleMedium = TextStyle(fontFamily = Pixel, fontWeight = FontWeight.Bold,
+        fontSize = 17.sp, lineHeight = 25.sp),
+    titleSmall = TextStyle(fontFamily = Pixel, fontWeight = FontWeight.Bold,
+        fontSize = 15.sp, lineHeight = 22.sp),
+    bodyLarge = TextStyle(fontFamily = Pixel, fontSize = 16.sp, lineHeight = 25.sp),
+    bodyMedium = TextStyle(fontFamily = Pixel, fontSize = 14.sp, lineHeight = 22.sp),
+    bodySmall = TextStyle(fontFamily = Pixel, fontSize = 13.sp, lineHeight = 19.sp),
+    labelLarge = TextStyle(fontFamily = Pixel, fontWeight = FontWeight.Bold,
+        fontSize = 14.sp),
+    labelMedium = TextStyle(fontFamily = Pixel, fontWeight = FontWeight.Bold,
+        fontSize = 12.sp),
 )
 
 @Composable
