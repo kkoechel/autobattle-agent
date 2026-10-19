@@ -28,6 +28,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import online.autobattle.agent.data.Secrets
 import online.autobattle.agent.engine.Catalogue
+import online.autobattle.agent.game.Voice
 import online.autobattle.agent.game.CardIndex
 import online.autobattle.agent.engine.Repair
 import online.autobattle.agent.game.Compete
@@ -200,6 +201,10 @@ fun ArenaPane(
     var confirmReset by remember { mutableStateOf(false) }
     var directive by remember { mutableStateOf(Directive.load(ctx)) }
     var avatar by remember { mutableStateOf(Avatar.load(ctx)) }
+    // The face and the register travel together: picking the Brute and
+    // still being spoken to like a librarian would make the avatar a
+    // costume rather than a character.
+    val voice = Voice.forAvatar(avatar.key)
     var pickAvatar by remember { mutableStateOf(false) }
     var mem by remember { mutableStateOf(Memory.load(ctx)) }
     var idea by remember { mutableStateOf<JSONObject?>(null) }
@@ -389,11 +394,11 @@ fun ArenaPane(
                 "your standing may differ." +
                 if (o.relaxed) " (It could not avoid the field's cards this time " +
                     "and built the best deck it could instead.)" else ""
-            justBuilt = "\u201cDone. ${o.name}, revision ${r.revision}. On fresh " +
+            justBuilt = "\u201c${voice.done()} ${o.name}, revision ${r.revision}. On fresh " +
                 "matchups it won ${"%.1f".format(o.wins)} of ${o.opponents}, " +
                 "picked from ${o.screened} designs and improved " +
                 "${o.climbed} time${if (o.climbed == 1) "" else "s"}.\u201d" +
-                if (o.relaxed) " \u201cI could not avoid the field's cards this " +
+                if (o.relaxed) " \u201c${voice.cannot("avoid the field's cards this ")}" +
                     "time, so that is the best I could do around them.\u201d" else ""
             note = null
             // "Poor" is measured against the field it was actually screened
@@ -526,8 +531,8 @@ fun ArenaPane(
                 (0 until a.length()).map { a.getJSONObject(it).optInt("card_id") }.toSet()
             } ?: emptySet()
             val q = if (busy || planPending || justBuilt != null) null else
-                Questions.next(directive, mem, handle, standings, deckIds, idea,
-                    force = askNow)
+                Questions.next(directive, mem, voice, handle, standings,
+                    deckIds, idea, force = askNow)
             val mood = moodFor(
                 working = busy,
                 asking = q != null,

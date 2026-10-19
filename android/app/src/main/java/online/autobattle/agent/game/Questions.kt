@@ -85,6 +85,8 @@ object Questions {
     fun next(
         d: Directive,
         mem: Memory,
+        /** Whose face the agent is wearing, and so how it phrases things. */
+        voice: Voice,
         myHandle: String?,
         standings: JSONObject?,
         myDeckCardIds: Set<Int>,
@@ -110,9 +112,7 @@ object Questions {
             .map { bannedArr!!.getInt(it) }.firstOrNull { it in myDeckCardIds }
         if (hit != null) {
             return Question("banned",
-                "“One of our cards has been struck from the format. The deck " +
-                    "is illegal as it stands. Shall I rebuild around what " +
-                    "remains, or begin from something new?”",
+                "“${voice.bannedCard()}”",
                 listOf(
                     Choice("Rebuild around it", "Keeps the present direction and " +
                         "works around the gap.") { it },
@@ -224,7 +224,7 @@ object Questions {
         // close the conversation. So while a plan is set the agent offers
         // angles on that plan, and nothing else.
         val plan = d.seedCardName ?: d.themeLabel
-        if (plan != null) return angle(d, mem, plan, roundId)
+        if (plan != null) return angle(d, mem, plan, roundId, voice)
 
         // A CARD AND A THEME ARE EQUAL WAYS TO START.
         //
@@ -235,18 +235,19 @@ object Questions {
         // and does not care which card carries it was never offered that.
         // Now the two alternate, and whichever is asked carries the other as
         // a choice, so a theme is always one tap away.
-        val card = cardIdea(idea, mem, roundId)
-        val theme = themeIdea(mem, idea, roundId)
+        val card = cardIdea(idea, mem, roundId, voice)
+        val theme = themeIdea(mem, idea, roundId, voice)
         return if (roundId % 2 == 0) (card ?: theme) else (theme ?: card)
     }
 
     /** One card worth building around, with a theme offered beside it. */
-    private fun cardIdea(idea: JSONObject?, mem: Memory, roundId: Int): Question? {
+    private fun cardIdea(idea: JSONObject?, mem: Memory, roundId: Int,
+                         voice: Voice): Question? {
         if (idea == null || idea.optInt("card_id") <= 0) return null
         val nm = idea.optString("name")
         val alt = untriedTheme(mem, roundId)
         return Question("idea-card",
-            "“$nm. ${idea.optString("reason")} Shall I investigate?”",
+            "“$nm. ${idea.optString("reason")} ${voice.ask("investigate")}”",
             listOfNotNull(
                 Choice("Investigate $nm", idea.optString("text")) {
                     it.copy(seedCard = idea.optInt("card_id"), seedCardName = nm,
@@ -260,7 +261,7 @@ object Questions {
                             seedCard = null, seedCardName = null)
                     }
                 },
-                Choice("Not that one", "We carry on as we are.") { it },
+                Choice(voice.notNow(), voice.notNowWhy()) { it },
             ))
     }
 
@@ -322,7 +323,8 @@ object Questions {
      * Leaving is still one tap through "Build around...", and the agent
      * offers it itself once the angles are exhausted.
      */
-    private fun angle(d: Directive, mem: Memory, plan: String, roundId: Int): Question? {
+    private fun angle(d: Directive, mem: Memory, plan: String, roundId: Int,
+                      voice: Voice): Question? {
         data class Angle(val take: String, val why: String,
                          val apply: (Directive) -> Directive)
 
@@ -427,13 +429,14 @@ object Questions {
         val shown = (pick + (adds + pairings + structural).shuffled(rng))
             .distinct().take(3).shuffled(rng)
         return Question("angles",
-            "\u201c$plan, then. Which way shall I take it?\u201d",
+            "\u201c$plan, then. ${voice.which()}\u201d",
             shown.map { Choice(it.take, it.why, it.apply) } +
-                Choice("Not just now", "We carry on as we are."),
+                Choice(voice.notNow(), voice.notNowWhy()),
         )
     }
 
-    private fun themeIdea(mem: Memory, idea: JSONObject?, roundId: Int): Question? {
+    private fun themeIdea(mem: Memory, idea: JSONObject?, roundId: Int,
+                          voice: Voice): Question? {
         val (pair, fresh) = pickTheme(mem, roundId) ?: return null
         val (tag, label) = pair
         val rng = Random(roundId.toLong() xor 0x5EEDL)
@@ -445,7 +448,7 @@ object Questions {
             "“A $label $styleWord deck. " +
                 (if (fresh) "We have never attempted one. "
                  else "We have tried $label before, but not like this. ") +
-                "Shall we?”",
+                "${voice.ask("try it")}”",
             listOfNotNull(
                 Choice("Attempt it", styleBlurb) {
                     it.copy(themes = listOf(tag), themeLabels = listOf(label), style = style,
@@ -459,7 +462,7 @@ object Questions {
                             themes = emptyList(), themeLabels = emptyList())
                     }
                 },
-                Choice("Another time", "We carry on as we are.") { it },
+                Choice(voice.notNow(), voice.notNowWhy()) { it },
             ))
     }
 }
