@@ -206,6 +206,15 @@ enum class Voice {
         else -> "We weren't playing it, so nothing of ours changes."
     }
 
+    /** Agreeing to sit out a few rounds. */
+    fun beingPatient(rounds: Int): String = when (this) {
+        WIZARD -> "Very well. I shall leave it to play and report after " +
+            "$rounds rounds."
+        BRUTE -> "Right. I'll leave it be and tell you in $rounds rounds."
+        SPRITE -> "Good idea \u2014 I'll let it play and come find you after " +
+            "$rounds rounds."
+    }
+
     /** How it addresses the player when it wants a decision. */
     fun which(): String = when (this) {
         WIZARD -> "Which?"

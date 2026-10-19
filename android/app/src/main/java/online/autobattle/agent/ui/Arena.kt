@@ -28,6 +28,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import online.autobattle.agent.data.Secrets
 import online.autobattle.agent.engine.Catalogue
+import online.autobattle.agent.game.RoundWatch
 import online.autobattle.agent.game.Voice
 import online.autobattle.agent.game.CardIndex
 import online.autobattle.agent.engine.Repair
@@ -768,6 +769,16 @@ fun ArenaPane(
                                     val forced = q.id == "banned"
                                     if (newPlan || forced) {
                                         error = null; note = null; trial = null
+                                        // A new deck voids the promise: the
+                                        // agent said it would report on THAT
+                                        // one, and reporting on a deck the
+                                        // player replaced would be worse than
+                                        // saying nothing.
+                                        if (mem.waitUntilRound > 0) {
+                                            mem = mem.copy(waitUntilRound = 0)
+                                            Memory.save(ctx, mem)
+                                            RoundWatch.stop(ctx)
+                                        }
                                         // The brake still holds for an ordinary
                                         // change of plan -- an unplayed deck is
                                         // not discarded because a new angle was
@@ -786,6 +797,47 @@ fun ArenaPane(
                         // can watch -- gating it behind "your deck has not
                         // played yet" meant watching was reachable for about
                         // fifteen minutes out of every fifteen.
+                        // WAITING IS A CHOICE, and until now it was the only
+                        // one not on the screen: every option here either
+                        // spends the phone's battery or throws the deck away.
+                        // Letting a deck play is the thing the agent spends
+                        // most of its breath recommending, so it ought to be
+                        // possible to agree to it -- and the agent comes back
+                        // on its own rather than leaving the player to
+                        // remember to look.
+                        if (justBuilt == null && awaitingRound &&
+                            mem.waitUntilRound == 0) {
+                            val now = standings?.optJSONObject("round")
+                                ?.optInt("id") ?: 0
+                            SnesChoice(
+                                label = "I'll be patient",
+                                detail = "Let it play. I will tell you how it " +
+                                    "did in ${RoundWatch.ROUNDS} rounds, about " +
+                                    "three quarters of an hour.",
+                                enabled = !trialBusy && now > 0,
+                                onClick = {
+                                    mem = mem.copy(
+                                        waitUntilRound = now + RoundWatch.ROUNDS)
+                                    Memory.save(ctx, mem)
+                                    RoundWatch.start(ctx)
+                                    justBuilt = "\u201c${voice.beingPatient(
+                                        RoundWatch.ROUNDS)}\u201d"
+                                })
+                        }
+                        // Already waiting: say so, and let them call it off.
+                        if (justBuilt == null && mem.waitUntilRound > 0) {
+                            SnesChoice(
+                                label = "Stop waiting",
+                                detail = "I am holding off until round " +
+                                    "${mem.waitUntilRound}. Say the word and " +
+                                    "we get back to work.",
+                                enabled = !trialBusy,
+                                onClick = {
+                                    mem = mem.copy(waitUntilRound = 0)
+                                    Memory.save(ctx, mem)
+                                    RoundWatch.stop(ctx)
+                                })
+                        }
                         if (justBuilt == null && myDeck != null) {
                             SnesChoice(
                                 label = if (trialBusy) (trialStep ?: "Playing it out\u2026")
@@ -1528,6 +1580,65 @@ fun ArenaPane(
         // and an average over a window cannot answer it -- a steady climb
         // and a flat line with one good round average the same.
         history?.takeIf { it.length() > 0 }?.let { h ->
+            // THE RESULT SITS ABOVE THE LIST, not after it.
+            //
+            // It used to render below all eight rows -- about two screens
+            // past the Watch that started it -- so the progress text
+            // finished, the button came back, and the answer was somewhere
+            // the player could not see. That reads as a button that does
+            // nothing, and was reported as exactly that.
+            roundReplay?.let { rr ->
+                SnesWindow {
+                    val t = rr.trial
+                    Text("Round ${rr.roundId} \u2014 ${t.deckName}",
+                        style = snesText(14,
+                            androidx.compose.ui.graphics.Color(0xFFFFE28C)))
+                    // THE RE-DERIVATION IS CHECKED, NOT ASSUMED. The round was
+                    // scored by the validator on the coordinator; this is the
+                    // same engine on the phone. Agreement is expected, and a
+                    // replay that quietly disagrees with the standings would be
+                    // worse than no replay, so the disagreement is shown.
+                    if (!rr.agrees) {
+                        val (sw, sl, sd) = rr.scored!!
+                        val (dw, dl, dd) = rr.derived
+                        Text("\u201cPlaying it back here gives $dw-$dl-$dd, but the " +
+                            "league recorded $sw-$sl-$sd. Treat what follows as " +
+                            "an illustration, not the record.\u201d",
+                            style = snesText(12,
+                                androidx.compose.ui.graphics.Color(0xFFFF9C6E)))
+                    }
+                    // GAMES, said as games. These counts are over every
+                    // match played -- 28 opponents by 21 seeds -- while the
+                    // record on the history row above is per OPPONENT, out
+                    // of 28. Printing "217 won ... across 28 opponents" put
+                    // the two scales in one sentence and read as a bug.
+                    val won = t.games.count { it.outcome == "won" }
+                    val lost = t.games.count { it.outcome == "lost" }
+                    val drew = t.games.count { it.outcome == "drew" }
+                    Text("${t.games.size} games against ${t.opponents} " +
+                        "opponents: $won won, $lost lost, $drew drawn.",
+                        style = snesText(12,
+                            androidx.compose.ui.graphics.Color(0xFF8A8AA8)))
+                    if (t.games.isEmpty()) {
+                        Text("No game from that round could be reconstructed.",
+                            style = snesText(12,
+                                androidx.compose.ui.graphics.Color(0xFFFF9C6E)))
+                    } else {
+                        WatchPicker(t) { g -> watching = Watch(g, t) }
+                        t.worstAgainst?.let { w ->
+                            t.games.filter { it.outcome == "lost" && it.opponent == w }
+                                .randomOrNull()?.let { g ->
+                                    // The matchup that cost the most is the
+                                    // one worth watching, and a loss picked
+                                    // at random rarely lands on it.
+                                    Row { GameLink("Our worst matchup ($w)") {
+                                        watching = Watch(g, t)
+                                    } }
+                                }
+                        }
+                    }
+                }
+            }
             SnesWindow {
                 Text("Your last ${minOf(h.length(), 8)} rounds",
                     style = snesText(14, androidx.compose.ui.graphics.Color(0xFFFFE28C)))
@@ -1587,58 +1698,6 @@ fun ArenaPane(
                                     roundBusy = null; roundStep = null
                                 }
                             }
-                        }
-                    }
-                }
-            }
-            roundReplay?.let { rr ->
-                SnesWindow {
-                    val t = rr.trial
-                    Text("Round ${rr.roundId} \u2014 ${t.deckName}",
-                        style = snesText(14,
-                            androidx.compose.ui.graphics.Color(0xFFFFE28C)))
-                    // THE RE-DERIVATION IS CHECKED, NOT ASSUMED. The round was
-                    // scored by the validator on the coordinator; this is the
-                    // same engine on the phone. Agreement is expected, and a
-                    // replay that quietly disagrees with the standings would be
-                    // worse than no replay, so the disagreement is shown.
-                    if (!rr.agrees) {
-                        val (sw, sl, sd) = rr.scored!!
-                        val (dw, dl, dd) = rr.derived
-                        Text("\u201cPlaying it back here gives $dw-$dl-$dd, but the " +
-                            "league recorded $sw-$sl-$sd. Treat what follows as " +
-                            "an illustration, not the record.\u201d",
-                            style = snesText(12,
-                                androidx.compose.ui.graphics.Color(0xFFFF9C6E)))
-                    }
-                    // GAMES, said as games. These counts are over every
-                    // match played -- 28 opponents by 21 seeds -- while the
-                    // record on the history row above is per OPPONENT, out
-                    // of 28. Printing "217 won ... across 28 opponents" put
-                    // the two scales in one sentence and read as a bug.
-                    val won = t.games.count { it.outcome == "won" }
-                    val lost = t.games.count { it.outcome == "lost" }
-                    val drew = t.games.count { it.outcome == "drew" }
-                    Text("${t.games.size} games against ${t.opponents} " +
-                        "opponents: $won won, $lost lost, $drew drawn.",
-                        style = snesText(12,
-                            androidx.compose.ui.graphics.Color(0xFF8A8AA8)))
-                    if (t.games.isEmpty()) {
-                        Text("No game from that round could be reconstructed.",
-                            style = snesText(12,
-                                androidx.compose.ui.graphics.Color(0xFFFF9C6E)))
-                    } else {
-                        WatchPicker(t) { g -> watching = Watch(g, t) }
-                        t.worstAgainst?.let { w ->
-                            t.games.filter { it.outcome == "lost" && it.opponent == w }
-                                .randomOrNull()?.let { g ->
-                                    // The matchup that cost the most is the
-                                    // one worth watching, and a loss picked
-                                    // at random rarely lands on it.
-                                    Row { GameLink("Our worst matchup ($w)") {
-                                        watching = Watch(g, t)
-                                    } }
-                                }
                         }
                     }
                 }

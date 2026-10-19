@@ -3,8 +3,18 @@ package online.autobattle.agent.engine
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** The card catalogue, indexed and pre-digested for the generator. */
-class Catalogue(val raw: JSONArray) {
+/**
+ * The card catalogue, indexed and pre-digested for the generator.
+ *
+ * `banned` is part of playability, not a filter applied afterwards. The
+ * generator used to draw supporting cards from the whole catalogue and the
+ * finished deck was then thrown away if it contained any banned card --
+ * which, with a rotating pool, meant a build could simply fail. Observed on
+ * the device with only two cards out of the format: "could not build a legal
+ * deck", from an agent that had every legal card available to it. Excluding
+ * them where cards are CHOSEN makes every deck legal by construction.
+ */
+class Catalogue(val raw: JSONArray, val banned: Set<Int> = emptySet()) {
 
     val byId: Map<Int, JSONObject> = buildMap {
         for (i in 0 until raw.length()) {
@@ -33,6 +43,9 @@ class Catalogue(val raw: JSONArray) {
      */
     fun isPlayable(id: Int): Boolean {
         val c = byId[id] ?: return false
+        // Banned first: it is the cheapest check and the one that changes
+        // under the player, every seventeen hours.
+        if (id in banned) return false
         if (c.optBoolean("is_retired", false) || c.optInt("is_retired", 0) == 1) return false
         if (c.optBoolean("is_vip", false) || c.optInt("is_vip", 0) == 1) return false
         if (c.optString("rarity") == "token") return false

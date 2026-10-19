@@ -31,6 +31,14 @@ data class Memory(
      * "poison + card draw" has.
      */
     val triedCombos: Set<String> = emptySet(),
+    /**
+     * The round to report back on, or 0 for none.
+     *
+     * Set when the player chooses to be patient. Kept in Memory rather
+     * than the Directive because it changes nothing about how a deck is
+     * built -- it is a promise the agent made, not an instruction.
+     */
+    val waitUntilRound: Int = 0,
     /** The newest ban this player has been shown, so it is announced once. */
     val lastBanSeen: Int = 0,
     /** Round id when a spontaneous idea was last floated, so it stays rare. */
@@ -50,6 +58,7 @@ data class Memory(
         .put("triedCombos", JSONArray(triedCombos.toList()))
         .put("lastBanSeen", lastBanSeen)
         .put("lastIdeaRound", lastIdeaRound)
+        .put("waitUntilRound", waitUntilRound)
         .put("dismissed", JSONArray(dismissed.toList()))
 
     companion object {
@@ -75,6 +84,7 @@ data class Memory(
                 triedCombos = strings(o, "triedCombos"),
                 lastBanSeen = o.optInt("lastBanSeen", 0),
                 lastIdeaRound = o.optInt("lastIdeaRound", 0),
+                waitUntilRound = o.optInt("waitUntilRound", 0),
                 dismissed = strings(o, "dismissed"),
             )
         } catch (e: Exception) {

@@ -562,7 +562,10 @@ object Compete {
     ): Outcome {
         onProgress(Progress("Consulting the catalogue", 0, 1))
         val (cardsJson, banned) = client.cards()
-        val cat = Catalogue(cardsJson)
+        // Ban-aware, so the generator cannot pick a card that would make
+        // the deck illegal -- rather than building freely and discarding the
+        // result afterwards, which is how a build came to fail outright.
+        val cat = Catalogue(cardsJson, banned)
 
         onProgress(Progress("Examining the field", 0, 1))
         val field = client.field()
