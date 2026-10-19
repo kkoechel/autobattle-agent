@@ -1,5 +1,10 @@
 package online.autobattle.agent.ui
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -148,6 +153,47 @@ fun TypedLine(text: String, modifier: Modifier = Modifier) {
         // below it jump.
         Text(text, style = snesText().copy(color = Color.Transparent))
         Text(text.take(shown), style = snesText())
+    }
+}
+
+/**
+ * A progress bar in the same idiom: a sunken channel with a chunky fill.
+ *
+ * Material's indicator is a 4dp hairline with a rounded cap, which beside a
+ * pixel window looks like a browser loading bar someone forgot to remove.
+ */
+@Composable
+fun SnesProgress(done: Int, total: Int, modifier: Modifier = Modifier) {
+    val known = total > 1
+    val sweep by rememberInfiniteTransition(label = "bar").animateFloat(
+        initialValue = 0f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1100, easing = LinearEasing)),
+        label = "sweep",
+    )
+    Canvas(modifier.fillMaxWidth().height(10.dp)) {
+        val u = UNIT.toPx()
+        drawRect(FRAME_OUT, size = size)
+        drawRect(Color(0xFF191933), topLeft = Offset(u, u),
+            size = Size(size.width - 2 * u, size.height - 2 * u))
+        val inner = Size(size.width - 4 * u, size.height - 4 * u)
+        if (known) {
+            val f = (done.toFloat() / total).coerceIn(0f, 1f)
+            drawRect(Color(0xFFFFE28C), topLeft = Offset(u * 2, u * 2),
+                size = Size(inner.width * f, inner.height))
+        } else {
+            // No total to show, so a block travels instead of a bar filling:
+            // a half-full static bar would be a lie about progress.
+            val w = inner.width * 0.28f
+            val x = (inner.width + w) * sweep - w
+            drawRect(
+                Color(0xFFFFE28C),
+                topLeft = Offset(u * 2 + x.coerceAtLeast(0f), u * 2),
+                size = Size(
+                    (if (x < 0) w + x else minOf(w, inner.width - x)).coerceAtLeast(0f),
+                    inner.height,
+                ),
+            )
+        }
     }
 }
 

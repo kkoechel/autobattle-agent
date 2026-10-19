@@ -326,16 +326,43 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                         }
                 }
             } else {
-                Row(verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    AgentPortrait(mood, size = 48.dp)
-                    Text(directive.summary(), Modifier.weight(1f),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    GameLink("Build around…", enabled = !busy) { showThemes = true }
-                    GameLink("Let's talk", enabled = !busy) {
-                        mem = mem.copy(answered = emptySet(), dismissed = emptySet())
-                        Memory.save(ctx, mem)
+                // The agent keeps the window even when it is not asking
+                // anything -- while it works, which is the longest a player
+                // ever looks at this screen, and when it is simply standing
+                // by. Dropping back to a line of grey text the moment it
+                // started working was the one place the character vanished.
+                SnesWindow {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        AgentPortrait(mood)
+                        Column(
+                            Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(7.dp),
+                        ) {
+                            val p = progress
+                            when {
+                                busy && p != null -> {
+                                    // Keyed on the step alone: the counts
+                                    // change constantly and would restart
+                                    // the reveal on every tick.
+                                    TypedLine("\u201c${p.step}\u2026\u201d")
+                                    SnesProgress(p.done, p.total)
+                                }
+                                busy -> {
+                                    TypedLine("\u201cWorking.\u201d")
+                                    SnesProgress(0, 1)
+                                }
+                                else -> TypedLine("\u201c${directive.summary()}\u201d")
+                            }
+                        }
+                    }
+                }
+                if (!busy) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        GameLink("Build around\u2026") { showThemes = true }
+                        GameLink("Let's talk") {
+                            mem = mem.copy(answered = emptySet(), dismissed = emptySet())
+                            Memory.save(ctx, mem)
+                        }
                     }
                 }
             }
@@ -422,17 +449,6 @@ fun ArenaPane(modifier: Modifier = Modifier) {
                 TrainingService.start(ctx)
             }
 
-            progress?.let { p ->
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(p.step, style = MaterialTheme.typography.bodySmall)
-                    if (p.total > 1) {
-                        LinearProgressIndicator(progress = { p.done / p.total.toFloat() },
-                            modifier = Modifier.fillMaxWidth())
-                    } else {
-                        LinearProgressIndicator(Modifier.fillMaxWidth())
-                    }
-                }
-            }
             note?.let {
                 Text(it, style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.primary)
