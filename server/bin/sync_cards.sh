@@ -16,7 +16,12 @@
 # leaving the game without one -- abagent refreshes that file every cycle, so
 # the fallback is current, it just carries default art instead of the style.
 set -euo pipefail
-STYLE=${STYLE:-vectorposter}
+# pixelart-b, not vectorposter. The whole app is SNES-styled -- pixel chrome,
+# pixel avatars, a pixel dialogue box -- and vector-poster card art was the
+# one thing in it drawn in another idiom. Checked before switching: all 752
+# live cards carry a DISTINCT pixelart-b url, so this is not a tag that falls
+# back to the default art for most of the catalogue.
+STYLE=${STYLE:-pixelart-b}
 API=${API:-https://autobattle.online/api/v1/cards}
 SRC=${SRC:-/opt/abagent/var/cards.json}
 DST=${DST:-/var/www/games/agentgame/var/cards.json}
