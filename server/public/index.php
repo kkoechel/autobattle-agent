@@ -308,6 +308,28 @@ if ($path === 'round' && $method === 'POST') {
                               json_encode($d['battle_plan'] ?? new stdClass())]);
             }
         }
+        // KEEP THE GOOD FINISHES, so a player can go back to a deck that
+        // was working. "Good" is the top QUARTER of the field, which scales
+        // as the league grows -- a fixed placement would mean something
+        // different at nine decks and at ninety.
+        //
+        // Done here because this is the one moment where the deck as it
+        // played and the placement it earned are both in hand.
+        $cut = max(1, intdiv(count($rows), 4));
+        if (is_array($snaps)) {
+            $byPlayer = [];
+            foreach ($snaps as $d) {
+                if (isset($d['player_id'])) $byPlayer[(int)$d['player_id']] = $d;
+            }
+            foreach ($rows as $i => $r) {
+                if ($i + 1 > $cut) break;              // sorted by placement
+                $pid = (int)($r['player_id'] ?? 0);
+                $d = $byPlayer[$pid] ?? null;
+                if (!$d) continue;
+                keep_good_deck($pid, $d, $i + 1, count($rows), $rid);
+            }
+        }
+
         // Snapshots are bulky (every deck in the league, every 15 minutes) and
         // only the recent past is watchable in practice, so they are pruned
         // while the results they belong to are kept forever.
@@ -449,14 +471,16 @@ if ($path === 'bans' && $method === 'GET') {
 //
 // Snapshots, not references: restoring gives back the cards that were saved,
 // not whatever the live deck has become since.
-const SAVED_MAX = 12;
 
 if ($path === 'decks/saved' && $method === 'GET') {
     $p = require_player();
     $st = db()->prepare(
         'SELECT id, name, revision, best_place, of_decks, note, created_at,
-                cards_json, plan_json
-           FROM saved_decks WHERE player_id = ? ORDER BY id DESC');
+                cards_json, plan_json, auto
+           FROM saved_decks WHERE player_id = ?
+          -- Best finish first: the shelf is for going back to what worked,
+          -- so the deck that placed highest should be the one in reach.
+          ORDER BY best_place IS NULL, best_place ASC, id DESC');
     $st->execute([$p['id']]);
     $rows = [];
     foreach ($st->fetchAll() as $r) {
@@ -466,6 +490,7 @@ if ($path === 'decks/saved' && $method === 'GET') {
             'best_place' => $r['best_place'] === null ? null : (int)$r['best_place'],
             'of_decks' => $r['of_decks'] === null ? null : (int)$r['of_decks'],
             'note' => $r['note'], 'created_at' => $r['created_at'],
+            'auto' => (bool)$r['auto'],
             'cards' => json_decode($r['cards_json'], true),
             'battle_plan' => json_decode($r['plan_json'], true) ?: new stdClass(),
         ];

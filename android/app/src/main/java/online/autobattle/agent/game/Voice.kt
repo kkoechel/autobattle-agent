@@ -207,12 +207,15 @@ enum class Voice {
     }
 
     /** Agreeing to sit out a few rounds. */
-    fun beingPatient(rounds: Int): String = when (this) {
-        WIZARD -> "Very well. I shall leave it to play and report after " +
-            "$rounds rounds."
-        BRUTE -> "Right. I'll leave it be and tell you in $rounds rounds."
-        SPRITE -> "Good idea \u2014 I'll let it play and come find you after " +
-            "$rounds rounds."
+    fun beingPatient(rounds: Int): String {
+        // "report after 1 rounds" appeared the moment the interval was changed
+        // for a test. The wording must not assume the number.
+        val n = if (rounds == 1) "one round" else "$rounds rounds"
+        return when (this) {
+            WIZARD -> "Very well. I shall leave it to play and report after $n."
+            BRUTE -> "Right. I'll leave it be and tell you in $n."
+            SPRITE -> "Good idea \u2014 I'll let it play and come find you after $n."
+        }
     }
 
     /** How it addresses the player when it wants a decision. */

@@ -122,6 +122,14 @@ CREATE TABLE IF NOT EXISTS saved_decks (
   note        VARCHAR(120) NULL,
   created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_saved_player (player_id, id),
+  -- Whether the league put this here rather than the player.
+  --
+  -- The shelf auto-fills with top-quarter finishes, and when it is full
+  -- something has to go. Only an AUTO entry may be evicted: a deck the
+  -- player named and wrote a note against is theirs, and quietly deleting it
+  -- to make room for a good finish would be the app throwing away work it
+  -- was asked to keep.
+  auto        TINYINT(1)   NOT NULL DEFAULT 0,
   CONSTRAINT fk_saved_player FOREIGN KEY (player_id) REFERENCES players(id)
     ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

@@ -181,6 +181,8 @@ fun ArenaPane(
     var roundReplay by remember { mutableStateOf<Compete.RoundReplay?>(null) }
     var roundBusy by remember { mutableStateOf<Int?>(null) }
     var roundStep by remember { mutableStateOf<String?>(null) }
+    // The round whose deck is being taken back into play.
+    var reviveBusy by remember { mutableStateOf<Int?>(null) }
     var saved by remember { mutableStateOf<JSONArray?>(null) }
     var banned by remember { mutableStateOf<Set<Int>>(emptySet()) }
     var rawCards by remember { mutableStateOf<JSONArray?>(null) }
@@ -1698,6 +1700,64 @@ fun ArenaPane(
                                     }.onSuccess { roundReplay = it }
                                      .onFailure { error = readable(it) }
                                     roundBusy = null; roundStep = null
+                                }
+                            }
+                            // TAKE AN OLD DECK BACK INTO PLAY.
+                            //
+                            // The snapshot that makes a round watchable is the
+                            // same list that played it, so going back to a
+                            // revision that was doing better costs nothing new
+                            // -- the decks are already stored. Offered only on
+                            // a revision that is NOT the one in play, because
+                            // restoring the deck you are already running is a
+                            // button that does nothing.
+                            val mineRev = myDeck?.optInt("revision") ?: -1
+                            if (r.optInt("revision") != mineRev) {
+                                if (reviveBusy == rid) {
+                                    Text("Taking it back\u2026",
+                                        style = snesText(12,
+                                            androidx.compose.ui.graphics.Color(0xFFFFE28C)))
+                                } else GameLink("Use again") {
+                                    error = null; note = null; reviveBusy = rid
+                                    scope.launch {
+                                        runCancellable {
+                                            withContext(Dispatchers.IO) {
+                                                val c = GameClient(token)
+                                                val env = c.replay(rid)
+                                                val arr = env.getJSONArray("decks")
+                                                val mine = (0 until arr.length())
+                                                    .map { arr.getJSONObject(it) }
+                                                    .firstOrNull { it.optBoolean("is_me") }
+                                                    ?: error("that round has no deck of ours")
+                                                val cs = mine.getJSONArray("cards")
+                                                val entries = (0 until cs.length()).map {
+                                                    val e = cs.getJSONObject(it)
+                                                    e.optInt("card_id") to e.optInt("quantity")
+                                                }
+                                                // An old list almost certainly
+                                                // holds a card banned since, so
+                                                // repair rather than refuse.
+                                                val cat = Catalogue(rawCards ?: c.cards().first)
+                                                val fixed = Repair.repair(entries, banned, cat)
+                                                    ?: error("that deck cannot be made legal now")
+                                                c.putDeck(mine.optString("deck_name"),
+                                                    fixed.cards.flatMap { (id, q) -> List(q) { id } },
+                                                    mine.optJSONObject("battle_plan"))
+                                                fixed
+                                            }
+                                        }.onSuccess { fixed ->
+                                            note = if (fixed.removed.isEmpty())
+                                                "\u201cBack to the deck from round " +
+                                                    "$rid, exactly as it played.\u201d"
+                                            else "\u201cBack to the deck from round " +
+                                                "$rid, without " +
+                                                fixed.removed.joinToString(", ") {
+                                                    cardsById[it]?.name ?: "card $it"
+                                                } + " \u2014 banned since.\u201d"
+                                            refresh()
+                                        }.onFailure { error = readable(it) }
+                                        reviveBusy = null
+                                    }
                                 }
                             }
                         }

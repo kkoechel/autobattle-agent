@@ -16,6 +16,13 @@ const CARD_FILE = __DIR__ . '/../var/cards.json';
 // results are kept forever, only the lists that played are pruned.
 const REPLAY_KEEP_ROUNDS = 96;
 
+// How many decks a player may keep on the shelf.
+//
+// Defined HERE, not beside the routes that read it: POST /round calls
+// keep_good_deck() and is matched well before the saved-deck routes
+// are reached, so a const declared down there would not exist yet.
+const SAVED_MAX = 12;
+
 function cfg(): array {
     static $c = null;
     if ($c === null) {
@@ -117,6 +124,64 @@ function require_admin(): void {
     $tok  = (string)($_SERVER['HTTP_X_ADMIN_TOKEN'] ?? '');
     $want = (string)(cfg()['admin_token'] ?? '');
     if ($want === '' || !hash_equals($want, $tok)) fail(403, 'admin token required');
+}
+
+/**
+ * Put a top-quarter finish on the player's shelf.
+ *
+ * Deduplicated by CONTENT, not by name: the agent names decks after the card
+ * they lean on, so a run of good rounds with the same list would otherwise
+ * fill the shelf with twelve copies of one deck. A deck already there is
+ * only updated if this finish was better than the one recorded against it.
+ *
+ * EVICTS ONLY WHAT IT PUT THERE. The shelf is capped, and when it is full
+ * something has to go -- but a deck the player named and wrote a note
+ * against is theirs. Deleting that to make room for a good finish would be
+ * the app throwing away work it was asked to keep, so if the shelf is full
+ * of hand-picked decks this quietly does nothing.
+ */
+function keep_good_deck(int $pid, array $d, int $place, int $of, int $rid): void {
+    $cards = json_encode($d['cards'] ?? []);
+    $plan  = json_encode($d['battle_plan'] ?? new stdClass());
+
+    $same = db()->prepare(
+        'SELECT id, best_place FROM saved_decks
+          WHERE player_id = ? AND cards_json = ? LIMIT 1');
+    $same->execute([$pid, $cards]);
+    if ($row = $same->fetch()) {
+        if ($row['best_place'] === null || $place < (int)$row['best_place']) {
+            db()->prepare('UPDATE saved_decks SET best_place = ?, of_decks = ?
+                            WHERE id = ?')
+                ->execute([$place, $of, (int)$row['id']]);
+        }
+        return;
+    }
+
+    $cnt = db()->prepare('SELECT COUNT(*) FROM saved_decks WHERE player_id = ?');
+    $cnt->execute([$pid]);
+    if ((int)$cnt->fetchColumn() >= SAVED_MAX) {
+        // The weakest auto-saved deck, and only if this finish beats it.
+        $worst = db()->prepare(
+            'SELECT id, best_place FROM saved_decks
+              WHERE player_id = ? AND auto = 1
+              ORDER BY best_place IS NULL DESC, best_place DESC, id ASC LIMIT 1');
+        $worst->execute([$pid]);
+        $w = $worst->fetch();
+        if (!$w) return;                                   // all hand-picked
+        if ($w['best_place'] !== null && (int)$w['best_place'] <= $place) return;
+        db()->prepare('DELETE FROM saved_decks WHERE id = ?')
+            ->execute([(int)$w['id']]);
+    }
+
+    db()->prepare(
+        'INSERT INTO saved_decks
+            (player_id, name, cards_json, plan_json, revision, best_place,
+             of_decks, note, auto)
+         VALUES (?,?,?,?,?,?,?,?,1)')
+        ->execute([$pid, substr((string)($d['deck_name'] ?? '?'), 0, 80),
+                   $cards, $plan, (int)($d['revision'] ?? 0),
+                   $place, $of,
+                   "kept automatically, $place of $of in round $rid"]);
 }
 
 function deck_problem(array $entries): ?string {
