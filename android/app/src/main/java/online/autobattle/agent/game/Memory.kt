@@ -56,9 +56,21 @@ data class Memory(
     val lastIdeaRound: Int = 0,
     /** Questions declined, so the agent does not nag on the same trigger. */
     val dismissed: Set<String> = emptySet(),
+    /**
+     * The player chose to dictate the standing orders rather than have them
+     * measured.
+     *
+     * Kept here and not in the Directive because it changes nothing about
+     * any deck -- it decides which QUESTIONS the agent asks next, which is
+     * exactly what this class is for. False by default, so the agent offers
+     * to measure first and only asks the two preference questions if the
+     * player said they would rather say.
+     */
+    val planByHand: Boolean = false,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("answered", JSONArray(answered.toList()))
+        .put("planByHand", planByHand)
         .put("lastPlacement", lastPlacement)
         // Omitted rather than JSON null: optString would read it back
         // as the string "null", which then compares unequal to every real
@@ -88,6 +100,7 @@ data class Memory(
             val o = JSONObject(raw)
             Memory(
                 answered = strings(o, "answered"),
+                planByHand = o.optBoolean("planByHand", false),
                 lastPlacement = o.optInt("lastPlacement", 0),
                 lastLeader = o.optString("lastLeader", "")
                     .takeIf { it.isNotBlank() && it != "null" },

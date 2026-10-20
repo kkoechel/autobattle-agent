@@ -26,9 +26,36 @@ import org.json.JSONObject
  * one the server-side agents already differ by. Nothing here is a label on
  * identical work.
  */
+/**
+ * Work an answer sets off, beyond changing the brief.
+ *
+ * `apply` returns a Directive and nothing else, which is the right shape for
+ * almost everything here -- an answer changes the standing instructions and
+ * the agent gets on with it. Two of the battle-plan answers are not like
+ * that: one starts a measurement, and the other decides which question comes
+ * next. Neither is expressible as a change to the Directive, and smuggling
+ * them in as one would have put UI state into the brief.
+ */
+enum class Act {
+    NONE,
+
+    /** Play every ordering against the field and keep what wins. */
+    TUNE_PLAN,
+
+    /** The player would rather say; ask them the two preference questions. */
+    PLAN_BY_HAND,
+}
+
 data class Choice(
     val label: String,
     val blurb: String,
+    /**
+     * Work this answer sets off beyond the brief. Declared BEFORE `apply`
+     * deliberately: almost every Choice here passes `apply` as a trailing
+     * lambda, and Kotlin binds a trailing lambda to the LAST parameter, so
+     * putting `act` at the end silently re-pointed all of them.
+     */
+    val act: Act = Act.NONE,
     /** Unchanged by default, which is what a decline is. */
     val apply: (Directive) -> Directive = { it },
 )
@@ -228,7 +255,40 @@ object Questions {
         // the agent will do anything. So these wait for the player to be in
         // the standings, and come one at a time.
         if (me != null) {
-            if ("plan-tempo" !in mem.answered) {
+            // MEASURED BY DEFAULT, DICTATED ON REQUEST.
+            //
+            // The first version of this asked the player to choose a posture
+            // outright, and that was the wrong default: a trial on the live
+            // field moved every one of eight decks under the tempo orders --
+            // one by eight wins -- while the aim orders moved only five of
+            // them, and one deck was flat under everything including a
+            // control. WHICH ORDERS MATTER IS A PROPERTY OF THE DECK IN HAND,
+            // so a fixed answer is a guess no matter how well argued. The
+            // agent can play all nine and find out in about a minute, which
+            // makes this measurable rather than arguable.
+            //
+            // The preference route stays, because a player is allowed to want
+            // their deck to play a particular way whatever the numbers say.
+            if ("plan-how" !in mem.answered) {
+                return Question("plan-how",
+                    "\u201c${voice.planHow()}\u201d",
+                    listOf(
+                        Choice("Play them and keep what wins",
+                            "I play our hundred cards nine ways against the " +
+                            "live field, then re-play the leader on seeds it " +
+                            "has not seen. If nothing beats how we play now " +
+                            "by enough to be sure, I leave it alone and say " +
+                            "so. About a minute.",
+                            act = Act.TUNE_PLAN),
+                        Choice("I'll tell you how to play",
+                            "Two questions about how the deck should carry " +
+                            "itself, and I work out the rest. Quicker, and it " +
+                            "is your preference rather than a measurement.",
+                            act = Act.PLAN_BY_HAND),
+                        Choice(voice.notNow(), voice.notNowWhy()) { it },
+                    ))
+            }
+            if (mem.planByHand && "plan-tempo" !in mem.answered) {
                 return Question("plan-tempo",
                     "\u201c${voice.planTempo()}\u201d",
                     listOf(
@@ -258,7 +318,7 @@ object Questions {
                         Choice(voice.notNow(), voice.notNowWhy()) { it },
                     ))
             }
-            if ("plan-aim" !in mem.answered) {
+            if (mem.planByHand && "plan-aim" !in mem.answered) {
                 return Question("plan-aim",
                     "\u201c${voice.planAim()}\u201d",
                     listOf(
@@ -507,7 +567,7 @@ object Questions {
             .distinct().take(3).shuffled(rng)
         return Question("angles",
             "\u201c$plan, then. ${voice.which()}\u201d",
-            shown.map { Choice(it.take, it.why, it.apply) } +
+            shown.map { Choice(it.take, it.why, apply = it.apply) } +
                 Choice(voice.notNow(), voice.notNowWhy()),
         )
     }

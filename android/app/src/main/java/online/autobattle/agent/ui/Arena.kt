@@ -38,7 +38,9 @@ import online.autobattle.agent.game.GameClient
 import online.autobattle.agent.game.GameException
 import online.autobattle.agent.game.CardInfo
 import online.autobattle.agent.game.Keyword
+import online.autobattle.agent.game.Act
 import online.autobattle.agent.game.Memory
+import online.autobattle.agent.game.Rules
 import online.autobattle.agent.game.Training
 import online.autobattle.agent.game.TrainingService
 import androidx.compose.runtime.collectAsState
@@ -171,6 +173,12 @@ fun ArenaPane(
     // The player asking the agent to talk, rather than waiting to be asked.
     var askNow by remember { mutableStateOf(false) }
     var showHelp by remember { mutableStateOf(false) }
+    // The rules conversation, and which question is open in it. Null means
+    // the list of questions rather than an answer.
+    var showRules by remember { mutableStateOf(false) }
+    var rulesPick by remember { mutableStateOf<Int?>(null) }
+    /** True only when the rules came up because there was nothing to decide. */
+    var rulesIdle by remember { mutableStateOf(false) }
     var newsBusy by remember { mutableStateOf(false) }
     // A watched game carries the run it came from. There are two sources
     // now -- a rehearsal of the current deck, and a scored league round
@@ -527,6 +535,96 @@ fun ArenaPane(
                     }
                 }
                 GameLink("Start again", enabled = !busy) { confirmReset = true }
+                // UP HERE BECAUSE THIS ROW ALWAYS RENDERS.
+                //
+                // It was first put beside "Pick a theme..." and "Let's talk",
+                // which live behind `q == null` -- so it vanished exactly
+                // when the agent had a question up, which is most of the
+                // time. The "nothing to decide" fallback on "Let's talk"
+                // cannot carry this either: that path forces past the
+                // per-round cap, and once a plan is set there is nearly
+                // always an angle to offer, so it would almost never fire.
+                // Wanting to know how the game works is not conditional on
+                // the agent having run out of things to say.
+                GameLink("How does this work?") {
+                    rulesPick = null
+                    rulesIdle = false
+                    showRules = true
+                }
+            }
+
+            // SETTLE THE STANDING ORDERS BY PLAYING THEM.
+            //
+            // Nine orderings of the SAME hundred cards go into one payload
+            // and play the same opponents on the same seeds, so the whole
+            // comparison is paired for the price of one run. The leader is
+            // then re-played on seeds it has never seen and put through the
+            // ordinary accept gate, which is what stops this adopting the
+            // winner of nine coin flips.
+            //
+            // Adopted orders are pushed to the deck in play rather than
+            // rebuilt into a new one: no plan field can make a legal deck
+            // illegal, so there is nothing to re-tune.
+            fun tunePlan() {
+                val tk = token ?: return
+                error = null; note = null; trial = null
+                justBuilt = null; builtPoorly = false
+                trialBusy = true
+                scope.launch {
+                    runCancellable {
+                        val t = withContext(Dispatchers.Default) {
+                            Compete.tunePlan(GameClient(tk), handle,
+                                onProgress = { trialStep = it.step })
+                        }
+                        // Adopt inside the same block, so a failure to SAVE
+                        // the winner is reported as a failure rather than
+                        // leaving the player told it was adopted when it was
+                        // not.
+                        val best = t.best
+                        if (best != null) {
+                            val d = myDeck
+                            if (d != null) {
+                                val cs = d.optJSONArray("cards")
+                                    ?: error("deck has no cards")
+                                val flat = ArrayList<Int>(100)
+                                for (i in 0 until cs.length()) {
+                                    val e = cs.getJSONObject(i)
+                                    repeat(e.getInt("quantity")) {
+                                        flat.add(e.getInt("card_id"))
+                                    }
+                                }
+                                withContext(Dispatchers.IO) {
+                                    GameClient(tk).putDeck(d.optString("name"), flat,
+                                        best.applyTo(JSONObject(
+                                            (d.optJSONObject("battle_plan")
+                                                ?: JSONObject()).toString())))
+                                }
+                            }
+                        }
+                        t
+                    }.onSuccess { t ->
+                        val top = t.rows.firstOrNull()
+                        val best = t.best
+                        note = if (best != null && top != null) {
+                            // The brief has to agree with the deck, or the
+                            // next build would quietly undo what was just
+                            // measured.
+                            directive = directive.copy(plan = best)
+                            Directive.save(ctx, directive)
+                            val m = mem.copy(answered = mem.answered +
+                                "plan-tempo" + "plan-aim")
+                            mem = m
+                            Memory.save(ctx, m)
+                            "\u201c" + voice.planTuned(top.label, t.bestGain) + "\u201d"
+                        } else if (top != null) {
+                            "\u201c" + voice.planNothingBetter(top.label) + "\u201d"
+                        } else {
+                            "\u201c" + voice.nothingNew() + "\u201d"
+                        }
+                        runCancellable { refresh() }
+                    }.onFailure { error = readable(it) }
+                    trialBusy = false; trialStep = null
+                }
             }
 
             // The agent asks; the player answers. This is the whole decision
@@ -883,6 +981,18 @@ fun ArenaPane(
                                             }
                                         }
                                     }
+                                    if (c.act == Act.PLAN_BY_HAND) {
+                                        // Open the two preference questions.
+                                        // They are gated on this rather than
+                                        // asked unconditionally, so a player
+                                        // who had the orders measured is not
+                                        // then asked to second-guess them.
+                                        val m2 = mem.copy(planByHand = true)
+                                        mem = m2
+                                        Memory.save(ctx, m2)
+                                        askNow = true
+                                    }
+                                    if (c.act == Act.TUNE_PLAN) tunePlan()
                                 })
                         }
                     }
@@ -1106,8 +1216,43 @@ fun ArenaPane(
                     // already over-represented.
                     GameLink("Pick a theme\u2026") { showThemes = true }
                     GameLink("Let's talk") {
-                        mem = mem.copy(answered = emptySet(), dismissed = emptySet())
-                        Memory.save(ctx, mem)
+                        // IT DID NOTHING MOST OF THE TIME, and the reason was
+                        // not the memory it was clearing. `q` is forced to
+                        // null while justBuilt is set (see where it is
+                        // computed), which is the whole period the agent is
+                        // holding out a finished piece of work for
+                        // acknowledgement -- in other words most of the time
+                        // a player is looking at this screen. Clearing
+                        // `answered` could never win against that, so the tap
+                        // looked dead.
+                        //
+                        // Clearing the whole of `answered` was also too much:
+                        // breadth and originality are not dismissible, so
+                        // "let's talk" re-interrogated the player about
+                        // settings they had already given. Dropping the
+                        // dismissals and forcing past the per-round cap is
+                        // enough to reopen anything the agent is sitting on.
+                        justBuilt = null; builtPoorly = false
+                        val m = mem.copy(dismissed = emptySet())
+                        mem = m
+                        Memory.save(ctx, m)
+                        // AND IF THERE IS GENUINELY NOTHING TO DECIDE, TALK
+                        // ABOUT THE GAME INSTEAD. Asked here rather than
+                        // guessed: Questions.next is pure, so the same call
+                        // the screen is about to make can be made now to find
+                        // out whether it would come back empty-handed.
+                        val deckIds = myDeck?.optJSONArray("cards")?.let { a ->
+                            (0 until a.length())
+                                .map { a.getJSONObject(it).optInt("card_id") }.toSet()
+                        } ?: emptySet()
+                        if (Questions.next(directive, m, voice, handle, standings,
+                                deckIds, idea, force = true) == null) {
+                            rulesPick = null
+                            rulesIdle = true
+                            showRules = true
+                        } else {
+                            askNow = true
+                        }
                     }
                 }
             }
@@ -1205,6 +1350,47 @@ fun ArenaPane(
                                 mem = mem.copy(lastBanSeen = b.optInt("card_id"))
                                 Memory.save(ctx, mem); banNotice = null
                             })
+                    }
+                }
+            }
+        }
+
+        // THE RULES CONVERSATION.
+        //
+        // A list of questions, and one answer at a time, rather than a wall
+        // of text with eight headings -- the player is talking to the agent,
+        // and an agent that replies with a manual is not talking. Picking a
+        // question replaces the list with its answer; the list comes back
+        // underneath so there is no dead end.
+        if (showRules) {
+            Dialog(onDismissRequest = { showRules = false }) {
+                Column(
+                    Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    SnesWindow {
+                        val pick = rulesPick
+                        if (pick == null) {
+                            Text("\u201c${voice.rulesOpen(rulesIdle)}\u201d",
+                                style = snesText(15,
+                                    androidx.compose.ui.graphics.Color(0xFFFFE28C)))
+                            SnesChoiceBox {
+                                Rules.ALL.forEachIndexed { i, qa ->
+                                    SnesChoice(qa.q) { rulesPick = i }
+                                }
+                                SnesChoice("Nothing just now") { showRules = false }
+                            }
+                        } else {
+                            val qa = Rules.ALL[pick]
+                            Text(qa.q, style = snesText(13,
+                                androidx.compose.ui.graphics.Color(0xFF8CE8A0)))
+                            Text("\u201c${qa.a}\u201d", style = snesText(12,
+                                androidx.compose.ui.graphics.Color(0xFFD8D8E8)))
+                            SnesChoiceBox {
+                                SnesChoice("Ask something else") { rulesPick = null }
+                                SnesChoice("That's all") { showRules = false }
+                            }
+                        }
                     }
                 }
             }

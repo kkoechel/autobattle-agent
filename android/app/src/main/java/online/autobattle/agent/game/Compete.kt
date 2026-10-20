@@ -8,6 +8,7 @@ import online.autobattle.agent.engine.Deck
 import online.autobattle.agent.engine.Mutate
 import online.autobattle.agent.engine.PayloadBuilder
 import online.autobattle.agent.engine.Score
+import online.autobattle.agent.engine.Stats
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -126,6 +127,181 @@ object Compete {
         val env = JSONObject(Mobile.run(payload, workers.toLong()))
         return Aggregator.aggregate(
             env.getJSONArray("results").toString(), arms, seeds, opponents.size)
+    }
+
+    /**
+     * What the plan trial found, and whether it is worth believing.
+     *
+     * Rows are every ordering that was played, best first, each with its
+     * paired gain against the deck's CURRENT plan rather than against a
+     * notional default -- the player wants to know whether to change what
+     * they have, and that is the only comparison that answers it.
+     */
+    data class PlanTrial(
+        val deckName: String,
+        val rows: List<PlanRow>,
+        /** The ordering to adopt, or null when nothing earned the change. */
+        val best: PlanPrefs?,
+        val bestGain: Double,
+        val bestT: Double,
+        val current: PlanPrefs?,
+        val screenSeeds: Int,
+        val verifySeeds: Int,
+        val opponents: Int,
+    )
+
+    data class PlanRow(
+        val prefs: PlanPrefs,
+        val label: String,
+        val wins: Double,
+        /** Against the current plan, on the screening block. */
+        val gain: Double,
+    )
+
+    /**
+     * MEASURE the standing orders against the live field instead of deriving
+     * them from a table.
+     *
+     * Every plan field is independent of the hundred cards, so one payload
+     * can carry the same card list under every ordering at once: they play
+     * the same opponents on the same seeds, which makes this a paired
+     * comparison for free rather than N separate trials to be reconciled
+     * afterwards.
+     *
+     * SCREEN THEN VERIFY, on disjoint blocks, because nine orderings against
+     * one baseline is nine chances to be fooled. At t >= 2.0 each comparison
+     * is about one-in-forty to pass on noise alone, so across nine of them a
+     * false winner is better than a one-in-five event -- and adopting one
+     * would be exactly the "tuned to its seed block" failure Stats warns
+     * about. So the screen only NOMINATES, and the nomination is re-played on
+     * seeds it has never seen before the accept gate is applied to it. That
+     * is the same three-stage discipline train() uses, for the same reason.
+     *
+     * Blocks 60k/61k: 7k, 20k, 50k and 90k already belong to the screen, the
+     * climb, the verify and the rehearsal, and the league itself plays from
+     * 1000. Re-reading seeds a deck was tuned on would flatter it.
+     */
+    fun tunePlan(
+        client: GameClient,
+        myHandle: String?,
+        screenSeeds: Int = 21,
+        verifySeeds: Int = 31,
+        workers: Int = 4,
+        onProgress: (Progress) -> Unit = {},
+    ): PlanTrial {
+        onProgress(Progress("Consulting the catalogue", 0, 1))
+        val (cardsJson, _) = client.cards()
+        val cat = Catalogue(cardsJson)
+
+        onProgress(Progress("Examining the field", 0, 1))
+        val field = client.field()
+        val opponents = opponentsOf(field, myHandle)
+        require(opponents.isNotEmpty()) { "there is nobody to play against yet" }
+
+        val me = client.me().optJSONObject("deck")
+            ?: error("you do not have a deck yet")
+        val entries = me.optJSONArray("cards") ?: error("your deck is empty")
+        val flat = ArrayList<Int>(100)
+        for (j in 0 until entries.length()) {
+            val e = entries.getJSONObject(j)
+            repeat(e.getInt("quantity")) { flat.add(e.getInt("card_id")) }
+        }
+        val livePlan = me.optJSONObject("battle_plan") ?: JSONObject()
+
+        // Every combination. Nine is small enough to play exhaustively and
+        // the probe on the live field showed why it must be: tempo swung one
+        // deck's record by eight wins while barely touching another's, and a
+        // third was flat under everything. Which axis matters is a property
+        // of the deck in hand, so there is nothing to prune in advance.
+        val variants = ArrayList<Pair<String, PlanPrefs>>()
+        for (t in PlanPrefs.Tempo.values()) {
+            for (a in PlanPrefs.Aim.values()) variants.add(label(t, a) to PlanPrefs(t, a))
+        }
+
+        // "As we play now" is its own slot and the reference for every gain.
+        // It is NOT assumed to be one of the nine: a starter deck arrives with
+        // whatever plan the starter carried.
+        val arms = ArrayList<Deck>()
+        arms.add(Deck("cur", flat, JSONObject(livePlan.toString()), "as we play now"))
+        variants.forEachIndexed { i, (lab, prefs) ->
+            arms.add(Deck("p$i", flat, prefs.applyTo(JSONObject(livePlan.toString())), lab))
+        }
+
+        onProgress(Progress("Playing ${variants.size} ways of ordering ourselves", 0, 1))
+        val screenBlock = (0 until screenSeeds).map { 60_000 + it }
+        val screened = score(cat, arms, opponents, screenBlock, workers)
+        val cur = screened["cur"] ?: error("the engine returned no result")
+
+        val rows = variants.mapIndexedNotNull { i, (lab, prefs) ->
+            val sc = screened["p$i"] ?: return@mapIndexedNotNull null
+            PlanRow(prefs, lab, sc.wins, Stats.pairedT(sc, cur).first)
+        }.sortedByDescending { it.wins }
+
+        // The leader NOMINATES; it does not win. Anything that did not even
+        // lead the screen cannot be adopted, so only this one is re-played.
+        val leader = rows.firstOrNull()
+        var best: PlanPrefs? = null
+        var gain = 0.0
+        var tStat = 0.0
+        if (leader != null) {
+            onProgress(Progress("Checking ${leader.label} on fresh seeds", 0, 1))
+            val verifyBlock = (0 until verifySeeds).map { 61_000 + it }
+            val again = score(cat, listOf(
+                Deck("cur", flat, JSONObject(livePlan.toString()), "as we play now"),
+                Deck("win", flat, leader.prefs.applyTo(JSONObject(livePlan.toString())),
+                     leader.label),
+            ), opponents, verifyBlock, workers)
+            val a = again["win"]
+            val b = again["cur"]
+            if (a != null && b != null) {
+                val (g, t) = Stats.pairedT(a, b)
+                gain = g
+                tStat = t
+                // The same gate the rest of the app uses for advice. A plan
+                // that cannot clear it is not an improvement a player would
+                // ever see in a placement, and churning their deck for it
+                // would be superstition with a progress bar.
+                if (Stats.accept(g, t)) best = leader.prefs
+            }
+        }
+
+        return PlanTrial(me.optString("name"), rows, best, gain, tStat,
+            readPrefs(livePlan), screenSeeds, verifySeeds, opponents.size)
+    }
+
+    /** A pairing named the way the player was asked about it. */
+    private fun label(t: PlanPrefs.Tempo, a: PlanPrefs.Aim): String {
+        val tl = when (t) {
+            PlanPrefs.Tempo.PRESS -> "press"
+            PlanPrefs.Tempo.BUILD -> "build to one big turn"
+            PlanPrefs.Tempo.NO_WEAK_TURNS -> "no weak turns"
+        }
+        val al = when (a) {
+            PlanPrefs.Aim.MOST_DAMAGE -> "damage furthest"
+            PlanPrefs.Aim.CLEAR_THE_BOARD -> "clear their board"
+            PlanPrefs.Aim.THEIR_BEST -> "their best card"
+        }
+        return "$tl, $al"
+    }
+
+    /**
+     * Which of the nine the deck is playing now, if any.
+     *
+     * Only for display -- the trial measures against the live plan object
+     * itself, so a deck carrying something outside the nine is still compared
+     * honestly. Null means "not one of the orderings we can offer".
+     */
+    private fun readPrefs(plan: JSONObject): PlanPrefs? {
+        val hold = plan.optInt("energy_hold", 0)
+        val scope = plan.optString("energy_hold_scope", "every_turn")
+        val co = plan.optBoolean("card_order_hold", false)
+        val aimField = plan.optString("target_preference", "")
+        val tempo = PlanPrefs.Tempo.values().firstOrNull {
+            it.hold == hold && it.protectBest == co &&
+                (hold == 0 || it.scope == scope)
+        } ?: return null
+        val aim = PlanPrefs.Aim.values().firstOrNull { it.field == aimField } ?: return null
+        return PlanPrefs(tempo, aim)
     }
 
     /** How the deck you already have does against the field as it stands. */

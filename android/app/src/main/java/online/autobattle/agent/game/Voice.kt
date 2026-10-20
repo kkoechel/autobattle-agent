@@ -238,25 +238,81 @@ enum class Voice {
      * them the agent's job.
      */
     fun planTempo(): String = when (this) {
+        WIZARD -> "Then tell me: how should our deck carry itself?"
+        BRUTE -> "Right. How should it carry itself?"
+        SPRITE -> "Alright then \u2014 how would you like it to carry itself?"
+    }
+
+    /**
+     * Opens the subject of battle plans, and asks how to settle them.
+     *
+     * CARRIES THE EXPLANATION, because it is now the first thing a player
+     * hears about plans at all. They know the agent builds a hundred-card
+     * list; nothing has told them the deck also takes standing orders in
+     * with it, so this has to say what a plan IS before the choice between
+     * measuring and dictating means anything.
+     */
+    fun planHow(): String = when (this) {
         WIZARD ->
             "A word on how these battles are fought: nobody fights them. " +
             "The hundred cards decide what our deck is capable of, and the " +
             "battle plan \u2014 a few standing orders it carries into every " +
             "match \u2014 decides what it does with them. I have been writing " +
-            "that plan myself and never asked. So: how should our deck " +
-            "carry itself?"
+            "that plan myself and never asked. I can settle it properly by " +
+            "playing every version of it against the field, or you can simply " +
+            "tell me how you want us to fight. Which?"
         BRUTE ->
-            "Something you should know: nobody plays these battles. The " +
-            "deck does. The cards say what it can do; the battle plan says " +
-            "how it behaves \u2014 a few standing orders, that's all. I've " +
-            "been writing them myself without asking. How should it carry " +
-            "itself?"
+            "Something you should know: nobody plays these battles, the deck " +
+            "does. The cards say what it can do; the battle plan says how it " +
+            "behaves \u2014 a few standing orders, that's all. I've been " +
+            "writing them myself without asking. I can settle it by playing " +
+            "every version against the field, or you can just tell me how to " +
+            "fight. Which is it?"
         SPRITE ->
             "Here's a thing worth knowing \u2014 nobody actually plays these " +
-            "battles, the deck plays itself. The hundred cards decide what " +
-            "it can do, and the battle plan is the handful of standing " +
-            "orders it takes in with it. I've been writing those myself and " +
-            "never thought to ask! How would you like it to carry itself?"
+            "battles, the deck plays itself. The hundred cards decide what it " +
+            "can do, and the battle plan is the handful of standing orders it " +
+            "takes in with it. I've been writing those myself and never " +
+            "thought to ask! I could settle it properly by playing every " +
+            "version against the field, or you could just tell me how you'd " +
+            "like us to fight. What do you think?"
+    }
+
+    /** The trial found something better, and it has been adopted. */
+    fun planTuned(orders: String, gain: Double): String {
+        val g = String.format("%.1f", gain)
+        return when (this) {
+            WIZARD -> "Settled by playing it. $orders came out ahead, and " +
+                "held up on fresh seeds \u2014 worth about $g wins against " +
+                "how we were playing. I have adopted it."
+            BRUTE -> "Played them all. $orders won, and it held on new seeds " +
+                "too \u2014 about $g wins better than how we were playing. " +
+                "It's ours now."
+            SPRITE -> "Right, I played them all out! $orders came out best, " +
+                "and it held up on seeds it hadn't seen \u2014 about $g wins " +
+                "better than before. I've adopted it."
+        }
+    }
+
+    /**
+     * The trial found nothing worth changing.
+     *
+     * This is the common and honest outcome and must not read as a failure:
+     * the agent did the work, the answer was "what you have is fine", and
+     * churning the deck for a difference it cannot prove is the superstition
+     * the gate exists to prevent.
+     */
+    fun planNothingBetter(leader: String): String = when (this) {
+        WIZARD -> "I played all nine. $leader led on the first block but " +
+            "would not repeat it on seeds it had not seen, so I cannot call " +
+            "it better. Our orders stand as they are, which is its own answer."
+        BRUTE -> "Played all nine. $leader led at first, then didn't hold up " +
+            "on new seeds. So: nothing better than what we've got. Orders " +
+            "stand."
+        SPRITE -> "I played all nine of them! $leader looked best at first, " +
+            "but it wouldn't hold up on fresh seeds \u2014 so I can't honestly " +
+            "call it an improvement. We'll keep what we have, which is good " +
+            "news really."
     }
 
     /** The other general order: what the deck goes after. */
@@ -293,6 +349,31 @@ enum class Voice {
             BRUTE -> "Right. Orders are: $list. That's it."
             SPRITE -> "Lovely \u2014 so that's me told: I'll $list."
         }
+    }
+
+    /**
+     * Opening the rules conversation.
+     *
+     * Reached when the player asked to talk and the agent had no decision to
+     * put to them, so it must not sound like a menu: the player wanted a
+     * conversation and this is the agent offering the only thing it has.
+     */
+    fun rulesOpen(idle: Boolean): String = when {
+        // Reached from "Let's talk" with nothing to decide: say why, because
+        // the player asked to talk and is owed the reason they are being
+        // offered the rules instead of a decision.
+        idle && this == WIZARD -> "Nothing wants deciding just now. Ask me " +
+            "about the game instead \u2014 what would you like to know?"
+        idle && this == BRUTE -> "Nothing to decide right now. Ask me about " +
+            "the game, then. What do you want to know?"
+        idle -> "There's nothing needing a decision just now \u2014 so ask me " +
+            "about the game instead! What would you like to know?"
+        // Opened deliberately. Claiming there is nothing to decide here was
+        // simply false: the link sits above the dialogue and a player can
+        // tap it with a question still on screen.
+        this == WIZARD -> "Ask, and I shall explain what I can."
+        this == BRUTE -> "Go on, then. What do you want to know?"
+        else -> "Of course \u2014 what would you like to know?"
     }
 
     /** How it addresses the player when it wants a decision. */
