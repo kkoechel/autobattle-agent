@@ -142,7 +142,8 @@ fun ReplayScreen(
                     update = { wv ->
                         val css = JSONObject.quote(orientCss(
                             (avail - (if (portrait) CHROME_DP else CHROME_LAND_DP))
-                                .coerceAtLeast(if (portrait) 220 else 120), portrait))
+                                .coerceAtLeast(if (portrait) 220 else 120),
+                            portrait, !youFirst))
                         wv.evaluateJavascript(
                             "(function(){var s=document.getElementById('orient');" +
                             "if(!s)return;s.textContent=$css;" +
@@ -166,7 +167,7 @@ fun ReplayScreen(
  * restart the battle, and a replay that jumps back to turn one because you
  * tilted the phone is worse than one that does not rotate at all.
  */
-private fun orientCss(arenaDp: Int, portrait: Boolean): String {
+private fun orientCss(arenaDp: Int, portrait: Boolean, flip: Boolean): String {
     /* THE CHROME IS SIZED FOR PORTRAIT and has to give ground sideways.
        Turned landscape this phone offers about 336dp of height, and the game
        picker, the transport row, the speed row and their margins want 216 of
@@ -189,13 +190,19 @@ private fun orientCss(arenaDp: Int, portrait: Boolean): String {
         "so a real landscape phone still gets the board the viewer " +
         "intends. */\n" +
         "@media (orientation:landscape) and (max-height:520px){" +
-        ".r2{flex-direction:column}" +
+        ".r2{flex-direction:${if (flip) "column-reverse" else "column"}}" +
         ".r2-half--top{border-bottom:1px solid rgba(255,255,255,.07);border-right:0}" +
         ".r2-half--bottom .r2-stats{order:9}" +
         ".r2-bubbles{right:76px;width:auto}}"
+    // The halves carry a divider on the side that faces the other one, so
+    // reversing them has to move it too, or the seam lands on the outside.
+    val turn = if (!flip) "" else
+        ".r2{flex-direction:" + (if (portrait) "column-reverse" else "row-reverse") + "}" +
+        ".r2-half--top{border-bottom:0;border-right:0}" +
+        ".r2-half--bottom{border-bottom:1px solid rgba(255,255,255,.07)}"
     val chrome = if (portrait) CHROME_DP else CHROME_LAND_DP
     return "html,body{height:${arenaDp + chrome}px}\n" +
-        "#arena{height:${arenaDp}px}\n" + slim + stacked
+        "#arena{height:${arenaDp}px}\n" + slim + stacked + turn
 }
 
 /**
@@ -234,8 +241,20 @@ private fun page(
     val planA = (a.battlePlan ?: JSONObject()).toString()
     val planB = (b.battlePlan ?: JSONObject()).toString()
     val seed2 = (seed.toLong() xor 0x80000000L) and 0xFFFFFFFFL
-    val orient = orientCss(arenaDp, portrait)
+    // YOUR DECK IS ALWAYS THE BOTTOM ONE, as it is in the main game.
+    //
+    // The decks are passed in SEAT order, because that is the match that was
+    // scored -- so when you played second you are player 1, and replay2.js
+    // puts player 1 in the top half ("bottom half (index 1) shows player 0",
+    // js/replay2.js:788). Correct, and disorienting: your own board moved
+    // depending on a seat you did not choose, and the end panel announcing
+    // "PLAYER 2 WINS" over the top half read as though you had lost.
+    //
+    // Reversed in the VIEW only. Swapping the decks instead would replay a
+    // different match, which is the one thing this screen must not do.
     val youAreSlot = if (youFirst) 0 else 1
+    val flip = youAreSlot == 1
+    val orient = orientCss(arenaDp, portrait, flip)
     val expectedJs = JSONObject.quote(expected)
     return """
 <!doctype html><html><head><meta charset="utf-8">
