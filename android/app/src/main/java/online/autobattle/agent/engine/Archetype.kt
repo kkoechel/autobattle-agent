@@ -1,5 +1,6 @@
 package online.autobattle.agent.engine
 
+import online.autobattle.agent.game.PlanPrefs
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -91,6 +92,16 @@ object Archetype {
          * is a real difference in the deck that comes back.
          */
         bias: List<String> = emptyList(),
+        /**
+         * How the player wants the deck PLAYED, not what goes in it.
+         *
+         * Defaulted so every existing caller keeps the plan this function
+         * has always emitted. The prefs are written last, over the top of
+         * the archetype's own fields, and only touch the three the player
+         * can steer -- card_order is the generator's business and no
+         * dialogue offers to reorder it.
+         */
+        prefs: PlanPrefs = PlanPrefs(),
     ): Built? {
         if (!cat.isPlayable(seed)) return null
         val theme = themeOf(seed, cat)
@@ -141,12 +152,10 @@ object Archetype {
         // card_order is worth more than any other plan field, and an
         // archetype's own ordering is the one thing a generator gets right for
         // free: seed first, then synergy, then generic staples.
-        val plan = JSONObject()
-            .put("play_priority", "card_order")
-            .put("card_order", JSONArray(picks.map { it.first }))
-            .put("card_order_hold", false)
-            .put("energy_hold", 0)
-            .put("target_preference", "least_armor")
+        val plan = prefs.applyTo(
+            JSONObject()
+                .put("play_priority", "card_order")
+                .put("card_order", JSONArray(picks.map { it.first })))
 
         return Built(seed, cat.name(seed), theme, picks, cards, plan)
     }

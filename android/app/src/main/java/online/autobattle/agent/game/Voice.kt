@@ -223,6 +223,78 @@ enum class Voice {
         }
     }
 
+    /**
+     * The battle plan, explained once and then asked about.
+     *
+     * THE EXPLANATION IS PART OF THE FIRST QUESTION, not a separate screen.
+     * A player who has got this far knows the agent builds a hundred-card
+     * list; nothing has ever told them the deck also carries standing
+     * orders, so the first plan question has to say what a plan IS before
+     * it can sensibly ask anything about one. The second assumes it.
+     *
+     * Both are deliberately general. The agent works out the energy
+     * thresholds and reservations itself and reports them afterwards
+     * through planDecided(); asking a player for a number would be handing
+     * them the agent's job.
+     */
+    fun planTempo(): String = when (this) {
+        WIZARD ->
+            "A word on how these battles are fought: nobody fights them. " +
+            "The hundred cards decide what our deck is capable of, and the " +
+            "battle plan \u2014 a few standing orders it carries into every " +
+            "match \u2014 decides what it does with them. I have been writing " +
+            "that plan myself and never asked. So: how should our deck " +
+            "carry itself?"
+        BRUTE ->
+            "Something you should know: nobody plays these battles. The " +
+            "deck does. The cards say what it can do; the battle plan says " +
+            "how it behaves \u2014 a few standing orders, that's all. I've " +
+            "been writing them myself without asking. How should it carry " +
+            "itself?"
+        SPRITE ->
+            "Here's a thing worth knowing \u2014 nobody actually plays these " +
+            "battles, the deck plays itself. The hundred cards decide what " +
+            "it can do, and the battle plan is the handful of standing " +
+            "orders it takes in with it. I've been writing those myself and " +
+            "never thought to ask! How would you like it to carry itself?"
+    }
+
+    /** The other general order: what the deck goes after. */
+    fun planAim(): String = when (this) {
+        WIZARD ->
+            "The other standing order worth your opinion. When one of our " +
+            "cards reaches for something of theirs and does not name what, " +
+            "what are we trying to take away from them?"
+        BRUTE ->
+            "Other order worth asking about. When something of ours picks " +
+            "its own target, what are we trying to take off them?"
+        SPRITE ->
+            "There's one more order worth your say. When one of our cards " +
+            "goes looking for something of theirs, what should we be trying " +
+            "to take away?"
+    }
+
+    /**
+     * What the agent decided underneath a general answer.
+     *
+     * The teaching half. A player said "build to one big turn"; this is the
+     * agent naming the two atomic orders that follow from it, so the
+     * mechanism stops being invisible. The decisions themselves come from
+     * PlanPrefs.decisions() -- shared facts, framed per voice.
+     */
+    fun planDecided(orders: List<String>): String {
+        val list = when (orders.size) {
+            0 -> return done()
+            1 -> orders[0]
+            else -> orders.dropLast(1).joinToString(", ") + ", and " + orders.last()
+        }
+        return when (this) {
+            WIZARD -> "Very good. Standing orders, then: I shall $list."
+            BRUTE -> "Right. Orders are: $list. That's it."
+            SPRITE -> "Lovely \u2014 so that's me told: I'll $list."
+        }
+    }
+
     /** How it addresses the player when it wants a decision. */
     fun which(): String = when (this) {
         WIZARD -> "Which?"

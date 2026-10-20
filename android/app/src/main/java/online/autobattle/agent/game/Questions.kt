@@ -206,6 +206,88 @@ object Questions {
                 ), dismissible = false)
         }
 
+        // --- THE BATTLE PLAN ------------------------------------------
+        //
+        // How the deck PLAYS, which the app never mentioned until now. Every
+        // deck it has built shipped the same plan fields, hardcoded, and the
+        // player had no say in the half of the game that is not the card
+        // list.
+        //
+        // GENERAL QUESTIONS, ATOMIC DECISIONS TAKEN BY THE AGENT. The
+        // engine's plan has sixteen fields and vocabularies like
+        // "first_spend"; a player has opinions about how their deck should
+        // carry itself, not about energy_hold_scope. So each answer here is
+        // a general idea, PlanPrefs derives the fields from it, and the
+        // agent reports what it derived -- which is also the only way a
+        // player ever finds out there is an energy reservation to have an
+        // opinion about.
+        //
+        // ASKED ONLY ONCE THERE IS A DECK IN PLAY. A standing order about
+        // what to attack means nothing to somebody who has not yet seen a
+        // round scored, and the first run already asks two questions before
+        // the agent will do anything. So these wait for the player to be in
+        // the standings, and come one at a time.
+        if (me != null) {
+            if ("plan-tempo" !in mem.answered) {
+                return Question("plan-tempo",
+                    "\u201c${voice.planTempo()}\u201d",
+                    listOf(
+                        Choice("Press them from the first turn",
+                            "Plays whatever we can afford, every turn. Nothing " +
+                            "sits idle \u2014 and nothing is ever saved for, " +
+                            "either. This is how I have played until now.") {
+                            it.copy(plan = it.plan.copy(
+                                tempo = PlanPrefs.Tempo.PRESS))
+                        },
+                        Choice("Build to one big turn",
+                            "I hold the opening back until we have five " +
+                            "energy, then play on as normal, and keep energy " +
+                            "aside for our best card. The first turns are " +
+                            "empty, which a fast deck punishes.") {
+                            it.copy(plan = it.plan.copy(
+                                tempo = PlanPrefs.Tempo.BUILD))
+                        },
+                        Choice("Never take a weak turn",
+                            "I sit out any turn that opens under three energy, " +
+                            "all game. Our turns are worth more and there are " +
+                            "fewer of them \u2014 and we stand idle whenever we " +
+                            "are poor.") {
+                            it.copy(plan = it.plan.copy(
+                                tempo = PlanPrefs.Tempo.NO_WEAK_TURNS))
+                        },
+                        Choice(voice.notNow(), voice.notNowWhy()) { it },
+                    ))
+            }
+            if ("plan-aim" !in mem.answered) {
+                return Question("plan-aim",
+                    "\u201c${voice.planAim()}\u201d",
+                    listOf(
+                        Choice("Push our damage furthest",
+                            "I pick whatever is least armoured, so the least " +
+                            "of what we do is soaked up. What I have done " +
+                            "until now, for want of being told otherwise.") {
+                            it.copy(plan = it.plan.copy(
+                                aim = PlanPrefs.Aim.MOST_DAMAGE))
+                        },
+                        Choice("Clear their board",
+                            "I finish whatever has the least health left. " +
+                            "Their side empties fastest, and their biggest " +
+                            "threat is the last thing standing.") {
+                            it.copy(plan = it.plan.copy(
+                                aim = PlanPrefs.Aim.CLEAR_THE_BOARD))
+                        },
+                        Choice("Go after their best card",
+                            "I go for whatever cost them most, whatever state " +
+                            "it is in. A fair guess at their best card and a " +
+                            "poor one at their most dangerous right now.") {
+                            it.copy(plan = it.plan.copy(
+                                aim = PlanPrefs.Aim.THEIR_BEST))
+                        },
+                        Choice(voice.notNow(), voice.notNowWhy()) { it },
+                    ))
+            }
+        }
+
         // --- IDEAS ----------------------------------------------------
         // At most one per scored round, so the agent has opinions without
         // becoming a popup.
@@ -251,7 +333,7 @@ object Questions {
                 },
                 alt?.let { (tag, label) ->
                     Choice("Build $label instead",
-                        "No card in particular — I pick the whole deck " +
+                        "No card in particular \u2014 I pick the whole deck " +
                             "for $label and let the best one carry it.") {
                         it.copy(themes = listOf(tag), themeLabels = listOf(label),
                             seedCard = null, seedCardName = null)

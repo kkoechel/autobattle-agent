@@ -37,6 +37,13 @@ data class Directive(
     val seedCard: Int? = null,
     val seedCardName: String? = null,
     val style: Style = Style.ANY,
+    /**
+     * How the deck plays once it is built, as against what is in it.
+     *
+     * Its defaults are exactly the plan the app hardcoded before these were
+     * askable, so an untouched directive builds the same deck it always did.
+     */
+    val plan: PlanPrefs = PlanPrefs(),
 ) {
     enum class Breadth { WIDE, BALANCED, DEEP }
 
@@ -100,6 +107,7 @@ data class Directive(
         }
         if (original) bits.add("avoiding what others play")
         target?.let { bits.add("gunning for $it") }
+        bits.addAll(plan.summary())
         return bits.joinToString(", ").replaceFirstChar { it.uppercase() } + "."
     }
 
@@ -123,6 +131,7 @@ data class Directive(
         .putOpt("seedCard", seedCard)
         .putOpt("seedCardName", seedCardName)
         .put("style", style.name)
+        .put("plan", plan.toJson())
 
     companion object {
         private const val PREFS = "abagent"
@@ -144,6 +153,7 @@ data class Directive(
                 seedCardName = str(o, "seedCardName"),
                 style = runCatching { Style.valueOf(o.optString("style", "ANY")) }
                     .getOrDefault(Style.ANY),
+                plan = PlanPrefs.fromJson(o.optJSONObject("plan")),
             )
         } catch (e: Exception) {
             // A directive that cannot be read is not worth crashing over;

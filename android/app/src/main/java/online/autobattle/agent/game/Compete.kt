@@ -623,7 +623,7 @@ object Compete {
                 // With a named seed the theme no longer picks seeds, so it
                 // weighs the support instead -- otherwise "around Turingue,
                 // pursuing poison" would change nothing at all.
-                bias = directive.themes)
+                bias = directive.themes, prefs = directive.plan)
                 ?: return@forEachIndexed
             if (b.cards.size != 100 || b.cards.any { it in banned }) return@forEachIndexed
             // Originality is a filter on what may be SUBMITTED, applied before
@@ -645,7 +645,7 @@ object Compete {
             picked.forEach { s ->
                 val b = Archetype.build(s, cat, meta,
                     stapleSlots = directive.stapleSlots, pool = directive.pool,
-                    bias = directive.themes)
+                    bias = directive.themes, prefs = directive.plan)
                     ?: return@forEach
                 if (b.cards.size == 100 && b.cards.none { it in banned }) built.add(b)
             }

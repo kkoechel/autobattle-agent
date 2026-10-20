@@ -770,6 +770,27 @@ fun ArenaPane(
                                     // deck still held the banned card, and the
                                     // same question came straight back.
                                     val forced = q.id == "banned"
+                                    // A CHANGE OF STANDING ORDERS IS NOT A
+                                    // REBUILD.
+                                    //
+                                    // The plan fields are independent of the
+                                    // hundred cards: nothing about aim or
+                                    // energy can make a legal deck illegal,
+                                    // and the card list that was tuned is
+                                    // still the card list we want. Running
+                                    // the full build would spend two minutes
+                                    // of somebody's battery to arrive at a
+                                    // different deck than the one they just
+                                    // gave orders to.
+                                    //
+                                    // So this pushes the new orders onto the
+                                    // deck already in play and leaves it
+                                    // there. Without it the answer would not
+                                    // reach the league until the next time
+                                    // the agent happened to build something,
+                                    // which is the kind of silently deferred
+                                    // setting this screen exists to avoid.
+                                    val planChanged = directive.plan != before.plan
                                     if (newPlan || forced) {
                                         error = null; note = null; trial = null
                                         // A new deck voids the promise: the
@@ -790,6 +811,77 @@ fun ArenaPane(
                                         // legally play it is not patience.
                                         if (awaitingRound && !forced) planPending = true
                                         else TrainingService.start(ctx)
+                                    } else if (planChanged) {
+                                        // DELIBERATELY DOES NOT VOID A
+                                        // PATIENCE PROMISE. A rebuild does,
+                                        // because reporting on a deck the
+                                        // player replaced would be worse than
+                                        // silence. This is the same hundred
+                                        // cards under new orders: the report
+                                        // the agent promised is still about
+                                        // the deck the player is watching,
+                                        // and cancelling it would punish them
+                                        // for answering a question.
+                                        val d = myDeck
+                                        val tk = token
+                                        if (d != null && tk != null) {
+                                            error = null
+                                            scope.launch {
+                                                // ON THE IO DISPATCHER, like
+                                                // every other call in this
+                                                // file. rememberCoroutineScope
+                                                // launches on the MAIN
+                                                // dispatcher, so without this
+                                                // the PUT threw
+                                                // NetworkOnMainThreadException
+                                                // -- which carries a NULL
+                                                // message, so the screen said
+                                                // only "could not change the
+                                                // orders" and named nothing.
+                                                runCancellable {
+                                                 withContext(Dispatchers.IO) {
+                                                    val cs = d.optJSONArray("cards")
+                                                        ?: error("deck has no cards")
+                                                    val flat = ArrayList<Int>(100)
+                                                    for (i in 0 until cs.length()) {
+                                                        val e = cs.getJSONObject(i)
+                                                        repeat(e.getInt("quantity")) {
+                                                            flat.add(e.getInt("card_id"))
+                                                        }
+                                                    }
+                                                    // Onto the deck's OWN plan,
+                                                    // so card_order -- which the
+                                                    // generator chose and no
+                                                    // dialogue offers to change
+                                                    // -- survives. Copied rather
+                                                    // than edited in place: this
+                                                    // object is the one the
+                                                    // screen is drawing from.
+                                                    val plan = directive.plan.applyTo(
+                                                        JSONObject(
+                                                            (d.optJSONObject("battle_plan")
+                                                                ?: JSONObject()).toString()))
+                                                    GameClient(tk).putDeck(
+                                                        d.optString("name"), flat, plan)
+                                                 }
+                                                }.onSuccess {
+                                                    // THE AGENT NAMES WHAT IT
+                                                    // DERIVED. The player gave
+                                                    // it a general idea; the
+                                                    // atomic orders that follow
+                                                    // are the thing they could
+                                                    // not have known to ask
+                                                    // for, so they get said out
+                                                    // loud.
+                                                    note = "\u201c" + voice.planDecided(
+                                                        directive.plan.decisions()) +
+                                                        " Same hundred cards \u2014 it " +
+                                                        "plays them differently from the " +
+                                                        "next round on.\u201d"
+                                                    runCancellable { refresh() }
+                                                }.onFailure { error = readable(it) }
+                                            }
+                                        }
                                     }
                                 })
                         }
@@ -949,10 +1041,40 @@ fun ArenaPane(
                                     "next, without touching this one.",
                                 enabled = !trialBusy,
                                 onClick = { askNow = true })
+                            // A WAY BACK TO THE STANDING ORDERS.
+                            //
+                            // The plan questions are gated on `answered`, so
+                            // they are asked once and never again -- and
+                            // "What else could we try?" forces a question
+                            // without clearing that gate. Answering "press
+                            // them from turn one" in week one would otherwise
+                            // be permanent, which is a strange thing to do to
+                            // the half of the game a player has just been
+                            // taught about. Clearing both ids puts the two
+                            // questions back in the queue.
+                            if (myDeck != null &&
+                                ("plan-tempo" in mem.answered ||
+                                    "plan-aim" in mem.answered)) {
+                                SnesChoice(
+                                    label = "Change our standing orders",
+                                    detail = "How the deck carries itself in a " +
+                                        "fight, and what it goes after.",
+                                    enabled = !trialBusy,
+                                    onClick = {
+                                        mem = mem.copy(
+                                            answered = mem.answered -
+                                                "plan-tempo" - "plan-aim",
+                                            dismissed = mem.dismissed -
+                                                "plan-tempo" - "plan-aim")
+                                        Memory.save(ctx, mem)
+                                        justBuilt = null; builtPoorly = false
+                                        askNow = true
+                                    })
+                            }
                             SnesChoice(
                                 label = "What do these choices do?",
-                                detail = "Plain answers about breadth, style " +
-                                    "and themes.",
+                                detail = "Plain answers about breadth, style, " +
+                                    "themes and battle plans.",
                                 enabled = !trialBusy,
                                 onClick = { showHelp = true })
                         }
@@ -1951,6 +2073,44 @@ private val HELP = listOf(
         "Weighs the other ninety-nine cards toward that tag while keeping " +
         "your chosen card at the heart of it. Up to three tags at once; " +
         "past that nearly every card matches and the deck is about nothing.",
+    "What a battle plan is" to
+        "A deck here is two things: the hundred cards, and a battle plan. " +
+        "Nobody plays the battles \u2014 the deck fights them on its own, and " +
+        "the plan is the standing orders it fights by. The cards decide " +
+        "what it is capable of; the plan decides what it actually does on a " +
+        "turn where several things are possible. Two players with the same " +
+        "hundred cards and different plans do not have the same deck. I " +
+        "have always written one of these; until now I wrote the same one " +
+        "every time and never said so.",
+    "How should it carry itself" to
+        "Whether the deck spends what it has each turn or waits for a " +
+        "better one. Waiting is stronger than it sounds and worse than it " +
+        "looks: a turn spent holding energy is a turn where nothing of ours " +
+        "reaches the board, and against a fast deck that is the game. " +
+        "\u201cBuild to one big turn\u201d waits once, early, and then plays " +
+        "normally; \u201cnever take a weak turn\u201d keeps the rule all game. " +
+        "Both of those also have me keep energy aside for the best card in " +
+        "the playing order \u2014 without that, our best card can sit in hand " +
+        "all game while cheaper ones spend the energy it needed. That has " +
+        "happened to a real deck for twenty turns together. I reserve it " +
+        "for that one card only: an earlier version of the game reserved it " +
+        "for whichever good card was in hand, and decks sat on ten energy " +
+        "playing nothing at all.",
+    "What are we taking from them" to
+        "Which of their permanents my effects reach for, when the card " +
+        "itself does not name a target. Worth knowing that the health " +
+        "comparison can only see things that HAVE health, so structures, " +
+        "relics and enchantments are passed over by \u201cclear their " +
+        "board\u201d and are fair game for the other two.",
+    "Why I do not simply pick the best plan" to
+        "Because I do not know which it is, and neither does anybody. I " +
+        "can measure a deck against the field, but I have never measured " +
+        "these orders against each other on YOUR deck \u2014 and the one " +
+        "lesson this project has paid for is that searching finds what " +
+        "works while reasoning about mechanisms does not. Eight changes I " +
+        "argued for from first principles all made the deck worse. So the " +
+        "orders are yours to give, and what I tell you about each one is " +
+        "its cost, not a recommendation.",
     "Show me what it can do" to
         "Plays the current deck against the live field on this phone, on " +
         "seeds it has never seen. It changes nothing \u2014 the league plays " +
