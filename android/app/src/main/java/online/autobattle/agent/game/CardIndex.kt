@@ -156,16 +156,30 @@ object CardIndex {
      * poor trade in an app whose whole size budget is the engine.
      */
     fun art(path: String): ImageBitmap? {
-        synchronized(cache) { if (cache.containsKey(path)) return cache[path] }
+        synchronized(cache) { cache[path]?.let { return it } }
         val bmp = runCatching {
             val conn = (URL(ART_BASE + path).openConnection() as HttpURLConnection).apply {
                 connectTimeout = 10_000
                 readTimeout = 20_000
                 setRequestProperty("User-Agent", "AutoBattleAgent-Android")
             }
-            conn.inputStream.use { BitmapFactory.decodeStream(it) }?.asImageBitmap()
+            // READ IT FULLY, THEN DECODE. decodeStream on a raw network
+            // stream has to rewind to probe the header, and an
+            // HttpURLConnection stream does not reliably support that -- it
+            // returns null instead of throwing, so the failure is silent.
+            //
+            // It had survived only because the old art was LOSSY webp (VP8).
+            // The pixelart-b files are LOSSLESS (VP8L), which takes a
+            // different path through the decoder, and every card in the app
+            // went blank the moment the catalogue switched. Decoding from a
+            // byte array has no such dependency, whatever the format.
+            val bytes = conn.inputStream.use { it.readBytes() }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
         }.getOrNull()
-        synchronized(cache) { cache[path] = bmp }
+        // ONLY SUCCESSES ARE CACHED. Storing a null meant one dropped
+        // request left that card blank for the life of the process, with no
+        // way to retry short of restarting the app.
+        if (bmp != null) synchronized(cache) { cache[path] = bmp }
         return bmp
     }
 }

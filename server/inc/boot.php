@@ -184,6 +184,93 @@ function keep_good_deck(int $pid, array $d, int $place, int $of, int $rid): void
                    "kept automatically, $place of $of in round $rid"]);
 }
 
+/**
+ * Take a banned card out of every deck already in play.
+ *
+ * WITHOUT THIS A BAN IS COSMETIC. deck_problem() refuses a banned card on
+ * SUBMISSION, but a deck registered before the ban is never looked at again,
+ * so it keeps playing the card every fifteen minutes. Measured on the live
+ * league the first time anyone checked: 23 of 34 decks were still playing a
+ * banned card, house decks among them. The card had been removed from the
+ * rulebook and from nobody's board.
+ *
+ * Repairs rather than rejects, because the alternative is deleting a deck
+ * the player did not choose to lose. The missing copies are made up by
+ * topping up what the deck ALREADY runs, in descending order of how many it
+ * runs -- that keeps the deck's own character instead of substituting a
+ * stranger. Infinite-rarity cards are the last resort: they are the baseline
+ * every deck may play without limit, which is exactly what a filler needs to
+ * be, and they guarantee the deck can always be made legal.
+ *
+ * Returns the number of decks changed.
+ */
+function repair_decks_for_bans(): int {
+    $cards = catalogue();
+    $banned = array_flip(banned_ids());
+    if (!$banned) return 0;
+
+    $limit = function (int $id) use ($cards): int {
+        return (int)($cards[$id]['deck_limit'] ?? 0);
+    };
+    // Baseline filler, cheapest first so a repair does not quietly hand the
+    // deck a pile of expensive cards it cannot cast.
+    $filler = [];
+    foreach ($cards as $id => $c) {
+        if (isset($banned[$id])) continue;
+        if (($c['rarity'] ?? '') !== 'infinite') continue;
+        if (!empty($c['is_retired']) || !empty($c['is_vip'])) continue;
+        $filler[] = (int)$id;
+    }
+    usort($filler, fn($x, $y) => ($cards[$x]['cost'] ?? 0) <=> ($cards[$y]['cost'] ?? 0));
+
+    $changed = 0;
+    // Keyed by player_id: `decks` holds one row per player and has no id
+    // column of its own.
+    foreach (db()->query('SELECT player_id, cards_json FROM decks') as $d) {
+        $entries = json_decode($d['cards_json'], true);
+        if (!is_array($entries)) continue;
+        $kept = [];
+        $missing = 0;
+        foreach ($entries as $e) {
+            $id = (int)($e['card_id'] ?? 0);
+            $q  = (int)($e['quantity'] ?? 0);
+            if (isset($banned[$id])) { $missing += $q; continue; }
+            if ($q > 0) $kept[$id] = ($kept[$id] ?? 0) + $q;
+        }
+        if ($missing === 0) continue;
+
+        // Top up what the deck already runs, most-played first.
+        arsort($kept);
+        foreach ($kept as $id => $q) {
+            if ($missing <= 0) break;
+            $room = max(0, $limit($id) - $q);
+            $take = min($room, $missing);
+            if ($take > 0) { $kept[$id] = $q + $take; $missing -= $take; }
+        }
+        // Then the baseline, which has no practical limit.
+        foreach ($filler as $id) {
+            if ($missing <= 0) break;
+            $have = $kept[$id] ?? 0;
+            $room = max(0, $limit($id) - $have);
+            $take = min($room, $missing);
+            if ($take > 0) { $kept[$id] = $have + $take; $missing -= $take; }
+        }
+        if ($missing > 0) continue;   // cannot be made legal; leave it alone
+
+        $out = [];
+        foreach ($kept as $id => $q) $out[] = ['card_id' => $id, 'quantity' => $q];
+        $problem = deck_problem($out);
+        if ($problem !== null) continue;      // never write a deck we just broke
+
+        db()->prepare(
+            'UPDATE decks SET cards_json = ?, revision = revision + 1,
+                              updated_at = NOW() WHERE player_id = ?')
+            ->execute([json_encode($out), (int)$d['player_id']]);
+        $changed++;
+    }
+    return $changed;
+}
+
 function deck_problem(array $entries): ?string {
     $cards = catalogue();
     if (!$cards) return 'catalogue unavailable';

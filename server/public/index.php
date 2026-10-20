@@ -427,6 +427,12 @@ if ($path === 'bans' && $method === 'POST') {
         fail(500, 'could not apply the ban: ' . $e->getMessage());
     }
 
+    // A BAN HAS TO LEAVE THE BOARD, NOT JUST THE RULEBOOK. Outside the
+    // transaction on purpose: the ban itself is the thing that must not be
+    // half-applied, while a repair that fails partway has still legalised
+    // every deck it reached, and the next ban will finish the rest.
+    $repaired = repair_decks_for_bans();
+
     $now = [];
     foreach (db()->query(
         'SELECT card_id, banned_at, reason FROM bans ORDER BY banned_at DESC') as $r) {
@@ -434,7 +440,7 @@ if ($path === 'bans' && $method === 'POST') {
         $now[] = ['card_id' => $id, 'name' => $cards[$id]['name'] ?? "card $id",
                   'banned_at' => $r['banned_at'], 'reason' => $r['reason']];
     }
-    reply(['ok' => true, 'banned' => $now, 'released' => $released, 'keep' => $keep]);
+    reply(['ok' => true, 'banned' => $now, 'released' => $released, 'keep' => $keep, 'repaired' => $repaired]);
 }
 
 // ---- GET /bans ----------------------------------------------------------
