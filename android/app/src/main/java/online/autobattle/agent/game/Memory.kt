@@ -39,6 +39,17 @@ data class Memory(
      * built -- it is a promise the agent made, not an instruction.
      */
     val waitUntilRound: Int = 0,
+    /**
+     * How many rounds the player agreed to sit out, 0 for none.
+     *
+     * Kept separately from the target because the TARGET cannot be trusted to
+     * the app: it is computed from whatever round the screen last fetched, and
+     * a stale view makes the promise fire early. Measured once -- the agent
+     * said "three rounds" and the notification arrived about two minutes
+     * later, on the round that had already been scored. The worker resolves
+     * the target from live standings on its first run instead.
+     */
+    val waitRounds: Int = 0,
     /** The newest ban this player has been shown, so it is announced once. */
     val lastBanSeen: Int = 0,
     /** Round id when a spontaneous idea was last floated, so it stays rare. */
@@ -59,6 +70,7 @@ data class Memory(
         .put("lastBanSeen", lastBanSeen)
         .put("lastIdeaRound", lastIdeaRound)
         .put("waitUntilRound", waitUntilRound)
+        .put("waitRounds", waitRounds)
         .put("dismissed", JSONArray(dismissed.toList()))
 
     companion object {
@@ -85,6 +97,7 @@ data class Memory(
                 lastBanSeen = o.optInt("lastBanSeen", 0),
                 lastIdeaRound = o.optInt("lastIdeaRound", 0),
                 waitUntilRound = o.optInt("waitUntilRound", 0),
+                waitRounds = o.optInt("waitRounds", 0),
                 dismissed = strings(o, "dismissed"),
             )
         } catch (e: Exception) {

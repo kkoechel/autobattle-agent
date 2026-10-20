@@ -210,11 +210,16 @@ enum class Voice {
     fun beingPatient(rounds: Int): String {
         // "report after 1 rounds" appeared the moment the interval was changed
         // for a test. The wording must not assume the number.
+        // "report after 1 rounds" appeared the moment the interval changed,
+        // and the player can now pick any of five. The wording must not
+        // assume the number.
         val n = if (rounds == 1) "one round" else "$rounds rounds"
         return when (this) {
-            WIZARD -> "Very well. I shall leave it to play and report after $n."
-            BRUTE -> "Right. I'll leave it be and tell you in $n."
-            SPRITE -> "Good idea \u2014 I'll let it play and come find you after $n."
+            WIZARD -> "Very well. I shall leave it to play for $n and bring " +
+                "you word."
+            BRUTE -> "Right. I'll leave it be for $n, then find you."
+            SPRITE -> "Good idea \u2014 I'll let it play for $n and come find " +
+                "you after."
         }
     }
 

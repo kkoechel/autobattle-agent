@@ -33,6 +33,13 @@
             </intent-filter>
         </activity>
 
+        <!-- Woken by RoundWatch's alarm, including while the phone dozes.
+             Not exported: nothing outside the app has any business firing
+             the agent's check. -->
+        <receiver
+            android:name=".game.RoundWatch$Alarm"
+            android:exported="false" />
+
         <service
             android:name=".game.TrainingService"
             android:exported="false"

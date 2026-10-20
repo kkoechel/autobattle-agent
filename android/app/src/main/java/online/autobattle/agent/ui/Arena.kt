@@ -209,6 +209,7 @@ fun ArenaPane(
     // costume rather than a character.
     val voice = Voice.forAvatar(avatar.key)
     var pickAvatar by remember { mutableStateOf(false) }
+    var pickWait by remember { mutableStateOf(false) }
     var mem by remember { mutableStateOf(Memory.load(ctx)) }
     var idea by remember { mutableStateOf<JSONObject?>(null) }
     // handle -> that player's current deck, so a rival's list can be opened
@@ -818,29 +819,26 @@ fun ArenaPane(
                     // three rounds is a promise the league cannot keep.
                     val canWait = myDeck != null && justBuilt == null &&
                         !trialBusy && q?.id != "banned"
-                    if (canWait && mem.waitUntilRound == 0) {
-                        val now = standings?.optJSONObject("round")?.optInt("id") ?: 0
+                    if (canWait && mem.waitRounds == 0) {
                         SnesChoice(
                             label = "I'll be patient",
-                            detail = "Let it play. I will tell you how it did " +
-                                "in ${RoundWatch.ROUNDS} rounds, about three " +
-                                "quarters of an hour.",
-                            enabled = now > 0,
-                            onClick = {
-                                mem = mem.copy(waitUntilRound = now + RoundWatch.ROUNDS)
-                                Memory.save(ctx, mem)
-                                RoundWatch.start(ctx)
-                                justBuilt = "\u201c${voice.beingPatient(RoundWatch.ROUNDS)}\u201d"
-                            })
+                            detail = "Let it play, and tell you how it did.",
+                            onClick = { pickWait = true })
                     }
-                    if (canWait && mem.waitUntilRound > 0) {
+                    if (canWait && mem.waitRounds > 0) {
                         SnesChoice(
                             label = "Stop waiting",
-                            detail = "I am holding off until round " +
-                                "${mem.waitUntilRound}. Say the word and we " +
-                                "get back to work.",
+                            // The target is not known until the worker has
+                            // looked, so say what is true at each stage rather
+                            // than printing round 0.
+                            detail = if (mem.waitUntilRound > 0)
+                                "I am holding off until round " +
+                                    "${mem.waitUntilRound}. Say the word and " +
+                                    "we get back to work."
+                            else "I am letting it play for ${mem.waitRounds} " +
+                                "rounds. Say the word and we get back to work.",
                             onClick = {
-                                mem = mem.copy(waitUntilRound = 0)
+                                mem = mem.copy(waitUntilRound = 0, waitRounds = 0)
                                 Memory.save(ctx, mem)
                                 RoundWatch.stop(ctx)
                             })
@@ -1248,6 +1246,64 @@ fun ArenaPane(
                 dismissButton = {
                     TextButton(enabled = !shelfBusy,
                         onClick = { noteFor = null }) { Text("Never mind") }
+                })
+        }
+
+        // HOW LONG TO LEAVE IT. A fixed three rounds was a guess about how
+        // patient a player feels, and that depends on whether they are about
+        // to put the phone down for the evening or watching the next round
+        // land. Rounds rather than minutes, because rounds are the unit the
+        // league actually moves in; the times are given as a gloss.
+        if (pickWait) {
+            AlertDialog(
+                containerColor = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(12.dp),
+                onDismissRequest = { pickWait = false },
+                title = { Text("\u201cHow long shall I leave it?\u201d") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("\u201cA round is scored every fifteen minutes. I " +
+                            "will come and find you when those are played " +
+                            "\u2014 or when you next pick the phone up, if it " +
+                            "has gone to sleep on us.\u201d",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        for ((n, gloss) in RoundWatch.CHOICES) {
+                            Row(
+                                Modifier.fillMaxWidth()
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable {
+                                        // Only the COUNT is recorded. Which
+                                        // round to report on is resolved by
+                                        // the worker from live standings --
+                                        // this screen's idea of the current
+                                        // round is whatever it last fetched,
+                                        // and a stale one made the agent
+                                        // report back almost immediately.
+                                        mem = mem.copy(waitRounds = n,
+                                                       waitUntilRound = 0)
+                                        Memory.save(ctx, mem)
+                                        RoundWatch.start(ctx)
+                                        justBuilt =
+                                            "\u201c${voice.beingPatient(n)}\u201d"
+                                        pickWait = false
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 9.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(if (n == 1) "1 round" else "$n rounds",
+                                    Modifier.weight(1f),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.primary)
+                                Text(gloss,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { pickWait = false }) { Text("Never mind") }
                 })
         }
 
