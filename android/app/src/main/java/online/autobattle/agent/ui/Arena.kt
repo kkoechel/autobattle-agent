@@ -797,47 +797,6 @@ fun ArenaPane(
                         // can watch -- gating it behind "your deck has not
                         // played yet" meant watching was reachable for about
                         // fifteen minutes out of every fifteen.
-                        // WAITING IS A CHOICE, and until now it was the only
-                        // one not on the screen: every option here either
-                        // spends the phone's battery or throws the deck away.
-                        // Letting a deck play is the thing the agent spends
-                        // most of its breath recommending, so it ought to be
-                        // possible to agree to it -- and the agent comes back
-                        // on its own rather than leaving the player to
-                        // remember to look.
-                        if (justBuilt == null && awaitingRound &&
-                            mem.waitUntilRound == 0) {
-                            val now = standings?.optJSONObject("round")
-                                ?.optInt("id") ?: 0
-                            SnesChoice(
-                                label = "I'll be patient",
-                                detail = "Let it play. I will tell you how it " +
-                                    "did in ${RoundWatch.ROUNDS} rounds, about " +
-                                    "three quarters of an hour.",
-                                enabled = !trialBusy && now > 0,
-                                onClick = {
-                                    mem = mem.copy(
-                                        waitUntilRound = now + RoundWatch.ROUNDS)
-                                    Memory.save(ctx, mem)
-                                    RoundWatch.start(ctx)
-                                    justBuilt = "\u201c${voice.beingPatient(
-                                        RoundWatch.ROUNDS)}\u201d"
-                                })
-                        }
-                        // Already waiting: say so, and let them call it off.
-                        if (justBuilt == null && mem.waitUntilRound > 0) {
-                            SnesChoice(
-                                label = "Stop waiting",
-                                detail = "I am holding off until round " +
-                                    "${mem.waitUntilRound}. Say the word and " +
-                                    "we get back to work.",
-                                enabled = !trialBusy,
-                                onClick = {
-                                    mem = mem.copy(waitUntilRound = 0)
-                                    Memory.save(ctx, mem)
-                                    RoundWatch.stop(ctx)
-                                })
-                        }
                         if (justBuilt == null && myDeck != null) {
                             SnesChoice(
                                 label = if (trialBusy) (trialStep ?: "Playing it out\u2026")
@@ -959,6 +918,49 @@ fun ArenaPane(
                             onClick = {
                                 error = null; note = null; trial = null
                                 TrainingService.start(ctx)
+                            })
+                    }
+                    // WAITING IS A CHOICE, AND IT BELONGS WITH ALL OF THEM.
+                    //
+                    // It began inside the branch that runs only when the agent
+                    // has nothing to ask -- and the agent nearly always has
+                    // something to ask, so in practice it never appeared.
+                    // Every other option here either spends the phone's
+                    // battery or throws the deck away; letting a deck play is
+                    // the thing the agent spends most of its breath
+                    // recommending, so it has to be offered whatever else is
+                    // on the screen.
+                    //
+                    // Not on the banned-card question: that deck is illegal
+                    // and will not be scored, so promising to report on it in
+                    // three rounds is a promise the league cannot keep.
+                    val canWait = myDeck != null && justBuilt == null &&
+                        !trialBusy && q?.id != "banned"
+                    if (canWait && mem.waitUntilRound == 0) {
+                        val now = standings?.optJSONObject("round")?.optInt("id") ?: 0
+                        SnesChoice(
+                            label = "I'll be patient",
+                            detail = "Let it play. I will tell you how it did " +
+                                "in ${RoundWatch.ROUNDS} rounds, about three " +
+                                "quarters of an hour.",
+                            enabled = now > 0,
+                            onClick = {
+                                mem = mem.copy(waitUntilRound = now + RoundWatch.ROUNDS)
+                                Memory.save(ctx, mem)
+                                RoundWatch.start(ctx)
+                                justBuilt = "\u201c${voice.beingPatient(RoundWatch.ROUNDS)}\u201d"
+                            })
+                    }
+                    if (canWait && mem.waitUntilRound > 0) {
+                        SnesChoice(
+                            label = "Stop waiting",
+                            detail = "I am holding off until round " +
+                                "${mem.waitUntilRound}. Say the word and we " +
+                                "get back to work.",
+                            onClick = {
+                                mem = mem.copy(waitUntilRound = 0)
+                                Memory.save(ctx, mem)
+                                RoundWatch.stop(ctx)
                             })
                     }
                 }
