@@ -148,6 +148,63 @@ def swap(cards: list[int], plan: dict, cut: int, add: int, qty: int,
     return flatten(have), new_plan
 
 
+def package(cards: list[int], plan: dict, swaps: list[dict],
+            limits: dict[int, int],
+            base_rank: int = 0) -> tuple[list[int], dict] | None:
+    """Apply several swaps AS ONE CHANGE, so an engine can be measured whole.
+
+    WHY THIS EXISTS. Every other move here is a single swap, and the search
+    measures each candidate on its own -- which is the right shape for "is
+    this card better than that card" and the wrong shape for every synergy in
+    the game. A gravecast engine is a handful of gravecast bodies plus the
+    discard effects that feed them; a milled-payoff engine is the payoff plus
+    the self-mill that triggers it. Proposed one card at a time, each piece
+    is measured without its partners, each does nothing, and the validator
+    correctly rejects all of them. The conclusion "the model never finds a
+    synergy" was therefore guaranteed by the harness, not discovered about
+    the model.
+
+    A package is still only a hypothesis: it faces the same paired screen and
+    confirmation as a one-card swap, and a package that cannot beat the gate
+    is dropped exactly like any other candidate. The only thing that changes
+    is that the pieces get to stand together.
+
+    Adds are placed at consecutive card_order ranks from `base_rank`, in the
+    order the proposer listed them -- that ordering is itself part of the
+    hypothesis, since a payoff the deck never reaches is not an engine.
+
+    Returns None unless the result is a legal deck, quantity-neutral like
+    `swap`. Limits take care of themselves: `swap` REFUSES an add that would
+    break one rather than capping it, and each step here sees the counts the
+    previous steps left behind, so two pieces naming the same card cannot
+    collectively exceed its limit -- the second is simply skipped. The final
+    sweep is a backstop for a deck that arrived already over a limit, which
+    this must not quietly launder into a candidate.
+    """
+    out, cur = list(cards), plan
+    applied = 0
+    for i, sw in enumerate(swaps):
+        cut, add = int(sw["cut"]), int(sw["add"])
+        qty = max(1, int(sw.get("qty", 1)))
+        step = swap(out, cur, cut, add, qty, int(limits.get(add, 1)),
+                    rank=base_rank + i)
+        if step is None:
+            # A piece that cannot be applied -- usually because an earlier
+            # swap already consumed the copies it wanted to cut -- does not
+            # void the package. The rest of the engine may still be the
+            # hypothesis worth testing.
+            continue
+        out, cur = step
+        applied += 1
+    if applied == 0 or len(out) != len(cards):
+        return None
+    have = as_counter(out)
+    for cid, n in have.items():
+        if n > int(limits.get(cid, n)):
+            return None
+    return out, cur
+
+
 def swap_ranks(order_len: int) -> list[int]:
     """Where to try a newly added card: the front, and a couple of depths.
 

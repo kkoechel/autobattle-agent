@@ -528,7 +528,7 @@ def cmd_ask(args, api: Api) -> int:
     whatever produced it, and the engine is what decides.
     """
     from . import propose as P
-    from .moves import as_counter, swap, swap_ranks
+    from .moves import as_counter, package, swap, swap_ranks
     from .search import sweep_and_confirm
 
     h, deck, mine, opps, _info = _setup(args, api)
@@ -567,9 +567,21 @@ def cmd_ask(args, api: Api) -> int:
     print(f"{len(rows)} proposals; building candidates")
 
     ranks = swap_ranks(len(plan.get("card_order") or []))
+    limits = {int(c): int(d.get("deck_limit") or 1) for c, d in catalog.items()}
     cands, seen = [], []
     for r in rows:
-        limit = int(catalog.get(r["add"], {}).get("deck_limit") or 1)
+        # A PACKAGE IS ONE CANDIDATE. Its pieces are measured standing
+        # together, which is the only way a synergy can show a gain at all --
+        # split into separate candidates, each piece is measured without its
+        # partners and correctly found worthless.
+        if r.get("swaps"):
+            for base in ranks[:2]:
+                out = package(mine, plan, r["swaps"], limits, base_rank=base)
+                if out:
+                    cands.append(out)
+                    seen.append(r)
+            continue
+        limit = limits.get(r["add"], 1)
         for rank in ranks[:2]:
             out = swap(mine, plan, r["cut"], r["add"],
                        min(r["qty"], limit), limit, rank=rank)
@@ -590,8 +602,13 @@ def cmd_ask(args, api: Api) -> int:
     idx = next(i for i, c in enumerate(cands) if c == (cards, newplan))
     r = seen[idx]
     nm = lambda c: catalog.get(c, {}).get("name", c)
-    print(f"ACCEPTED -{r['qty']} {nm(r['cut'])} +{r['qty']} {nm(r['add'])}"
-          f"  {gain:+.1f}W t={t:.1f}")
+    if r.get("swaps"):
+        print(f"ACCEPTED package \"{r['package']}\"  {gain:+.1f}W t={t:.1f}")
+        for sw in r["swaps"]:
+            print(f"    -{sw['qty']} {nm(sw['cut'])}  +{sw['qty']} {nm(sw['add'])}")
+    else:
+        print(f"ACCEPTED -{r['qty']} {nm(r['cut'])} +{r['qty']} {nm(r['add'])}"
+              f"  {gain:+.1f}W t={t:.1f}")
     print(f"  model's reason: {r['why']}")
     if args.apply:
         checkpoint(api, mine, plan, f"{time.strftime('%m-%d %H:%M')} pre-proposal")
