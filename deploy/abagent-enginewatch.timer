@@ -1,0 +1,10 @@
+[Unit]
+Description=Check hourly whether the league engine has moved
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=AutoBattle Agent — notice when the league engine moves ahead of the app
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=abagent
+Group=abagent
+WorkingDirectory=/opt/abagent
+Nice=19
+ExecStart=/opt/abagent/bin/engine_watch.sh
