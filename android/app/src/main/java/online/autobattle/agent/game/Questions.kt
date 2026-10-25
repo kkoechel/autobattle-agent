@@ -119,6 +119,15 @@ object Questions {
         myDeckCardIds: Set<Int>,
         idea: JSONObject?,
         /**
+         * How many cards in the player's deck carry a supplement.
+         *
+         * Passed in rather than derived here: this layer has the card IDS of
+         * the deck but not the catalogue that would say what they do, and
+         * handing it one just to count a tag would make every caller load a
+         * megabyte of card data to ask a question.
+         */
+        supplementCards: Int = 0,
+        /**
          * Ask even if one has already been asked this round.
          *
          * The per-round cap stops the agent nagging, but it also meant a
@@ -314,6 +323,43 @@ object Questions {
                             "are poor.") {
                             it.copy(plan = it.plan.copy(
                                 tempo = PlanPrefs.Tempo.NO_WEAK_TURNS))
+                        },
+                        Choice(voice.notNow(), voice.notNowWhy()) { it },
+                    ))
+            }
+            // ONLY ASKED OF A DECK THAT HOLDS SUPPLEMENT CARDS.
+            //
+            // These orders decide whether to pay a card's optional extra
+            // cost, and a deck with no such card behaves identically however
+            // they are set. Asking anyway would be a setting that changes
+            // nothing -- the decorative kind this screen exists to avoid --
+            // and the count in the question is what makes it legible: the
+            // player is told why they are being asked.
+            if (mem.planByHand && "plan-extras" !in mem.answered &&
+                supplementCards > 0) {
+                return Question("plan-extras",
+                    "\u201c${voice.planExtras(supplementCards)}\u201d",
+                    listOf(
+                        Choice("Whenever we can afford it",
+                            "I take the bonus every time the cost can be met. " +
+                            "More happens, and some turns go entirely on one " +
+                            "card. This is what I have done until now.") {
+                            it.copy(plan = it.plan.copy(
+                                extras = PlanPrefs.Extras.PAY))
+                        },
+                        Choice("Only with energy to spare",
+                            "I take it only when three energy would still be " +
+                            "left afterwards, so the bonus never costs us the " +
+                            "rest of the turn.") {
+                            it.copy(plan = it.plan.copy(
+                                extras = PlanPrefs.Extras.SPARE_ONLY))
+                        },
+                        Choice("Never \u2014 play them plain",
+                            "I always decline. The cards still get played, " +
+                            "they just do the smaller thing, and the energy " +
+                            "goes on another card instead.") {
+                            it.copy(plan = it.plan.copy(
+                                extras = PlanPrefs.Extras.NEVER))
                         },
                         Choice(voice.notNow(), voice.notNowWhy()) { it },
                     ))

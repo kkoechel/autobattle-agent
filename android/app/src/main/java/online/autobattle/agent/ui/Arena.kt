@@ -612,7 +612,7 @@ fun ArenaPane(
                             directive = directive.copy(plan = best)
                             Directive.save(ctx, directive)
                             val m = mem.copy(answered = mem.answered +
-                                "plan-tempo" + "plan-aim")
+                                "plan-tempo" + "plan-aim" + "plan-extras")
                             mem = m
                             Memory.save(ctx, m)
                             "\u201c" + voice.planTuned(top.label, t.bestGain) + "\u201d"
@@ -633,9 +633,22 @@ fun ArenaPane(
             val deckIds = myDeck?.optJSONArray("cards")?.let { a ->
                 (0 until a.length()).map { a.getJSONObject(it).optInt("card_id") }.toSet()
             } ?: emptySet()
+            // How many copies in the deck offer an optional extra cost. The
+            // supplement question is asked only of a deck that holds some,
+            // because the orders it sets change nothing for a deck that does
+            // not -- and the number is what tells the player why they are
+            // being asked at all.
+            val supplementCopies = myDeck?.optJSONArray("cards")?.let { arr ->
+                (0 until arr.length()).sumOf { i ->
+                    val e = arr.getJSONObject(i)
+                    val info = cardsById[e.optInt("card_id")]
+                    if (info != null && "supplement" in info.tags) e.optInt("quantity") else 0
+                }
+            } ?: 0
             val q = if (busy || planPending || justBuilt != null) null else
                 Questions.next(directive, mem, voice, handle, standings,
-                    deckIds, idea, force = askNow)
+                    deckIds, idea, force = askNow,
+                    supplementCards = supplementCopies)
             val mood = moodFor(
                 working = busy,
                 asking = q != null,
@@ -1173,9 +1186,11 @@ fun ArenaPane(
                                     onClick = {
                                         mem = mem.copy(
                                             answered = mem.answered -
-                                                "plan-tempo" - "plan-aim",
+                                                "plan-tempo" - "plan-aim" -
+                                                "plan-extras",
                                             dismissed = mem.dismissed -
-                                                "plan-tempo" - "plan-aim")
+                                                "plan-tempo" - "plan-aim" -
+                                                "plan-extras")
                                         Memory.save(ctx, mem)
                                         justBuilt = null; builtPoorly = false
                                         askNow = true
@@ -1245,8 +1260,17 @@ fun ArenaPane(
                             (0 until a.length())
                                 .map { a.getJSONObject(it).optInt("card_id") }.toSet()
                         } ?: emptySet()
+                        val supCopies = myDeck?.optJSONArray("cards")?.let { arr ->
+                            (0 until arr.length()).sumOf { i ->
+                                val e = arr.getJSONObject(i)
+                                val info = cardsById[e.optInt("card_id")]
+                                if (info != null && "supplement" in info.tags)
+                                    e.optInt("quantity") else 0
+                            }
+                        } ?: 0
                         if (Questions.next(directive, m, voice, handle, standings,
-                                deckIds, idea, force = true) == null) {
+                                deckIds, idea, force = true,
+                                supplementCards = supCopies) == null) {
                             rulesPick = null
                             rulesIdle = true
                             showRules = true
@@ -2288,6 +2312,15 @@ private val HELP = listOf(
         "comparison can only see things that HAVE health, so structures, " +
         "relics and enchantments are passed over by \u201cclear their " +
         "board\u201d and are fair game for the other two.",
+    "Paying a card's extra cost" to
+        "Some cards offer to do more for an extra cost \u2014 more energy, a " +
+        "sacrifice, some honour. Paying is optional and the card gets played " +
+        "either way, so one of these is never a dead card. The question is " +
+        "only whether the bonus is worth what it takes out of the turn: a " +
+        "card that eats five energy to do more has also stopped us doing " +
+        "anything else. I only raise this if the deck actually holds cards " +
+        "that offer it, and I settle it by playing it if you let me measure " +
+        "the orders.",
     "Why I do not simply pick the best plan" to
         "Because I do not know which it is, and neither does anybody. I " +
         "can measure a deck against the field, but I have never measured " +

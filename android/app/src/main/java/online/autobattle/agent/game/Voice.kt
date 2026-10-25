@@ -278,6 +278,34 @@ enum class Voice {
             "like us to fight. What do you think?"
     }
 
+    /**
+     * The third standing order, asked only of a deck that holds the cards.
+     *
+     * Named from the card text the player can see ("Supplement: Pay 2 more
+     * to also...") rather than from the plan fields, which are called
+     * `supplements` and `supplement_reserve` and would mean nothing to
+     * anyone who has not read the engine.
+     */
+    fun planExtras(n: Int): String {
+        val many = if (n == 1) "a card" else "$n cards"
+        return when (this) {
+            WIZARD ->
+                "One more, and it only arises because we are playing " +
+                "$many that offer it. Some cards will do more for an extra " +
+                "cost \u2014 paying is optional and the card is played either " +
+                "way. When should I pay?"
+            BRUTE ->
+                "One more, and only because we're running $many like it. " +
+                "Some cards do more if you pay extra. Paying's optional " +
+                "either way. When do I pay?"
+            SPRITE ->
+                "One last one \u2014 it only comes up because we're playing " +
+                "$many that offer it! Some cards will do more for an extra " +
+                "cost, and paying is always optional. When would you like me " +
+                "to pay?"
+        }
+    }
+
     /** The trial found something better, and it has been adopted. */
     fun planTuned(orders: String, gain: Double): String {
         val g = String.format("%.1f", gain)

@@ -38,6 +38,23 @@ data class CardInfo(
      */
     val raw: String = "",
 ) {
+    /**
+     * The catalogue's tags, read out of `raw` on demand.
+     *
+     * Not a constructor field: it would have to be parsed for all ~1100
+     * cards on every catalogue load to answer a question asked about the
+     * eleven in a deck. `by lazy` keeps it off the hot path and out of
+     * equals(), which a data class would otherwise widen.
+     */
+    val tags: Set<String> by lazy {
+        try {
+            val a = org.json.JSONObject(raw).optJSONArray("tags") ?: return@lazy emptySet()
+            (0 until a.length()).mapNotNull { a.optString(it).takeIf(String::isNotBlank) }
+                .toSet()
+        } catch (e: Exception) {
+            emptySet()
+        }
+    }
     val typeLine: String
         get() = listOf(supertype, subtype).filter { it.isNotBlank() }.joinToString(" · ")
 

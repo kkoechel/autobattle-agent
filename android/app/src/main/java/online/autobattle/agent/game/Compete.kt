@@ -213,9 +213,22 @@ object Compete {
         // deck's record by eight wins while barely touching another's, and a
         // third was flat under everything. Which axis matters is a property
         // of the deck in hand, so there is nothing to prune in advance.
+        // THE SUPPLEMENT AXIS ONLY EXISTS IF THE DECK CAN USE IT.
+        //
+        // Those orders decide whether to pay a card's OPTIONAL extra cost, so
+        // a deck holding no supplement cards behaves identically under all
+        // three -- measuring them would triple the run to compare a setting
+        // against itself, and the "nothing was better" it reported would be
+        // arithmetic rather than a finding. Fifteen cards in the pool carry a
+        // supplement, so most decks hold none.
+        val supplementCards = flat.count { "supplement" in cat.tags(it) }
+        val extrasAxis = if (supplementCards > 0) PlanPrefs.Extras.values().toList()
+                         else listOf(PlanPrefs.Extras.PAY)
         val variants = ArrayList<Pair<String, PlanPrefs>>()
         for (t in PlanPrefs.Tempo.values()) {
-            for (a in PlanPrefs.Aim.values()) variants.add(label(t, a) to PlanPrefs(t, a))
+            for (a in PlanPrefs.Aim.values()) {
+                for (e in extrasAxis) variants.add(label(t, a, e) to PlanPrefs(t, a, e))
+            }
         }
 
         // "As we play now" is its own slot and the reference for every gain.
@@ -270,7 +283,8 @@ object Compete {
     }
 
     /** A pairing named the way the player was asked about it. */
-    private fun label(t: PlanPrefs.Tempo, a: PlanPrefs.Aim): String {
+    private fun label(t: PlanPrefs.Tempo, a: PlanPrefs.Aim,
+                      e: PlanPrefs.Extras = PlanPrefs.Extras.PAY): String {
         val tl = when (t) {
             PlanPrefs.Tempo.PRESS -> "press"
             PlanPrefs.Tempo.BUILD -> "build to one big turn"
@@ -281,7 +295,12 @@ object Compete {
             PlanPrefs.Aim.CLEAR_THE_BOARD -> "clear their board"
             PlanPrefs.Aim.THEIR_BEST -> "their best card"
         }
-        return "$tl, $al"
+        val el = when (e) {
+            PlanPrefs.Extras.PAY -> ""
+            PlanPrefs.Extras.NEVER -> ", no extras"
+            PlanPrefs.Extras.SPARE_ONLY -> ", extras when flush"
+        }
+        return "$tl, $al$el"
     }
 
     /**
@@ -301,7 +320,12 @@ object Compete {
                 (hold == 0 || it.scope == scope)
         } ?: return null
         val aim = PlanPrefs.Aim.values().firstOrNull { it.field == aimField } ?: return null
-        return PlanPrefs(tempo, aim)
+        val off = plan.optString("supplements", "") == "off"
+        val reserve = plan.optInt("supplement_reserve", 0)
+        val extras = PlanPrefs.Extras.values().firstOrNull {
+            it.off == off && it.reserve == reserve
+        } ?: return null
+        return PlanPrefs(tempo, aim, extras)
     }
 
     /** How the deck you already have does against the field as it stands. */

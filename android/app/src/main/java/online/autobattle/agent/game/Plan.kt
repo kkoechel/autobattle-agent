@@ -46,6 +46,7 @@ import org.json.JSONObject
 data class PlanPrefs(
     val tempo: Tempo = Tempo.PRESS,
     val aim: Aim = Aim.MOST_DAMAGE,
+    val extras: Extras = Extras.PAY,
 ) {
     /**
      * How the deck carries itself: the general idea, from which the two
@@ -105,6 +106,37 @@ data class PlanPrefs(
     }
 
     /**
+     * Whether to pay a card's OPTIONAL extra cost (engine v4.48 Supplement).
+     *
+     * A supplement is an additional cost that never stops the card being
+     * played: pay it and the card does more, decline and it resolves plainly.
+     * Fifteen cards in the live pool carry one. The engine reads two plan
+     * fields for this and the app wrote NEITHER until now, so a player could
+     * build a supplement deck and had no way to say what to do with it.
+     *
+     * THE DEFAULT WRITES NOTHING, deliberately. Unset `supplements` already
+     * means "pay when able" in the engine (canPaySupplement only bails on the
+     * exact string "off"), so PAY must emit no fields at all to keep an
+     * untouched plan byte-identical to what the app has always submitted.
+     * Writing "on" would be the same behaviour and a different payload.
+     *
+     * SPARE_ONLY uses the reserve, which the engine defines as the energy
+     * that must SURVIVE the payment -- it declines when
+     * (energy + ephemeral) - cost < reserve. That is the setting for a deck
+     * that wants the bonus only when it is not giving up its turn for it.
+     */
+    enum class Extras(val off: Boolean, val reserve: Int) {
+        /** Pay whenever the cost can be met. Today's behaviour. */
+        PAY(false, 0),
+
+        /** Never pay. The card still gets played, just plainly. */
+        NEVER(true, 0),
+
+        /** Pay only when three energy would still be left afterwards. */
+        SPARE_ONLY(false, 3),
+    }
+
+    /**
      * Write the derived fields onto a plan.
      *
      * Mutates the object it is given, which is always a copy at the call
@@ -127,6 +159,12 @@ data class PlanPrefs(
         if (tempo.hold > 0) plan.put("energy_hold_scope", tempo.scope)
         else plan.remove("energy_hold_scope")
         plan.put("target_preference", aim.field)
+        // Supplements last, and ABSENT on the default, so a PAY plan carries
+        // no supplement keys and stays byte-identical to the old payload.
+        if (extras.off) plan.put("supplements", "off")
+        else plan.remove("supplements")
+        if (extras.reserve > 0) plan.put("supplement_reserve", extras.reserve)
+        else plan.remove("supplement_reserve")
         return plan
     }
 
@@ -157,6 +195,12 @@ data class PlanPrefs(
             Aim.CLEAR_THE_BOARD -> "aim at whatever has the least health left"
             Aim.THEIR_BEST -> "aim at whatever cost them most"
         })
+        when (extras) {
+            Extras.PAY -> {}
+            Extras.NEVER -> out.add("never pay a card's optional extra cost")
+            Extras.SPARE_ONLY ->
+                out.add("pay an optional extra only with three energy to spare")
+        }
         return out
     }
 
@@ -173,11 +217,17 @@ data class PlanPrefs(
             Aim.CLEAR_THE_BOARD -> bits.add("clearing their board")
             Aim.THEIR_BEST -> bits.add("going after their best card")
         }
+        when (extras) {
+            Extras.PAY -> {}
+            Extras.NEVER -> bits.add("refusing optional extras")
+            Extras.SPARE_ONLY -> bits.add("paying extras only when flush")
+        }
         return bits
     }
 
     fun toJson(): JSONObject = JSONObject()
         .put("tempo", tempo.name).put("aim", aim.name)
+        .put("extras", extras.name)
 
     companion object {
         fun fromJson(o: JSONObject?): PlanPrefs {
@@ -192,6 +242,7 @@ data class PlanPrefs(
             return PlanPrefs(
                 tempo = pick("tempo", Tempo.values(), Tempo.PRESS),
                 aim = pick("aim", Aim.values(), Aim.MOST_DAMAGE),
+                extras = pick("extras", Extras.values(), Extras.PAY),
             )
         }
     }
