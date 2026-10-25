@@ -6,8 +6,8 @@ built artefact against the live league before a release.
 
 | | |
 |---|---|
-| engine version | **4.49** |
-| built from | `autobattle.online` commit `5ff860f` (engine identical to `84c5988`, `Engine v4.49: amplify_dishonor`) |
+| engine version | **4.51** |
+| built from | `autobattle.online` commit `de580f2` (engine identical to `3537531`, `Engine v4.51: newest/oldest targeting`) |
 | built on | 2026-10-25 |
 | built by | `shell/engine/build_aar.sh`, extracted with `git archive` so the main repo is never touched |
 
