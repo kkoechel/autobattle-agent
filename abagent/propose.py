@@ -239,6 +239,14 @@ def _catalogue_block(catalog: dict[int, dict], exclude: set[int]) -> str:
     for cid, c in sorted(catalog.items()):
         if cid in exclude or c.get("is_retired"):
             continue
+        # TOKENS ARE NOT ADDABLE. deck_limit 0 means the card cannot go in a
+        # deck at all -- it only ever arrives by being summoned. 25 of them
+        # were in the pool the model was asked to choose from, so a share of
+        # every proposal it made was spent on cards that can never be played,
+        # and `int(deck_limit or 1)` downstream turned the 0 into a 1 and
+        # built the illegal deck without complaint.
+        if int(c.get("deck_limit") or 0) < 1:
+            continue
         rules = (c.get("rules_text") or "").strip().replace("\n", " ")
         if not rules:
             continue

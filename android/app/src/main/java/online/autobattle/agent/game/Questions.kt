@@ -327,6 +327,34 @@ object Questions {
                         Choice(voice.notNow(), voice.notNowWhy()) { it },
                     ))
             }
+            if (mem.planByHand && "plan-aim" !in mem.answered) {
+                return Question("plan-aim",
+                    "\u201c${voice.planAim()}\u201d",
+                    listOf(
+                        Choice("Push our damage furthest",
+                            "I pick whatever is least armoured, so the least " +
+                            "of what we do is soaked up. What I have done " +
+                            "until now, for want of being told otherwise.") {
+                            it.copy(plan = it.plan.copy(
+                                aim = PlanPrefs.Aim.MOST_DAMAGE))
+                        },
+                        Choice("Clear their board",
+                            "I finish whatever has the least health left. " +
+                            "Their side empties fastest, and their biggest " +
+                            "threat is the last thing standing.") {
+                            it.copy(plan = it.plan.copy(
+                                aim = PlanPrefs.Aim.CLEAR_THE_BOARD))
+                        },
+                        Choice("Go after their best card",
+                            "I go for whatever cost them most, whatever state " +
+                            "it is in. A fair guess at their best card and a " +
+                            "poor one at their most dangerous right now.") {
+                            it.copy(plan = it.plan.copy(
+                                aim = PlanPrefs.Aim.THEIR_BEST))
+                        },
+                        Choice(voice.notNow(), voice.notNowWhy()) { it },
+                    ))
+            }
             // ONLY ASKED OF A DECK THAT HOLDS SUPPLEMENT CARDS.
             //
             // These orders decide whether to pay a card's optional extra
@@ -360,34 +388,6 @@ object Questions {
                             "goes on another card instead.") {
                             it.copy(plan = it.plan.copy(
                                 extras = PlanPrefs.Extras.NEVER))
-                        },
-                        Choice(voice.notNow(), voice.notNowWhy()) { it },
-                    ))
-            }
-            if (mem.planByHand && "plan-aim" !in mem.answered) {
-                return Question("plan-aim",
-                    "\u201c${voice.planAim()}\u201d",
-                    listOf(
-                        Choice("Push our damage furthest",
-                            "I pick whatever is least armoured, so the least " +
-                            "of what we do is soaked up. What I have done " +
-                            "until now, for want of being told otherwise.") {
-                            it.copy(plan = it.plan.copy(
-                                aim = PlanPrefs.Aim.MOST_DAMAGE))
-                        },
-                        Choice("Clear their board",
-                            "I finish whatever has the least health left. " +
-                            "Their side empties fastest, and their biggest " +
-                            "threat is the last thing standing.") {
-                            it.copy(plan = it.plan.copy(
-                                aim = PlanPrefs.Aim.CLEAR_THE_BOARD))
-                        },
-                        Choice("Go after their best card",
-                            "I go for whatever cost them most, whatever state " +
-                            "it is in. A fair guess at their best card and a " +
-                            "poor one at their most dangerous right now.") {
-                            it.copy(plan = it.plan.copy(
-                                aim = PlanPrefs.Aim.THEIR_BEST))
                         },
                         Choice(voice.notNow(), voice.notNowWhy()) { it },
                     ))

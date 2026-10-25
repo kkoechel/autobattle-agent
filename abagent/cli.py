@@ -567,7 +567,13 @@ def cmd_ask(args, api: Api) -> int:
     print(f"{len(rows)} proposals; building candidates")
 
     ranks = swap_ranks(len(plan.get("card_order") or []))
-    limits = {int(c): int(d.get("deck_limit") or 1) for c, d in catalog.items()}
+    # `or 1` would turn a token's deck_limit of 0 into a legal 1-of. A card
+    # with no limit recorded at all still defaults to 1; a card recorded as 0
+    # stays 0, and swap() then refuses it.
+    def _limit(d: dict) -> int:
+        v = d.get("deck_limit")
+        return int(v) if v is not None else 1
+    limits = {int(cid): _limit(d) for cid, d in catalog.items()}
     cands, seen = [], []
     for r in rows:
         # A PACKAGE IS ONE CANDIDATE. Its pieces are measured standing

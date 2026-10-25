@@ -1175,8 +1175,16 @@ fun ArenaPane(
                             // the half of the game a player has just been
                             // taught about. Clearing both ids puts the two
                             // questions back in the queue.
+                            // "plan-how" COUNTS AS HAVING ORDERS. Checking
+                            // only the two preference ids meant a player who
+                            // had the orders MEASURED could never reopen
+                            // them: the tuner answers plan-how and leaves the
+                            // preference questions untouched, so neither id
+                            // was ever set and the option never appeared for
+                            // them at all.
                             if (myDeck != null &&
-                                ("plan-tempo" in mem.answered ||
+                                ("plan-how" in mem.answered ||
+                                    "plan-tempo" in mem.answered ||
                                     "plan-aim" in mem.answered)) {
                                 SnesChoice(
                                     label = "Change our standing orders",
@@ -1184,13 +1192,26 @@ fun ArenaPane(
                                         "fight, and what it goes after.",
                                     enabled = !trialBusy,
                                     onClick = {
+                                        // CLEARS plan-how TOO, or this is a
+                                        // dead button for most players. The
+                                        // three preference questions are
+                                        // gated on planByHand, which is false
+                                        // for anyone who had the orders
+                                        // MEASURED -- so clearing only those
+                                        // three reopened nothing, left
+                                        // plan-how answered, and the tap did
+                                        // nothing at all. Reopening the
+                                        // subject means asking again how they
+                                        // want it settled, not assuming the
+                                        // answer they gave last time.
                                         mem = mem.copy(
                                             answered = mem.answered -
-                                                "plan-tempo" - "plan-aim" -
-                                                "plan-extras",
+                                                "plan-how" - "plan-tempo" -
+                                                "plan-aim" - "plan-extras",
                                             dismissed = mem.dismissed -
-                                                "plan-tempo" - "plan-aim" -
-                                                "plan-extras")
+                                                "plan-how" - "plan-tempo" -
+                                                "plan-aim" - "plan-extras",
+                                            planByHand = false)
                                         Memory.save(ctx, mem)
                                         justBuilt = null; builtPoorly = false
                                         askNow = true
