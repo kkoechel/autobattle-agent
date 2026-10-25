@@ -169,10 +169,26 @@ spot, so your library is a second life total and self-mill spends it. The
 engine is worth it when the payoff is free casts, not when it is merely
 card flow.""")
 
+    def mandatory_cost(c):
+        e = c.get("effects_json")
+        return isinstance(e, dict) and bool(e.get("additional_cost"))
+    mand = count(mandatory_cost)
+    section(mand, f"""
+"TO PLAY" COSTS ARE MANDATORY, AND THEY CAN MAKE A CARD UNCASTABLE ({mand}
+cards). Printed as "To Play: ..." and demanding a utilize, a sacrifice, a
+discard, shields, life or HONOUR. Unlike a supplement these are not optional:
+if the deck cannot pay, the card cannot be played AT ALL. Grim Veteran needs
+7 Honour to play, so in a deck that generates no honour it is a blank -- and
+its rules text reads like any other strong card. Check that the deck can pay
+before proposing one: a sacrifice cost needs spare bodies, a utilize cost
+needs a spare permanent of the named type, and an honour or shield cost needs
+the deck to make honour or shields in the first place.""")
+
     sup = count(has_tag("supplement"))
     section(sup, f"""
 SUPPLEMENT ({sup} cards, engine v4.48). An OPTIONAL extra cost: pay it when
-the card is played and it does more. Unlike a normal additional cost it never
+the card is played and it does more. Unlike the mandatory "To Play" costs
+above -- which read almost identically on the card -- a supplement never
 stops the card being played, so a supplement card is never dead -- but it only
 pays off with ENERGY TO SPARE on the turn it lands. A deck leaning on these
 wants ramp or a low curve, not both the supplement and a full hand to empty.
