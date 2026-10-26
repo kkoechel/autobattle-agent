@@ -92,9 +92,15 @@ fun AgentApp() {
     // of the pane: the pane owns both, and this is the only thing out here
     // that needs to know about them.
     var backdrop by remember { mutableStateOf<Avatar?>(null) }
+    // The scene behind the Paragon. Reported by the pane rather than derived
+    // here, so the backdrop and the portrait can never disagree about how
+    // things are going.
+    var mood by remember { mutableStateOf(Mood.IDLE) }
     Surface(Modifier.fillMaxSize()) {
       Box(Modifier.fillMaxSize()) {
-        backdrop?.let { AvatarBackdrop(it, Modifier.matchParentSize()) }
+        backdrop?.let {
+            AvatarBackdrop(it, Modifier.matchParentSize(), locale = localeFor(mood))
+        }
         Column(
             // safeDrawingPadding, not padding alone: targetSdk 35+ draws
             // edge-to-edge by default, so without it the heading sits under
@@ -110,7 +116,8 @@ fun AgentApp() {
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
             )
-            ArenaPane(Modifier.fillMaxSize()) { backdrop = it }
+            ArenaPane(Modifier.fillMaxSize(),
+                onBackdrop = { backdrop = it }, onMood = { mood = it })
         }
       }
     }

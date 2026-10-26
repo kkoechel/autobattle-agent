@@ -77,13 +77,44 @@ enum class Avatar(
  * avatar at once instead of per-image tuning that the next avatar breaks.
  */
 @Composable
-fun AvatarBackdrop(avatar: Avatar, modifier: Modifier = Modifier) {
+fun AvatarBackdrop(
+    avatar: Avatar,
+    modifier: Modifier = Modifier,
+    /**
+     * Where the scene is set, or null to keep the figure's own artwork as the
+     * whole backdrop.
+     *
+     * TWO LAYERS, TWO PALETTES. A Paragon is cut out and quantised alone, and
+     * the locale is quantised alone behind it, because sixteen colours shared
+     * between a figure and its background is what turned the first test piece
+     * into sixteen shades of brown. Separated, a teal-and-crimson figure
+     * survives against a golden forest and a grey graveyard alike.
+     *
+     * The locale is CARD ART. The catalogue is already drawn flat-colour with
+     * hard edges, so over a thousand usable scenes exist and none had to be
+     * drawn.
+     */
+    locale: Int? = null,
+) {
     val bmp = androidx.compose.ui.graphics.ImageBitmap.imageResource(avatar.art)
     Box(modifier.fillMaxSize()) {
+        if (locale != null) {
+            Image(
+                painter = BitmapPainter(
+                    androidx.compose.ui.graphics.ImageBitmap.imageResource(locale),
+                    filterQuality = FilterQuality.None),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
         Image(
             painter = BitmapPainter(bmp, filterQuality = FilterQuality.None),
             contentDescription = null,
-            contentScale = ContentScale.Crop,
+            // A cut-out figure must not be cropped to fill: that would scale
+            // it until its head left the frame. The scene behind already
+            // covers the screen, so the figure only has to FIT.
+            contentScale = if (locale != null) ContentScale.Fit else ContentScale.Crop,
             alignment = avatar.focus,
             modifier = Modifier.fillMaxSize().drawWithContent {
                 drawContent()
@@ -99,4 +130,31 @@ fun AvatarBackdrop(avatar: Avatar, modifier: Modifier = Modifier) {
             },
         )
     }
+}
+
+/**
+ * Which scene the Paragon is standing in, for a given mood.
+ *
+ * Keyed on the Mood the screen already computes from real state -- working,
+ * asking, a barren streak, a climb or a slip -- rather than on a second,
+ * parallel notion of context that could disagree with the portrait. The
+ * backdrop and the expression are then always telling the same story.
+ *
+ * Every locale is a card from the live catalogue, pixelated by
+ * tools/pixelate_paragon.py:
+ *
+ *   IDLE          Mountain Temple    the dojo, between things
+ *   ASKING        Field Shrine       a question needs answering
+ *   WORKING       Dwarven Forge      something is being made
+ *   PLEASED       Hallowed Field     we climbed
+ *   DISAPPOINTED  Sad Storm          we slipped
+ *   STUCK         Living Graveyard   three runs, nothing gained
+ */
+fun localeFor(mood: Mood): Int = when (mood) {
+    Mood.IDLE -> R.drawable.locale_idle
+    Mood.ASKING -> R.drawable.locale_asking
+    Mood.WORKING -> R.drawable.locale_working
+    Mood.PLEASED -> R.drawable.locale_pleased
+    Mood.DISAPPOINTED -> R.drawable.locale_disappointed
+    Mood.STUCK -> R.drawable.locale_stuck
 }

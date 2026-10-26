@@ -34,6 +34,7 @@ import online.autobattle.agent.game.CardIndex
 import online.autobattle.agent.engine.Repair
 import online.autobattle.agent.game.Compete
 import online.autobattle.agent.game.Directive
+import online.autobattle.agent.game.Entities
 import online.autobattle.agent.game.GameClient
 import online.autobattle.agent.game.GameException
 import online.autobattle.agent.game.CardInfo
@@ -125,6 +126,15 @@ fun ArenaPane(
      * the pane's edges, and the point of it is that it does not.
      */
     onBackdrop: (Avatar?) -> Unit = {},
+    /**
+     * Where the scene is set, reported separately from the figure.
+     *
+     * The backdrop effect runs before `mood` exists -- the mood depends on
+     * whether a question is pending, and that is not computed until further
+     * down the pane. Rather than hoist a chain of state up past everything
+     * that feeds it, the scene is reported from where it is actually known.
+     */
+    onMood: (Mood) -> Unit = {},
 ) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -661,6 +671,7 @@ fun ArenaPane(
                 },
                 lastPlacement = mem.lastPlacement.takeIf { it > 0 },
             )
+            LaunchedEffect(mood) { onMood(mood) }
 
             // ONE dialogue, one face. The agent had been speaking from two
             // windows at once -- a question above and a notice below, each
@@ -2246,10 +2257,18 @@ fun ArenaPane(
                         style = snesText(13,
                             if (mine) androidx.compose.ui.graphics.Color(0xFFFFE28C) else androidx.compose.ui.graphics.Color(0xFFF2EFE4)))
                     Column(Modifier.weight(1f)) {
-                        Text(r.optString("handle") +
-                            if (r.optInt("is_bot") == 1) "  (house)" else "",
-                            style = snesText(13,
-                                if (mine) androidx.compose.ui.graphics.Color(0xFFFFE28C) else androidx.compose.ui.graphics.Color(0xFFF2EFE4)),
+                        // A house agent is an ENTITY; a real player is a
+                        // person. Only is_bot decides that, never the handle.
+                        val entity = Entities.isEntity(r.optInt("is_bot"))
+                        Text(
+                            if (entity) Entities.titled(r.optString("handle"),
+                                                        r.optInt("placement"))
+                            else r.optString("handle"),
+                            style = snesText(13, when {
+                                mine -> androidx.compose.ui.graphics.Color(0xFFFFE28C)
+                                entity -> androidx.compose.ui.graphics.Color(0xFFE89CB0)
+                                else -> androidx.compose.ui.graphics.Color(0xFFF2EFE4)
+                            }),
                             maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(r.optString("deck_name"),
                             style = snesText(11, androidx.compose.ui.graphics.Color(0xFF8A8AA8)),
