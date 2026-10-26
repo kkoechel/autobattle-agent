@@ -312,7 +312,7 @@ function deck_problem(array $entries): ?string {
 /**
  * When the next round will be scored, as UTC "Y-m-d H:i:s".
  *
- * Mirrors agentgame-round.timer's OnCalendar=*:02/15. Without this the
+ * Mirrors agentgame-round.timer's OnCalendar=*:04/30. Without this the
  * standings look frozen -- a player trains, submits, and then stares at an
  * unchanged table with nothing telling them a round is coming. The cadence is
  * stated in two places, which is a real (small) duplication; the alternative
@@ -321,11 +321,11 @@ function deck_problem(array $entries): ?string {
  */
 function next_round_at(): string {
     $now = new DateTimeImmutable('now', new DateTimeZone('UTC'));
-    // Scheduled minutes are 2, 17, 32, 47. The clamp below is for minutes 0
-    // and 1, where the arithmetic would otherwise skip past :02 and promise
-    // :17 -- wrong for two minutes of every hour. Checked against all 60.
+    // Scheduled minutes are 4 and 34. The clamp below is for minutes 0-3,
+    // where the arithmetic would otherwise skip past :04 and promise :34 --
+    // wrong for four minutes of every hour. Checked against all 60.
     $m = (int)$now->format('i');
-    $next = $m < 2 ? 2 : (intdiv($m - 2, 15) + 1) * 15 + 2;
+    $next = $m < 4 ? 4 : (intdiv($m - 4, 30) + 1) * 30 + 4;
     $base = $now->setTime((int)$now->format('H'), 0, 0);
     return $base->modify("+$next minutes")->format('Y-m-d H:i:s');
 }

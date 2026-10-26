@@ -17,7 +17,9 @@ ExecStart=/usr/bin/python3 -u /var/www/games/agentgame/bin/round.py
 Nice=14
 CPUWeight=40
 MemoryMax=500M
-TimeoutStartSec=1200
+# Five minutes inside the 30-minute period, so a pathological run is killed
+# before the next one is due rather than racing it. A healthy round is 18-20.
+TimeoutStartSec=1500
 
 NoNewPrivileges=yes
 PrivateTmp=yes

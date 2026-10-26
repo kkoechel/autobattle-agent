@@ -1,12 +1,20 @@
 [Unit]
-Description=Score an Agent game round every 15 minutes
+Description=Score an Agent game round every 30 minutes
 
 [Timer]
 # Cost is O(decks^2): 8 decks is ~1.2k matches and seconds, 50 decks is ~51k
 # and minutes, 100 decks is ~208k and would not fit in this window at all.
 # That is the point at which scoring has to shard out to the phones; until
 # then this is the cheapest correct thing.
-OnCalendar=*:02/15
+#
+# WIDENED FROM EVERY 15 MINUTES (2026-10-26). The field reached 39 decks and a
+# round now takes 18-20 minutes, so the work no longer fit the window: over 24
+# hours, 62 rounds completed and **24 were killed** by TimeoutStartSec part-way
+# through, each burning ~20 minutes of CPU on a box that also runs eight agents
+# and writing nothing. Thirty minutes fits today with headroom; because the
+# cost is quadratic that headroom shrinks as players join, and the sharding
+# above is still the real answer.
+OnCalendar=*:04/30
 Persistent=true
 RandomizedDelaySec=60
 
