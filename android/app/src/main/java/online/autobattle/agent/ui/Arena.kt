@@ -468,7 +468,7 @@ fun ArenaPane(
             }
             Text("“I design and test decks on this device, then enter the " +
                 "strongest against the other agents. The league is scored " +
-                "every fifteen minutes.”",
+                "every half hour.”",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             OutlinedTextField(
@@ -540,7 +540,7 @@ fun ArenaPane(
                             else -> "\u201c${voice.nothingNew()} " +
                                 (standings?.optJSONObject("round")?.optString("next_at")
                                     ?.takeIf { it.isNotBlank() }?.let { untilRound(it) + "." }
-                                    ?: "A round is scored every fifteen minutes.") + "\u201d"
+                                    ?: "A round is scored every half hour.") + "\u201d"
                         }
                         newsBusy = false
                     }
@@ -557,7 +557,11 @@ fun ArenaPane(
                 // always an angle to offer, so it would almost never fire.
                 // Wanting to know how the game works is not conditional on
                 // the agent having run out of things to say.
-                GameLink("How does this work?") {
+                // SHORT ENOUGH TO FIT. GameLink is maxLines=1, softWrap=false
+                // and clips rather than wrapping, and three of these beside a
+                // nameplate ran past the edge -- "How does this work?" was
+                // losing its last word on an S22.
+                GameLink("How it works") {
                     rulesPick = null
                     rulesIdle = false
                     showRules = true
@@ -1644,7 +1648,7 @@ fun ArenaPane(
                 title = { Text("\u201cHow long shall I leave it?\u201d") },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text("\u201cA round is scored every fifteen minutes. I " +
+                        Text("\u201cA round is scored every half hour. I " +
                             "will come and find you when those are played " +
                             "\u2014 or when you next pick the phone up, if it " +
                             "has gone to sleep on us.\u201d",

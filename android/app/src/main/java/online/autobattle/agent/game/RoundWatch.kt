@@ -98,8 +98,15 @@ object RoundWatch {
             .cancel(alarm(ctx))
     }
 
-    /** A round is scored every fifteen minutes, so looking more often is waste. */
-    private const val CHECK_EVERY_MS = 15L * 60L * 1000L
+    /**
+     * A round is scored every half hour, so looking more often is waste.
+     *
+     * WIDENED WITH THE SERVER (2026-10-26). The league ran every fifteen
+     * minutes until the field reached 39 decks and a round stopped fitting
+     * the window; the timer moved to thirty. Left at fifteen this would wake
+     * the phone twice per round to be told nothing had happened.
+     */
+    private const val CHECK_EVERY_MS = 30L * 60L * 1000L
 
     /**
      * Woken by the alarm, including in Doze.

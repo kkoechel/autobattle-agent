@@ -148,19 +148,20 @@ fun AvatarBackdrop(
             // the bottom; the dialogue box covers it.
             modifier = Modifier.fillMaxSize().let {
                 if (locale != null)
-                    it.padding(top = maxHeight * 0.26f,
-                               start = maxWidth * 0.11f, end = maxWidth * 0.11f)
+                    it.padding(top = maxHeight * 0.23f,
+                               start = maxWidth * 0.01f, end = maxWidth * 0.01f)
                        // UP, AND ONLY UP. Shrinking the top padding would
                        // have raised the figure by growing its box, changing
                        // the framing and the scale at once. The offset moves
                        // the same figure at the same size; the backdrop is
                        // full-bleed behind it, so nothing is uncovered.
                        //
-                       // Tuned on the phone, not calculated: at .07 the face
-                       // sat a long way under the buttons, at .20 the head
-                       // went behind them. .15 puts the hair just touching
-                       // the row, which is where it was asked for.
-                       .offset(y = -(maxHeight * 0.15f))
+                       // Placed by hand, not calculated. Ryan set these three
+                       // on a scale model of the screen that draws the figure
+                       // the same way this does -- padded box, cropped from
+                       // the top, then translated -- so what he dialled in is
+                       // what these numbers are.
+                       .offset(y = -(maxHeight * 0.11f))
                 else it
             },
         )

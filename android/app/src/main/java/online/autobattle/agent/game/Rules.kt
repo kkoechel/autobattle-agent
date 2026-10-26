@@ -107,7 +107,7 @@ object Rules {
         ),
         RuleQA(
             "How does the league work?",
-            "A round is scored every fifteen minutes, and in each one every " +
+            "A round is scored every half hour, and in each one every " +
             "player's deck plays every other player's deck. Nobody has to be " +
             "awake for it. Your record is what comes out of that, and the " +
             "deck that plays is whatever you last submitted \u2014 so a deck left " +

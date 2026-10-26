@@ -27,6 +27,7 @@ import re
 
 from dataclasses import dataclass, field as dfield
 
+from . import castable
 from .moves import is_playable
 
 # Tags that describe provenance or triggers rather than what a card is for.
@@ -740,7 +741,30 @@ def prune_dead_clauses(cards: list[int], plan: dict, catalog: dict[int, dict],
     counts: dict[int, int] = {}
     for c in cards:
         counts[c] = counts.get(c, 0) + 1
-    dead = dead_clause_cards(cards, catalog)
+
+    # TWO KINDS OF DEAD, AND ONLY ONE OF THEM WAS EVER CHECKED HERE.
+    #
+    # dead_clause_cards answers "this card's gated effects have no enabler in
+    # the deck" -- a TAG dependency, the Battlefield Engineer case above.
+    # castable.dead_cards answers a different question: "this deck can never
+    # legally play this card at all" -- a play gate, an unpayable additional
+    # cost, a cost floor above any energy the deck reaches.
+    #
+    # Nothing joined them. castable was wired into combo.compose only, so the
+    # explore path -- archetype.build plus mutations, which is what the bot
+    # agents run -- never asked it, and castable.py's own docstring describes
+    # the deck that resulted: "a 72.1% poison deck running ten copies of
+    # Shield Soldier ... in a list containing nothing that gains shields."
+    # That deck was live and winning 72% with a tenth of itself unplayable,
+    # because the module written for exactly that case was never called on
+    # the path that produces it. Shield Soldier carries no tag dependency, so
+    # the check that DID run here could not see it.
+    dead: dict[int, str] = {
+        c: "needs " + "/".join(sorted(m))
+        for c, m in dead_clause_cards(cards, catalog).items()
+    }
+    for c, why in castable.dead_cards(cards, catalog).items():
+        dead.setdefault(c, why)
 
     # Never prune something another card needs: a tutor's target, or the only
     # carrier of a tag something else depends on.
@@ -785,7 +809,7 @@ def prune_dead_clauses(cards: list[int], plan: dict, catalog: dict[int, dict],
     if log:
         nm = lambda c: (catalog.get(c, {}).get("name") or f"#{c}")
         log("pruned inert: " + ", ".join(
-            f"{nm(c)} (needs {'/'.join(sorted(m))})" for c, m in dead.items()))
+            f"{nm(c)} ({why})" for c, why in dead.items()))
     new_plan = dict(plan)
     new_plan["card_order"] = [c for c in order if c in counts]
     return out, new_plan
