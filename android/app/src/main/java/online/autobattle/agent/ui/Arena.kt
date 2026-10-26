@@ -678,8 +678,7 @@ fun ArenaPane(
                 q != null -> q.text
                 justBuilt != null -> justBuilt!!
                 planPending ->
-                    "\u201cNoted \u2014 $plannedNow I will build it once this " +
-                        "one has had its round.\u201d"
+                    "\u201c${voice.noted(plannedNow)}\u201d"
                 awaitingRound -> "\u201c${voice.notPlayedYet()}\u201d"
                 else -> "\u201c${directive.summary()}\u201d"
             }
@@ -742,9 +741,7 @@ fun ArenaPane(
                 }
                 if (!busy && q == null && awaitingRound && !planPending &&
                     justBuilt == null) {
-                    Text("\u201cThe league is scored as a whole, so your result " +
-                        "arrives with the next round. Were I to build another " +
-                        "now, this one would be discarded unexamined.\u201d",
+                    Text("\u201c${voice.notPlayedYetWhy()}\u201d",
                         style = snesText(13))
                     standings?.optJSONObject("round")
                         ?.optString("next_at")?.takeIf { it.isNotBlank() }?.let {
@@ -1505,8 +1502,8 @@ fun ArenaPane(
                 SnesWindow {
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         AgentPortrait(Mood.ASKING, size = 48.dp)
-                        Text("\u201c${b.optString("name")} has been struck from " +
-                            "the format.\u201d", style = snesText(15, androidx.compose.ui.graphics.Color(0xFFFFE28C)))
+                        Text("\u201c${voice.struckOut(b.optString("name"))}\u201d",
+                            style = snesText(15, androidx.compose.ui.graphics.Color(0xFFFFE28C)))
                     }
                     // NO JUSTIFICATION SHOWN. The figure behind a ban is a
                     // single sample from a wide distribution -- measured on
@@ -1707,13 +1704,10 @@ fun ArenaPane(
                 containerColor = MaterialTheme.colorScheme.surface,
                 shape = RoundedCornerShape(12.dp),
                 onDismissRequest = { showShells = false },
-                title = { Text("\u201cWhich of these shall I start from?\u201d") },
+                title = { Text("\u201c${voice.whichShell()}\u201d") },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("\u201cI have already played each of these against " +
-                            "the field. Starting from one leaves me polishing " +
-                            "rather than searching, which is a minute instead " +
-                            "of six.\u201d",
+                        Text("\u201c${voice.shellsExplained()}\u201d",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                         val list = shells
@@ -1722,9 +1716,7 @@ fun ArenaPane(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.error)
                             list == null -> SnesProgress(0, 1)
-                            list.isEmpty() -> Text("\u201cThe pool is empty just " +
-                                "now \u2014 it is rebuilt every few hours. Pick a " +
-                                "theme instead and I will build from scratch.\u201d",
+                            list.isEmpty() -> Text("\u201c${voice.shellsEmpty()}\u201d",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                             else -> Column(
@@ -1782,12 +1774,10 @@ fun ArenaPane(
                 containerColor = MaterialTheme.colorScheme.surface,
                 shape = RoundedCornerShape(12.dp),
                 onDismissRequest = { noteFor = null },
-                title = { Text("\u201cWhat shall I write against it?\u201d") },
+                title = { Text("\u201c${voice.askNote()}\u201d") },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("\u201cYour words, not mine. I name decks after the " +
-                            "card they lean on, which is no help when three of " +
-                            "them lean on the same one.\u201d",
+                        Text("\u201c${voice.noteWhy()}\u201d",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                         OutlinedTextField(
@@ -1836,13 +1826,10 @@ fun ArenaPane(
                 containerColor = MaterialTheme.colorScheme.surface,
                 shape = RoundedCornerShape(12.dp),
                 onDismissRequest = { pickWait = false },
-                title = { Text("\u201cHow long shall I leave it?\u201d") },
+                title = { Text("\u201c${voice.askHowLong()}\u201d") },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text("\u201cA round is scored every half hour. I " +
-                            "will come and find you when those are played " +
-                            "\u2014 or when you next pick the phone up, if it " +
-                            "has gone to sleep on us.\u201d",
+                        Text("\u201c${voice.waitingExplained()}\u201d",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                         for ((n, gloss) in RoundWatch.CHOICES) {
@@ -1892,7 +1879,7 @@ fun ArenaPane(
                 containerColor = MaterialTheme.colorScheme.surface,
                 shape = RoundedCornerShape(12.dp),
                 onDismissRequest = { pickAvatar = false },
-                title = { Text("\u201cWhose face shall I wear?\u201d") },
+                title = { Text("\u201c${voice.whoseFace()}\u201d") },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         for (a in Avatar.entries) {
@@ -2148,8 +2135,9 @@ fun ArenaPane(
                                                         GameClient(token).restoreDeck(id)
                                                     }
                                                 }.onSuccess {
-                                                    note = "\u201c${it.optString("name")} is " +
-                                                        "back in play.\u201d"
+                                                    note = "\u201c" +
+                                                        voice.backInPlay(it.optString("name")) +
+                                                        "\u201d"
                                                     openSaved = null
                                                     refresh()
                                                 }.onFailure { error = readable(it) }
@@ -2206,12 +2194,11 @@ fun ArenaPane(
             }
             val bl = banList
             if (bl == null) {
-                SnesWindow { Text("\u201cLet me check what is out\u2026\u201d",
+                SnesWindow { Text("\u201c${voice.checkingBans()}\u201d",
                     style = snesText(13)) }
             } else if (bl.length() == 0) {
                 SnesWindow {
-                    Text("\u201cNothing is banned. Everything in the catalogue " +
-                        "is fair game.\u201d", style = snesText(13))
+                    Text("\u201c${voice.nothingBanned()}\u201d", style = snesText(13))
                 }
             } else {
                 for (i in 0 until bl.length()) {

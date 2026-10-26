@@ -423,6 +423,165 @@ enum class Voice {
         SPRITE -> "What do you think?"
     }
 
+    // ---- lines that were written in the Wizard's register and left there
+    // ----
+    //
+    // Each of these was a quoted sentence sitting in the UI layer, phrased
+    // the way the app's first and only voice phrased things: "Were I to",
+    // "Whose face shall I wear?", "shall I". They read as the agent talking
+    // because they are, so on the Brute or the Sprite they were the wrong
+    // character speaking. The facts in them -- round numbers, card names --
+    // are shared as ever; only the framing moves.
+
+    /**
+     * WHY it has not been played yet matters: a rebuild now throws the
+     * unscored deck away. The headline is notPlayedYet() above; this is the
+     * sentence under it.
+     */
+    fun notPlayedYetWhy(): String = when (this) {
+        WIZARD -> "The league is scored as a whole, so your result arrives with " +
+            "the next round. Were I to build another now, this one would be " +
+            "discarded unexamined."
+        // Does not repeat the headline above it, which is already
+        // "Hasn't played yet."
+        BRUTE -> "Build another now and this one's binned before we ever see " +
+            "what it does."
+        SPRITE -> "It's still waiting on the next round. If we build again now " +
+            "we'll never find out how this one would have done."
+    }
+
+    /** A plan was taken but the deck is left alone until it has played. */
+    fun noted(what: String): String = when (this) {
+        WIZARD -> "Noted \u2014 $what I will build it once this one has had its round."
+        BRUTE -> "Right \u2014 $what I'll build it after this one plays."
+        SPRITE -> "Got it \u2014 $what I'll build it once this one has had its turn."
+    }
+
+    /** Offering the measured archetypes to start from. */
+    fun whichShell(): String = when (this) {
+        WIZARD -> "Which of these shall I start from?"
+        BRUTE -> "Pick one and I'll start there."
+        SPRITE -> "Which of these would you like to start from?"
+    }
+
+    /** Why starting from a measured deck is quicker. */
+    fun shellsExplained(): String = when (this) {
+        WIZARD -> "I have already played each of these against the field. " +
+            "Starting from one leaves me polishing rather than searching, " +
+            "which is a minute instead of six."
+        BRUTE -> "I've already played all of these against the field. Start " +
+            "from one and I'm polishing, not hunting. A minute, not six."
+        SPRITE -> "I've played each of these against the field already, so " +
+            "starting from one means I'm just polishing \u2014 about a minute " +
+            "rather than six."
+    }
+
+    /** The quick-build pool has not been built yet. */
+    fun shellsEmpty(): String = when (this) {
+        WIZARD -> "The pool is empty just now \u2014 it is rebuilt every few " +
+            "hours. Pick a theme instead and I will build from scratch."
+        BRUTE -> "Pool's empty. It refills every few hours. Pick a theme and " +
+            "I'll build from nothing."
+        SPRITE -> "Nothing in the pool just now \u2014 it refills every few hours. " +
+            "Pick a theme instead and I'll build one from scratch."
+    }
+
+    /** Asking for a note to go against a saved deck. */
+    fun askNote(): String = when (this) {
+        WIZARD -> "What shall I write against it?"
+        BRUTE -> "What do you want written on it?"
+        SPRITE -> "What should I write against it?"
+    }
+
+    /** Why the player's own words beat the generated deck name. */
+    fun noteWhy(): String = when (this) {
+        WIZARD -> "Your words, not mine. I name decks after the card they lean " +
+            "on, which is no help when three of them lean on the same one."
+        BRUTE -> "Your words. I name decks after the card they lean on, which " +
+            "is useless when three of them lean on the same card."
+        SPRITE -> "Your words rather than mine \u2014 I name decks after the card " +
+            "they lean on, which doesn't help when three of them share it."
+    }
+
+    /** Asking how many rounds to wait before reporting back. */
+    fun askHowLong(): String = when (this) {
+        WIZARD -> "How long shall I leave it?"
+        BRUTE -> "How long do you want to give it?"
+        SPRITE -> "How long shall we give it?"
+    }
+
+    /** What waiting actually means, and when the agent will reappear. */
+    fun waitingExplained(): String = when (this) {
+        WIZARD -> "A round is scored every half hour. I will come and find you " +
+            "when those are played \u2014 or when you next pick the phone up, if " +
+            "it has gone to sleep on us."
+        BRUTE -> "A round every half hour. I'll find you when they're played, " +
+            "or when you next pick the phone up."
+        SPRITE -> "There's a round every half hour. I'll come and find you once " +
+            "they're played \u2014 or when you next pick the phone up, if it's " +
+            "gone to sleep."
+    }
+
+    /** Opening the face chooser. */
+    fun whoseFace(): String = when (this) {
+        WIZARD -> "Whose face shall I wear?"
+        BRUTE -> "Which face?"
+        SPRITE -> "Whose face would you like me to wear?"
+    }
+
+    /** A card has just been banned out of the format. */
+    fun struckOut(card: String): String = when (this) {
+        WIZARD -> "$card has been struck from the format."
+        BRUTE -> "$card is out."
+        SPRITE -> "$card has been taken out of the format."
+    }
+
+    /**
+     * Something is in play again -- a deck taken off the shelf, or a card
+     * whose ban has expired. Deliberately neutral about which: the sentence
+     * is the same either way and the caller knows what it restored.
+     */
+    fun backInPlay(what: String): String = when (this) {
+        WIZARD -> "$what is back in play."
+        BRUTE -> "$what is back."
+        SPRITE -> "$what is in play again."
+    }
+
+    /** About to read the ban list. */
+    fun checkingBans(): String = when (this) {
+        WIZARD -> "Let me check what is out\u2026"
+        BRUTE -> "Checking what's out\u2026"
+        SPRITE -> "Let me see what's out just now\u2026"
+    }
+
+    /** Nothing is banned at the moment. */
+    fun nothingBanned(): String = when (this) {
+        WIZARD -> "Nothing is banned. Everything in the catalogue is fair game."
+        BRUTE -> "Nothing's banned. Whole catalogue is fair game."
+        SPRITE -> "Nothing is banned just now \u2014 the whole catalogue is fair game."
+    }
+
+    /** A saved deck has been put back into play, unchanged. */
+    fun restored(round: Int): String = when (this) {
+        WIZARD -> "Back to the deck from round $round, exactly as it played."
+        BRUTE -> "Back to the round $round deck, exactly as it played."
+        SPRITE -> "We're back on the deck from round $round, just as it played."
+    }
+
+    /** A restored deck had to lose cards that are no longer legal. */
+    fun restoredWithout(round: Int, cards: String): String = when (this) {
+        WIZARD -> "Back to the deck from round $round, without $cards."
+        BRUTE -> "Back to the round $round deck, minus $cards."
+        SPRITE -> "Back to the deck from round $round, though without $cards."
+    }
+
+    /** The deck had to be rebuilt around cards that left the format. */
+    fun rebuiltWithout(cards: String): String = when (this) {
+        WIZARD -> "Rebuilt it without $cards."
+        BRUTE -> "Rebuilt it without $cards."
+        SPRITE -> "I've rebuilt it without $cards."
+    }
+
     companion object {
         /**
          * Which voice goes with which face.
