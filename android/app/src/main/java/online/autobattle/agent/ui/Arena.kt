@@ -1347,8 +1347,11 @@ fun ArenaPane(
                         // "how does this work".
                         if (!planPending && myDeck != null) SnesChoice(
                             label = "Start again",
-                            detail = "Give up on this deck entirely and take " +
-                                "a fresh one to work from.",
+                            // IT NO LONGER GIVES THE DECK UP. The old deck
+                            // goes to the shelf, so the honest description is
+                            // a change of direction rather than a surrender.
+                            detail = "Shelve this deck, take a fresh one, and " +
+                                "begin again under a new Paragon.",
                             enabled = !busy && !trialBusy,
                             onClick = { confirmReset = true })
                     }
@@ -2035,29 +2038,60 @@ fun ArenaPane(
                 })
         }
 
+        // STARTING AGAIN IS A NEW CAREER, NOT A DELETION.
+        //
+        // It used to throw the deck away and say so. Keeping it costs
+        // nothing -- the shelf is already there -- and it turns the most
+        // destructive control on the screen into a change of direction,
+        // which is what the player actually means by it. The new Paragon
+        // follows for the same reason: a run under a different face is the
+        // fiction that was already implied.
         if (confirmReset) {
             AlertDialog(
                 onDismissRequest = { confirmReset = false },
-                title = { Text("“Discard it?”") },
-                text = { Text("“I would discard the present deck and take a " +
-                    "fresh one. Your name and your record remain.”") },
+                title = { Text("“${voice.startAgainAsk()}”") },
+                text = { Text("“${voice.startAgainWhy()}”") },
                 confirmButton = {
                     TextButton(onClick = {
                         confirmReset = false; uiBusy = true; error = null; note = null
                         scope.launch {
+                            // SHELVE FIRST. POST /decks/saved snapshots the
+                            // deck that is LIVE and has no way to take a
+                            // supplied card list, so once the reset has run
+                            // the old deck is unreachable. The shelf holds
+                            // twelve and answers 409 when full; that must not
+                            // abort the reset the player asked for, so it is
+                            // noted and carried past.
+                            var kept = false
+                            if (myDeck != null) {
+                                kept = runCatching {
+                                    withContext(Dispatchers.IO) {
+                                        GameClient(token).saveDeck("Before starting again")
+                                    }
+                                }.isSuccess
+                            }
                             runCancellable {
                                 withContext(Dispatchers.IO) { GameClient(token).resetDeck() }
                             }.onSuccess {
-                                note = "Started over with \"${it.optString("name")}\"."
+                                val nm = it.optString("name")
+                                justBuilt = "“" + (if (kept) voice.startedAgain(nm)
+                                                   else voice.startedAgainUnsaved(nm)) + "”"
                                 mem = Memory()
                                 Memory.save(ctx, mem)
                                 directive = Directive()
                                 Directive.save(ctx, directive)
+                                // A bench deck belonged to the run that just
+                                // ended; carrying it into a new one would be
+                                // the old career leaking into the new.
+                                Workbench.clear(ctx); bench = null
                                 refresh()
+                                // The face is chosen last, so the player sees
+                                // what they are choosing FOR.
+                                pickAvatar = true
                             }.onFailure { error = readable(it) }
                             uiBusy = false
                         }
-                    }) { Text("Do it") }
+                    }) { Text("Begin again") }
                 },
                 dismissButton = {
                     TextButton(onClick = { confirmReset = false }) { Text("Never mind") }

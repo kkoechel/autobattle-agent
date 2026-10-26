@@ -570,6 +570,53 @@ enum class Voice {
             "stepped aside."
     }
 
+    /** Asked before starting over: it is a career change, not a deletion. */
+    fun startAgainAsk(): String = when (this) {
+        WIZARD -> "Begin again?"
+        BRUTE -> "Start over?"
+        SPRITE -> "Shall we start again?"
+    }
+
+    /** What starting again actually costs, and what it does not. */
+    fun startAgainWhy(): String = when (this) {
+        WIZARD -> "I would put the present deck on the shelf, take a fresh " +
+            "one, and begin under a new Paragon. Your name and your record " +
+            "remain, and the old deck is still yours if you want it back."
+        BRUTE -> "Present deck goes on the shelf, I take a fresh one, and we " +
+            "start under a new Paragon. Name and record stay. The old deck is " +
+            "still there if you want it."
+        SPRITE -> "I would put this deck safely on the shelf, take a fresh " +
+            "one and begin again under a new Paragon. Your name and record " +
+            "stay as they are, and the old deck is still yours whenever you " +
+            "want it back."
+    }
+
+    /** Begun again, with the old deck kept. */
+    fun startedAgain(deck: String): String = when (this) {
+        WIZARD -> "Begun again with $deck. The old one is on the shelf. " +
+            "Whose face shall I wear for this?"
+        BRUTE -> "Started over with $deck. Old one's on the shelf. Which face " +
+            "for this run?"
+        SPRITE -> "We have started again with $deck, and the old one is safe " +
+            "on the shelf. Whose face would you like for this run?"
+    }
+
+    /**
+     * Begun again, but the shelf was full so the old deck is gone.
+     *
+     * Said plainly rather than silently: the player was promised the old deck
+     * would be kept, and it was not.
+     */
+    fun startedAgainUnsaved(deck: String): String = when (this) {
+        WIZARD -> "Begun again with $deck. The shelf was full, so the old " +
+            "deck could not be kept \u2014 it is gone. Whose face shall I wear?"
+        BRUTE -> "Started over with $deck. Shelf was full, so the old deck's " +
+            "gone, not shelved. Which face?"
+        SPRITE -> "We have started again with $deck. The shelf was full, so " +
+            "I am afraid the old deck could not be kept. Whose face would " +
+            "you like?"
+    }
+
     /** Opening the face chooser. */
     fun whoseFace(): String = when (this) {
         WIZARD -> "Whose face shall I wear?"
