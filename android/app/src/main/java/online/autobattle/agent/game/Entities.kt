@@ -26,7 +26,29 @@ package online.autobattle.agent.game
  */
 object Entities {
 
-    /** True when this standings/field/leaderboard row is a house agent. */
+    /**
+     * Which kind of competitor a row is.
+     *
+     * `is_bot` was one bit and said only "not a person", which was enough
+     * while the house agents were the only non-humans. They are not any
+     * more: the good-themed NPC Paragons are also bots, and presenting them
+     * as Dimensional Gods would be exactly backwards -- they are the
+     * player's peers, not the thing the player is climbing towards.
+     *
+     * Read from `faction`, falling back on is_bot so a row from a league
+     * that has not been migrated still reads as an entity rather than
+     * silently becoming a person.
+     */
+    enum class Kind { PERSON, GOD, PARAGON }
+
+    fun kindOf(isBot: Int, faction: String?): Kind = when {
+        faction == "god" -> Kind.GOD
+        faction == "paragon" -> Kind.PARAGON
+        isBot == 1 -> Kind.GOD
+        else -> Kind.PERSON
+    }
+
+    /** True when this row is a house agent of either faction. */
     fun isEntity(isBot: Int): Boolean = isBot == 1
 
     /**

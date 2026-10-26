@@ -2257,16 +2257,23 @@ fun ArenaPane(
                         style = snesText(13,
                             if (mine) androidx.compose.ui.graphics.Color(0xFFFFE28C) else androidx.compose.ui.graphics.Color(0xFFF2EFE4)))
                     Column(Modifier.weight(1f)) {
-                        // A house agent is an ENTITY; a real player is a
-                        // person. Only is_bot decides that, never the handle.
-                        val entity = Entities.isEntity(r.optInt("is_bot"))
+                        // THREE KINDS, not two. Only a GOD is titled by
+                        // standing; a Paragon is a fellow duelist and reads
+                        // as one, and a person is untouched. Decided by
+                        // faction, never by the handle.
+                        val kind = Entities.kindOf(r.optInt("is_bot"),
+                                                   r.optString("faction"))
                         Text(
-                            if (entity) Entities.titled(r.optString("handle"),
-                                                        r.optInt("placement"))
+                            if (kind == Entities.Kind.GOD)
+                                Entities.titled(r.optString("handle"),
+                                                r.optInt("placement"))
                             else r.optString("handle"),
                             style = snesText(13, when {
                                 mine -> androidx.compose.ui.graphics.Color(0xFFFFE28C)
-                                entity -> androidx.compose.ui.graphics.Color(0xFFE89CB0)
+                                kind == Entities.Kind.GOD ->
+                                    androidx.compose.ui.graphics.Color(0xFFE89CB0)
+                                kind == Entities.Kind.PARAGON ->
+                                    androidx.compose.ui.graphics.Color(0xFF9CD8E8)
                                 else -> androidx.compose.ui.graphics.Color(0xFFF2EFE4)
                             }),
                             maxLines = 1, overflow = TextOverflow.Ellipsis)
