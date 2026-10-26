@@ -155,7 +155,12 @@ fun AvatarBackdrop(
                        // the framing and the scale at once. The offset moves
                        // the same figure at the same size; the backdrop is
                        // full-bleed behind it, so nothing is uncovered.
-                       .offset(y = -(maxHeight * 0.07f))
+                       //
+                       // Tuned on the phone, not calculated: at .07 the face
+                       // sat a long way under the buttons, at .20 the head
+                       // went behind them. .15 puts the hair just touching
+                       // the row, which is where it was asked for.
+                       .offset(y = -(maxHeight * 0.15f))
                 else it
             },
         )
