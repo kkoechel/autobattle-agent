@@ -200,9 +200,28 @@ private fun orientCss(arenaDp: Int, portrait: Boolean, flip: Boolean): String {
         ".r2{flex-direction:" + (if (portrait) "column-reverse" else "row-reverse") + "}" +
         ".r2-half--top{border-bottom:0;border-right:0}" +
         ".r2-half--bottom{border-bottom:1px solid rgba(255,255,255,.07)}"
+
+    /* BOTH STAT ROWS MEET IN THE MIDDLE, WHOEVER IS ON TOP.
+       replay2.css puts each half's stats on its OUTER edge:
+         .r2-half--top .r2-stats{order:0}  .r2-half--bottom .r2-stats{order:9}
+       so the two rows sit at the very top and the very bottom of the arena
+       with the boards between them. The layout that actually reads -- the
+       rows adjacent, one above the other, numbers lining up in columns --
+       only appeared by accident: `turn` above reverses the halves when you
+       are slot 1, which inverts those orders and happens to bring both rows
+       inward. Played from the other slot the same replay put them back on
+       the outside, so the viewer looked different depending on which seat
+       you had, for no reason a player could see.
+       Stated outright for each case instead of inherited from the flip. The
+       half rendering physically on top gets its stats LAST, the one below
+       gets them FIRST, and the seam falls between them either way. */
+    val meet = if (!portrait) "" else if (flip)
+        ".r2-half--bottom .r2-stats{order:9}.r2-half--top .r2-stats{order:0}"
+    else
+        ".r2-half--top .r2-stats{order:9}.r2-half--bottom .r2-stats{order:0}"
     val chrome = if (portrait) CHROME_DP else CHROME_LAND_DP
     return "html,body{height:${arenaDp + chrome}px}\n" +
-        "#arena{height:${arenaDp}px}\n" + slim + stacked + turn
+        "#arena{height:${arenaDp}px}\n" + slim + stacked + turn + meet
 }
 
 /**
