@@ -1732,7 +1732,7 @@ fun ArenaPane(
                                 verticalArrangement = Arrangement.spacedBy(2.dp),
                             ) {
                                 for (sh in list) {
-                                    val on = sh.name == directive.shellName
+                                    val on = sh.name == directive.shell
                                     Column(
                                         Modifier.fillMaxWidth()
                                             .clip(RoundedCornerShape(6.dp))

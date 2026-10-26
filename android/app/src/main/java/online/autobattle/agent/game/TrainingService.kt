@@ -59,10 +59,10 @@ class TrainingService : Service() {
                 // banned -- this falls through to an ordinary build rather
                 // than failing, which is the same deck the player asked for,
                 // arrived at the long way.
-                val shell = directive.shellName?.let { want ->
+                val shell = directive.shell?.let { want ->
                     runCatching { readShell(c, want) }.getOrNull()
                 }
-                if (directive.shellName != null && shell == null) {
+                if (directive.shell != null && shell == null) {
                     note("That deck is no longer offered; building it from scratch…")
                 }
                 val outcome = Compete.train(c, handle, directive, shell = shell) { p ->

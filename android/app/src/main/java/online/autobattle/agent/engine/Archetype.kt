@@ -166,6 +166,15 @@ object Archetype {
             Castable.deadReason(it, picked, cat) != null
         }.toSet()
         if (dead.isNotEmpty()) {
+            // SAY SO. This guard had never been observed to fire on a phone:
+            // it compiled, it was reasoned about, and nothing it did was
+            // visible from outside. A detector nobody has watched work is a
+            // claim about the detector. One line per build that drops
+            // something, naming the card and the reason, is enough to tell
+            // "never fires" apart from "never needed to".
+            android.util.Log.i("ABAGENT_CASTABLE", dead.joinToString("; ") {
+                "${cat.name(it)}: ${Castable.deadReason(it, picked, cat)}"
+            })
             var freed = 0
             for (i in picks.indices.reversed()) {
                 if (picks[i].first in dead) { freed += picks[i].second; picks.removeAt(i) }

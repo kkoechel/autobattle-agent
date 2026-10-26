@@ -88,6 +88,23 @@ data class Directive(
     }
 
     /**
+     * The measured deck this build actually starts from.
+     *
+     * RESOLVED WHERE IT IS READ, not where it is set. A shell and a theme are
+     * two ways of saying the same thing -- what the deck is ABOUT -- so they
+     * cannot both apply. Eight places in the app set a theme or a seed card,
+     * and sooner or later one of them is the one that forgets to clear the
+     * shell: that is not hypothetical, it shipped. Picking "poison" after
+     * starting from a shell rebuilt the shell and ignored the theme, and the
+     * only sign was the pass count saying 4 where a themed build says 12.
+     *
+     * Deciding it on the read side means no setter can get it wrong, and the
+     * rule is stated once where it can be checked.
+     */
+    val shell: String? get() =
+        if (themes.isEmpty() && seedCard == null) shellName else null
+
+    /**
      * Refinement rounds spent on the chosen design.
      *
      * A quick build takes four whatever the breadth says. Breadth describes
@@ -97,7 +114,7 @@ data class Directive(
      * current deck. Four is enough to show real work and to let the deck
      * adapt to a field that has moved since the pool was built.
      */
-    val generations: Int get() = if (shellName != null) 4 else when (breadth) {
+    val generations: Int get() = if (shell != null) 4 else when (breadth) {
         Breadth.WIDE -> 3; Breadth.BALANCED -> 6; Breadth.DEEP -> 12
     }
 
