@@ -10,6 +10,14 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.imageResource
@@ -26,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import online.autobattle.agent.R
 import online.autobattle.agent.data.Secrets
 import online.autobattle.agent.engine.Catalogue
 import online.autobattle.agent.game.RoundWatch
@@ -116,6 +125,7 @@ private fun WatchPicker(t: Compete.Trial, onPick: (Compete.Game) -> Unit) {
  * is real battery and real heat, and a game that quietly does that while the
  * screen is off is a game that gets uninstalled.
  */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun ArenaPane(
     modifier: Modifier = Modifier,
@@ -430,16 +440,22 @@ fun ArenaPane(
             error = r.error
         } else if (r.outcome != null) {
             val o = r.outcome
+            // A QUICK BUILD DRAFTS NOTHING, so `screened` is 0 and "picked
+            // from 0 designs" is both meaningless and faintly alarming. It
+            // did not pick from nothing; it started from a deck the server
+            // had already measured. Say that instead.
+            val provenance = if (o.screened == 0) "started from a measured deck"
+                             else "picked from ${o.screened} designs"
             note = "Submitted \"${o.name}\" (revision ${r.revision}). " +
                 "Checked on fresh matchups it won ${"%.1f".format(o.wins)} of " +
-                "${o.opponents} — picked from ${o.screened} designs, improved " +
+                "${o.opponents} — $provenance, improved " +
                 "${o.climbed} time(s). The league scores every deck itself, so " +
                 "your standing may differ." +
                 if (o.relaxed) " (It could not avoid the field's cards this time " +
                     "and built the best deck it could instead.)" else ""
             justBuilt = "\u201c${voice.done()} ${o.name}, revision ${r.revision}. On fresh " +
                 "matchups it won ${"%.1f".format(o.wins)} of ${o.opponents}, " +
-                "picked from ${o.screened} designs and improved " +
+                "$provenance and improved " +
                 "${o.climbed} time${if (o.climbed == 1) "" else "s"}.\u201d" +
                 if (o.relaxed) " \u201c${voice.cannot("avoid the field's cards this ")}" +
                     "time, so that is the best I could do around them.\u201d" else ""
@@ -707,6 +723,15 @@ fun ArenaPane(
                 if (busy) {
                     val pr = progress
                     if (pr != null) SnesProgress(pr.done, pr.total) else SnesProgress(0, 1)
+                    // SOMETHING TO WATCH BEFORE THERE IS SOMETHING TO WATCH.
+                    // The first stages -- reading the catalogue, fetching the
+                    // field, drafting -- have no candidates to show yet, so
+                    // the bench below is empty and the screen was a progress
+                    // bar and a sentence. Cards drifting past is the picture
+                    // the fiction already uses: your Paragon going through
+                    // the box. It gives way the moment the bench has a real
+                    // pass to report.
+                    if (dojo.isEmpty()) DriftingCards()
                     // THE BENCH. Everything here is work that actually
                     // happened: the cards are the real candidates, the
                     // numbers are the real measurement and the verdict is
@@ -1251,7 +1276,16 @@ fun ArenaPane(
             }
 
             if (!busy && q == null) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // A ROW THAT WRAPS. These are GameLinks, which are
+                // maxLines=1 and clip rather than wrap, so a third button
+                // pushed the last one off the edge -- "Let's talk" was
+                // reading as "Let". Shortening labels buys room for one more
+                // button and then the next one breaks it again; wrapping
+                // does not have that ceiling.
+                androidx.compose.foundation.layout.FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     // Named for what it offers. "Build around..." read as
                     // "name a card", which is the half of the game that was
                     // already over-represented.
@@ -2560,6 +2594,75 @@ private val HELP = listOf(
         "seeds it has never seen. It changes nothing \u2014 the league plays " +
         "its own games at the next round.",
 )
+
+/**
+ * Card backs drifting slowly across, for the stretch of a build that has
+ * nothing to report.
+ *
+ * FACE DOWN ON PURPOSE, and not only for the look. At this point in a build
+ * the catalogue has not been read yet, so the app does not know what any
+ * card is -- CardIndex caches art in memory for the session and starts a
+ * launch empty. The card back is bundled, so it is the one image that is
+ * always there. Showing real cards would mean either a network round trip
+ * before the work starts or an empty band on a cold launch.
+ *
+ * Deterministic per composition: the lanes are remembered, so a recomposition
+ * (and they arrive steadily while a build runs) does not reshuffle the cards
+ * mid-flight.
+ */
+@Composable
+private fun DriftingCards(modifier: Modifier = Modifier) {
+    val back = androidx.compose.ui.graphics.ImageBitmap.imageResource(R.drawable.card_back)
+    // (lane, scale, seconds to cross, starting offset)
+    val lanes = remember {
+        listOf(
+            Triple(0.08f, 0.62f, 26f) to 0.00f,
+            Triple(0.52f, 0.85f, 19f) to 0.37f,
+            Triple(0.26f, 0.48f, 33f) to 0.61f,
+            Triple(0.70f, 0.70f, 23f) to 0.14f,
+            Triple(0.40f, 0.55f, 29f) to 0.82f,
+        )
+    }
+    val clock = rememberInfiniteTransition(label = "drift")
+    val phases = lanes.map { (lane, _) ->
+        clock.animateFloat(
+            initialValue = 0f, targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(
+                    durationMillis = (lane.third * 1000).toInt(),
+                    easing = LinearEasing),
+                repeatMode = RepeatMode.Restart),
+            label = "lane",
+        )
+    }
+    Box(modifier.fillMaxWidth().height(92.dp).clipToBounds()) {
+        Canvas(Modifier.matchParentSize()) {
+            // The card keeps its real proportions (560x770 bundled).
+            lanes.forEachIndexed { i, (lane, offset) ->
+                val h = size.height * lane.second
+                val w = h * 0.727f
+                val t = (phases[i].value + offset) % 1f
+                // Right to left: the player reads left to right, so cards
+                // arriving from the right read as being dealt past you
+                // rather than away from you.
+                val x = size.width - t * (size.width + w)
+                val y = (size.height - h) * lane.first
+                drawImage(
+                    image = back,
+                    dstOffset = androidx.compose.ui.unit.IntOffset(
+                        x.toInt(), y.toInt()),
+                    dstSize = androidx.compose.ui.unit.IntSize(
+                        w.toInt(), h.toInt()),
+                    // Nearer cards are bigger AND brighter, which is the
+                    // cheapest depth cue there is.
+                    alpha = 0.22f + 0.40f * lane.second,
+                    filterQuality = androidx.compose.ui.graphics.FilterQuality.None,
+                )
+            }
+        }
+    }
+}
+
 
 /**
  * What the Paragon is doing with the cards, while they do it.
