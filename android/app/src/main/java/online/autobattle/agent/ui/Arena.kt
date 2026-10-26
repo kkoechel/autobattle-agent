@@ -1076,6 +1076,70 @@ fun ArenaPane(
                                 RoundWatch.stop(ctx)
                             })
                     }
+                    // REACHABLE WHILE A QUESTION IS UP. This lived inside
+                    // the `q == null` block below, so the one way back to
+                    // the standing orders disappeared the moment the agent
+                    // asked anything -- which is most of the time. "Stop
+                    // waiting" directly above is offered beside a question
+                    // already, so a standing option next to one is the
+                    // established shape, not a new one. Withheld only for
+                    // the plan questions themselves: reopening a subject
+                    // that is being asked about right now is incoherent.
+                    if (q?.id?.startsWith("plan") != true) {
+                        // A WAY BACK TO THE STANDING ORDERS.
+                        //
+                        // The plan questions are gated on `answered`, so
+                        // they are asked once and never again -- and
+                        // "What else could we try?" forces a question
+                        // without clearing that gate. Answering "press
+                        // them from turn one" in week one would otherwise
+                        // be permanent, which is a strange thing to do to
+                        // the half of the game a player has just been
+                        // taught about. Clearing both ids puts the two
+                        // questions back in the queue.
+                        // "plan-how" COUNTS AS HAVING ORDERS. Checking
+                        // only the two preference ids meant a player who
+                        // had the orders MEASURED could never reopen
+                        // them: the tuner answers plan-how and leaves the
+                        // preference questions untouched, so neither id
+                        // was ever set and the option never appeared for
+                        // them at all.
+                        if (myDeck != null &&
+                            ("plan-how" in mem.answered ||
+                                "plan-tempo" in mem.answered ||
+                                "plan-aim" in mem.answered)) {
+                            SnesChoice(
+                                label = "Change our standing orders",
+                                detail = "How the deck carries itself in a " +
+                                    "fight, and what it goes after.",
+                                enabled = !trialBusy,
+                                onClick = {
+                                    // CLEARS plan-how TOO, or this is a
+                                    // dead button for most players. The
+                                    // three preference questions are
+                                    // gated on planByHand, which is false
+                                    // for anyone who had the orders
+                                    // MEASURED -- so clearing only those
+                                    // three reopened nothing, left
+                                    // plan-how answered, and the tap did
+                                    // nothing at all. Reopening the
+                                    // subject means asking again how they
+                                    // want it settled, not assuming the
+                                    // answer they gave last time.
+                                    mem = mem.copy(
+                                        answered = mem.answered -
+                                            "plan-how" - "plan-tempo" -
+                                            "plan-aim" - "plan-extras",
+                                        dismissed = mem.dismissed -
+                                            "plan-how" - "plan-tempo" -
+                                            "plan-aim" - "plan-extras",
+                                        planByHand = false)
+                                    Memory.save(ctx, mem)
+                                    justBuilt = null; builtPoorly = false
+                                    askNow = true
+                                })
+                        }
+                    }
                     if (q == null) {
                         // Offered whenever there is a deck, not only while
                         // one is waiting for its round. Rehearsing changes
@@ -1182,59 +1246,6 @@ fun ArenaPane(
                                     "next, without touching this one.",
                                 enabled = !trialBusy,
                                 onClick = { askNow = true })
-                            // A WAY BACK TO THE STANDING ORDERS.
-                            //
-                            // The plan questions are gated on `answered`, so
-                            // they are asked once and never again -- and
-                            // "What else could we try?" forces a question
-                            // without clearing that gate. Answering "press
-                            // them from turn one" in week one would otherwise
-                            // be permanent, which is a strange thing to do to
-                            // the half of the game a player has just been
-                            // taught about. Clearing both ids puts the two
-                            // questions back in the queue.
-                            // "plan-how" COUNTS AS HAVING ORDERS. Checking
-                            // only the two preference ids meant a player who
-                            // had the orders MEASURED could never reopen
-                            // them: the tuner answers plan-how and leaves the
-                            // preference questions untouched, so neither id
-                            // was ever set and the option never appeared for
-                            // them at all.
-                            if (myDeck != null &&
-                                ("plan-how" in mem.answered ||
-                                    "plan-tempo" in mem.answered ||
-                                    "plan-aim" in mem.answered)) {
-                                SnesChoice(
-                                    label = "Change our standing orders",
-                                    detail = "How the deck carries itself in a " +
-                                        "fight, and what it goes after.",
-                                    enabled = !trialBusy,
-                                    onClick = {
-                                        // CLEARS plan-how TOO, or this is a
-                                        // dead button for most players. The
-                                        // three preference questions are
-                                        // gated on planByHand, which is false
-                                        // for anyone who had the orders
-                                        // MEASURED -- so clearing only those
-                                        // three reopened nothing, left
-                                        // plan-how answered, and the tap did
-                                        // nothing at all. Reopening the
-                                        // subject means asking again how they
-                                        // want it settled, not assuming the
-                                        // answer they gave last time.
-                                        mem = mem.copy(
-                                            answered = mem.answered -
-                                                "plan-how" - "plan-tempo" -
-                                                "plan-aim" - "plan-extras",
-                                            dismissed = mem.dismissed -
-                                                "plan-how" - "plan-tempo" -
-                                                "plan-aim" - "plan-extras",
-                                            planByHand = false)
-                                        Memory.save(ctx, mem)
-                                        justBuilt = null; builtPoorly = false
-                                        askNow = true
-                                    })
-                            }
                             SnesChoice(
                                 label = "What do these choices do?",
                                 detail = "Plain answers about breadth, style, " +

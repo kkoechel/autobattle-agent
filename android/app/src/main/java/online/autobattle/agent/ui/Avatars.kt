@@ -5,6 +5,7 @@ import androidx.annotation.DrawableRes
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -149,6 +150,12 @@ fun AvatarBackdrop(
                 if (locale != null)
                     it.padding(top = maxHeight * 0.26f,
                                start = maxWidth * 0.11f, end = maxWidth * 0.11f)
+                       // UP, AND ONLY UP. Shrinking the top padding would
+                       // have raised the figure by growing its box, changing
+                       // the framing and the scale at once. The offset moves
+                       // the same figure at the same size; the backdrop is
+                       // full-bleed behind it, so nothing is uncovered.
+                       .offset(y = -(maxHeight * 0.07f))
                 else it
             },
         )
