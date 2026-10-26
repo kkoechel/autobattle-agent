@@ -74,7 +74,22 @@ class TrainingService : Service() {
                 Training.Result(outcome, rev, null)
             }.getOrElse { Training.Result(null, 0, readableError(it)) }
             Training.finish(r)
+            // TELL THEM IT LANDED. The ongoing notification is the contract
+            // with the system -- it is why the work is allowed to keep
+            // running with the screen off -- but it vanishes with the
+            // service, so a player who walked away got no sign that anything
+            // had happened. This one is separate, dismissible, and survives
+            // the service exiting.
+            // ORDER MATTERS. Leave the foreground FIRST: while the service
+            // is still in the foreground the system requires a notification
+            // to be showing, so cancelling the working one there is either
+            // ignored or immediately re-posted. Only once it has detached can
+            // the id actually be cleared -- and only then is it safe to post
+            // the finished one, which must not be mistaken for the ongoing.
             stopForeground(STOP_FOREGROUND_REMOVE)
+            val nmgr = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nmgr.cancel(NOTIF_ID)
+            done(r)
             stopSelf()
         }
         // NOT sticky: a restarted service would start a NEW run the user did
@@ -88,6 +103,22 @@ class TrainingService : Service() {
         if (Training.running.value) {
             Training.finish(Training.Result(null, 0, "Training was stopped."))
         }
+        // CLEAR THE WORKING NOTIFICATION FOR GOOD. stopForeground(REMOVE)
+        // takes away the notification the service was STARTED with, but every
+        // progress update since went out through NotificationManager.notify
+        // under the same id, and that posting outlives the service -- leaving
+        // a permanent "Your agent is working" in the shade after the build had
+        // finished and been reported. Cancelling straight after stopForeground
+        // was not enough either: it races the service detaching. Here the
+        // service is already gone.
+        //
+        // Found by dumping the shade after a run, not by reading this code:
+        // the build worked, the finished notification arrived, and the stale
+        // one sat underneath it.
+        // Belt and braces: if the run was cancelled rather than finished,
+        // the block above never reached its own cancel.
+        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+            .cancel(NOTIF_ID)
         super.onDestroy()
     }
 
@@ -99,6 +130,48 @@ class TrainingService : Service() {
     private fun note(text: String) {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(NOTIF_ID, notification(text))
+    }
+
+    /**
+     * The one notification a player who left is meant to see.
+     *
+     * A separate id from the ongoing one, so it is not cancelled when the
+     * foreground service stops, and DEFAULT importance rather than LOW so it
+     * actually arrives rather than sitting silently in the shade. It says
+     * what the deck did, because "finished" without a number is a reason to
+     * open the app and find out, which is the thing being saved.
+     */
+    private fun done(r: Training.Result) {
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            nm.getNotificationChannel(DONE_CHANNEL) == null) {
+            nm.createNotificationChannel(
+                NotificationChannel(DONE_CHANNEL, "Agent finished",
+                    NotificationManager.IMPORTANCE_DEFAULT))
+        }
+        val open = PendingIntent.getActivity(
+            this, 0,
+            packageManager.getLaunchIntentForPackage(packageName),
+            PendingIntent.FLAG_IMMUTABLE)
+        val title: String
+        val text: String
+        val o = r.outcome
+        if (r.error != null || o == null) {
+            title = "Your agent could not finish"
+            text = r.error ?: "Something went wrong."
+        } else {
+            title = "${o.name} is ready"
+            text = "Won ${"%.1f".format(o.wins)} of ${o.opponents} on fresh " +
+                "matchups. Submitted as revision ${r.revision}."
+        }
+        nm.notify(DONE_ID, Notification.Builder(this, DONE_CHANNEL)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(Notification.BigTextStyle().bigText(text))
+            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setAutoCancel(true)
+            .setContentIntent(open)
+            .build())
     }
 
     private fun notification(text: String): Notification {
@@ -125,6 +198,8 @@ class TrainingService : Service() {
     companion object {
         private const val CHANNEL = "training"
         private const val NOTIF_ID = 1001
+        private const val DONE_CHANNEL = "training_done"
+        private const val DONE_ID = 1002
 
         fun start(ctx: Context) {
             ctx.startForegroundService(Intent(ctx, TrainingService::class.java))

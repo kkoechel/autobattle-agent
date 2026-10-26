@@ -11,6 +11,10 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.border
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
@@ -731,7 +735,13 @@ fun ArenaPane(
                     // the fiction already uses: your Paragon going through
                     // the box. It gives way the moment the bench has a real
                     // pass to report.
-                    if (dojo.isEmpty()) DriftingCards()
+                    if (dojo.isEmpty()) DriftingCards(cardsById)
+                    // SAID ONCE, WHERE THE WAITING HAPPENS. A build is minutes
+                    // of work and the screen does not need to be on for any of
+                    // it; without being told, a player watches the whole thing.
+                    Text("\u201c${voice.goAway()}\u201d",
+                        style = snesText(12,
+                            androidx.compose.ui.graphics.Color(0xFF8898B8)))
                     // THE BENCH. Everything here is work that actually
                     // happened: the cards are the real candidates, the
                     // numbers are the real measurement and the verdict is
@@ -2605,24 +2615,27 @@ private val HELP = listOf(
 )
 
 /**
- * Card backs drifting slowly across, for the stretch of a build that has
- * nothing to report.
+ * Cards drifting slowly across, for the stretch of a build that has nothing
+ * else to report.
  *
- * FACE DOWN ON PURPOSE, and not only for the look. At this point in a build
- * the catalogue has not been read yet, so the app does not know what any
- * card is -- CardIndex caches art in memory for the session and starts a
- * launch empty. The card back is bundled, so it is the one image that is
- * always there. Showing real cards would mean either a network round trip
- * before the work starts or an empty band on a cold launch.
+ * REAL FACES WHERE THERE ARE ANY. The first version drew card backs, because
+ * at "Consulting the catalogue" the app genuinely does not know what any
+ * card is -- the catalogue has not arrived and CardIndex starts a launch
+ * with an empty art cache. That is true for about a second. By "Drafting"
+ * and "Comparing N drafts", which is nearly all of the wait, the catalogue
+ * IS loaded, so there is no reason to keep showing the backs.
  *
- * Deterministic per composition: the lanes are remembered, so a recomposition
- * (and they arrive steadily while a build runs) does not reshuffle the cards
- * mid-flight.
+ * So it drifts faces once it has them and falls back to the back until then:
+ * a slot shows art the moment its download lands, and a card with no art on
+ * the server simply keeps the back. Nothing waits for everything.
+ *
+ * Deterministic per composition: the lanes and the chosen cards are
+ * remembered, so a recomposition -- and they arrive steadily while a build
+ * runs -- does not reshuffle the deck mid-flight.
  */
 @Composable
-private fun DriftingCards(modifier: Modifier = Modifier) {
-    val back = androidx.compose.ui.graphics.ImageBitmap.imageResource(R.drawable.card_back)
-    // (lane, scale, seconds to cross, starting offset)
+private fun DriftingCards(cards: Map<Int, CardInfo>, modifier: Modifier = Modifier) {
+    // (lane, scale, seconds to cross) to starting offset
     val lanes = remember {
         listOf(
             Triple(0.08f, 0.62f, 26f) to 0.00f,
@@ -2631,6 +2644,23 @@ private fun DriftingCards(modifier: Modifier = Modifier) {
             Triple(0.70f, 0.70f, 23f) to 0.14f,
             Triple(0.40f, 0.55f, 29f) to 0.82f,
         )
+    }
+    val picks = remember(cards.size) {
+        cards.values.filter { !it.imageUrl.isNullOrBlank() }.shuffled().take(lanes.size)
+    }
+    var faces by remember(picks) {
+        mutableStateOf<List<ImageBitmap?>>(List(lanes.size) { null })
+    }
+    LaunchedEffect(picks) {
+        // One at a time, off the main thread, each landing on its own. A
+        // failed or missing download leaves that lane on the card back
+        // rather than blanking it.
+        picks.forEachIndexed { i, c ->
+            val art = withContext(Dispatchers.IO) { CardIndex.art(c.imageUrl!!) }
+            if (art != null) {
+                faces = faces.toMutableList().also { if (i < it.size) it[i] = art }
+            }
+        }
     }
     val clock = rememberInfiniteTransition(label = "drift")
     val phases = lanes.map { (lane, _) ->
@@ -2644,34 +2674,44 @@ private fun DriftingCards(modifier: Modifier = Modifier) {
             label = "lane",
         )
     }
-    Box(modifier.fillMaxWidth().height(92.dp).clipToBounds()) {
-        Canvas(Modifier.matchParentSize()) {
-            // The card keeps its real proportions (560x770 bundled).
-            lanes.forEachIndexed { i, (lane, offset) ->
-                val h = size.height * lane.second
-                val w = h * 0.727f
-                val t = (phases[i].value + offset) % 1f
-                // Right to left: the player reads left to right, so cards
-                // arriving from the right read as being dealt past you
-                // rather than away from you.
-                val x = size.width - t * (size.width + w)
-                val y = (size.height - h) * lane.first
-                drawImage(
-                    image = back,
-                    dstOffset = androidx.compose.ui.unit.IntOffset(
-                        x.toInt(), y.toInt()),
-                    dstSize = androidx.compose.ui.unit.IntSize(
-                        w.toInt(), h.toInt()),
-                    // Nearer cards are bigger AND brighter, which is the
-                    // cheapest depth cue there is.
-                    alpha = 0.22f + 0.40f * lane.second,
-                    filterQuality = androidx.compose.ui.graphics.FilterQuality.None,
-                )
+    BoxWithConstraints(modifier.fillMaxWidth().height(92.dp).clipToBounds()) {
+        val band = maxHeight
+        val wide = maxWidth
+        lanes.forEachIndexed { i, (lane, offset) ->
+            // A card keeps the real proportions of the bundled back.
+            val h = band * lane.second
+            val w = h * 0.727f
+            val t = (phases[i].value + offset) % 1f
+            // Right to left: cards read as being dealt PAST you rather than
+            // away from you.
+            val x = wide - (wide + w) * t
+            Box(
+                Modifier
+                    .offset(x = x, y = (band - h) * lane.first)
+                    .size(w, h)
+                    // Nearer cards are bigger AND brighter, the cheapest
+                    // depth cue there is.
+                    .alpha(0.30f + 0.45f * lane.second)
+                    .clip(RoundedCornerShape(3.dp))
+                    .border(1.dp, androidx.compose.ui.graphics.Color(0x55FFE28C),
+                        RoundedCornerShape(3.dp)),
+            ) {
+                val face = faces.getOrNull(i)
+                if (face != null) {
+                    Image(face, null, Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop,
+                        alignment = Alignment.TopCenter)
+                } else {
+                    Image(
+                        painter = androidx.compose.ui.res.painterResource(R.drawable.card_back),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize())
+                }
             }
         }
     }
 }
-
 
 /**
  * What the Paragon is doing with the cards, while they do it.

@@ -522,6 +522,24 @@ enum class Voice {
             "gone to sleep."
     }
 
+    /**
+     * Said while the work is running: you do not have to sit and watch.
+     *
+     * Worth saying because it is TRUE and not obvious -- the build is a
+     * foreground service with an ongoing notification, which is exactly what
+     * lets it keep going with the screen off, and there is now a second
+     * notification when it lands. A player who does not know that watches a
+     * progress bar for six minutes.
+     */
+    fun goAway(): String = when (this) {
+        WIZARD -> "You need not watch. I will carry on with the screen off " +
+            "and send word when it is done."
+        BRUTE -> "No need to watch. Put it down \u2014 I'll keep going and ping " +
+            "you when it's done."
+        SPRITE -> "You don't have to wait here \u2014 I'll keep working with the " +
+            "screen off and let you know when it's ready."
+    }
+
     /** Opening the face chooser. */
     fun whoseFace(): String = when (this) {
         WIZARD -> "Whose face shall I wear?"
