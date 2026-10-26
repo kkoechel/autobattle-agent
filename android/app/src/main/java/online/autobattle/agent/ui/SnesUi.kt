@@ -55,14 +55,18 @@ import kotlinx.coroutines.delay
 
 private val FRAME_OUT = Color(0xFF0A0A12)
 private val FRAME_LIT = Color(0xFFF2EFE4)
-// THE WINDOW IS SLIGHTLY TRANSPARENT so the Paragon standing behind it is
-// not cut in half by it. Not much: the text sits on this fill and has to
-// stay readable over whatever locale happens to be behind, which ranges from
-// a pale sky to a dark cave. The frame and the bright inlay stay opaque --
-// they are what keeps the window reading as a window rather than as a stain
-// on the picture.
-private val FILL_TOP  = Color(0xE62B2A4A)
-private val FILL_BOT  = Color(0xE614142A)
+// THE WINDOWS ARE TRANSLUCENT so the Paragon standing behind them is not cut
+// in half. The frame and the bright inlay stay opaque -- they are what keeps
+// a window reading as a window rather than as a stain on the picture.
+//
+// WHY THE BORDER IS NOW A BORDER. Both frames used to begin by filling their
+// WHOLE rect with opaque FRAME_OUT and then painting the fill over it, so an
+// alpha on the fill bought almost nothing: at 90% only four percent of the
+// picture came through, and the box still read as solid. The outline is
+// drawn as an outline now, and the interior is the only thing carrying a
+// fill, so its alpha means what it says.
+private val FILL_TOP  = Color(0xCC2B2A4A)
+private val FILL_BOT  = Color(0xCC14142A)
 
 /** One logical pixel of the window's own grid, so the frame stays crisp. */
 private val UNIT = 2.dp
@@ -82,9 +86,15 @@ fun SnesChoiceBox(
     Box(modifier.fillMaxWidth()) {
         Canvas(Modifier.matchParentSize()) {
             val u = UNIT.toPx()
-            drawRect(FRAME_OUT, size = size)
+            drawRect(FRAME_OUT.copy(alpha = 0.8f), size = size,
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = u * 2))
+            // LIGHTER THAN THE WINDOW BECAUSE IT SITS INSIDE ONE. Two 80%
+            // layers stacked are 96% between the viewer and the figure, so
+            // the choices -- which cover most of the screen -- would stay
+            // solid however transparent the window became.
             drawRect(
-                Brush.verticalGradient(listOf(FILL_TOP.copy(alpha = 0.55f), FILL_BOT)),
+                Brush.verticalGradient(
+                    listOf(FILL_TOP.copy(alpha = 0.30f), FILL_BOT.copy(alpha = 0.42f))),
                 topLeft = Offset(u, u),
                 size = Size(size.width - 2 * u, size.height - 2 * u),
             )
@@ -110,7 +120,10 @@ fun SnesWindow(
     Box(modifier.fillMaxWidth()) {
         Canvas(Modifier.matchParentSize()) {
             val u = UNIT.toPx()
-            drawRect(FRAME_OUT, size = size)
+            // The dark edge only, not a backing plate: a filled rect here
+            // would sit under the translucent interior and undo it.
+            drawRect(FRAME_OUT, size = size,
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = u * 2))
             drawRect(
                 Brush.verticalGradient(listOf(FILL_TOP, FILL_BOT)),
                 topLeft = Offset(u, u),

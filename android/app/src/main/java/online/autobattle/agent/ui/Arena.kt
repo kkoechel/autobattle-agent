@@ -1391,23 +1391,20 @@ fun ArenaPane(
                 // The handle is still worth showing, because it is the name
                 // the standings call you, so it sits under the plate where
                 // it is identification rather than a button.
+                // AT WAIST HEIGHT, not under the tabs. Everything in Talk
+                // used to start at the top of the screen, which put the
+                // plate across the Paragon's face -- the one thing the
+                // screen is for looking at. The clearance that used to sit
+                // below this now sits above it, so the whole column starts
+                // around the figure's waist and the head is left alone.
+                Spacer(Modifier.height(132.dp))
                 Text("Current Paragon",
                     style = snesText(11, androidx.compose.ui.graphics.Color(0xFF8898B8)))
                 Nameplate(avatar.label,
                     Modifier.fillMaxWidth().clickable(enabled = token != null) {
                         pickAvatar = true
                     })
-                Text("You play as ${handle.ifBlank { "\u2014" }} in the league.",
-                    style = snesText(11, androidx.compose.ui.graphics.Color(0xFF8898B8)))
-                // ROOM FOR THE FACE. The figure is placed by fraction of the
-                // screen (ui/Avatars.kt), tuned against Brew -- where a
-                // dialogue box and a long choice list push the text down the
-                // screen. Talk has four choices and no deck report, so
-                // without this its box climbs to just under the tabs and
-                // sits squarely over the Paragon's face. Cheaper to give
-                // Talk the clearance than to move the figure and spoil the
-                // framing on the screen it was set for.
-                Spacer(Modifier.height(132.dp))
+                Spacer(Modifier.height(6.dp))
                 Text("\u201c${voice.talkOpening()}\u201d", style = snesText(13))
                 SnesChoiceBox {
                     SnesChoice(
