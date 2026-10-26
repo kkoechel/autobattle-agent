@@ -146,7 +146,10 @@ fun AvatarBackdrop(
             // on every phone but this one. The figure is allowed to overflow
             // the bottom; the dialogue box covers it.
             modifier = Modifier.fillMaxSize().let {
-                if (locale != null) it.padding(top = maxHeight * 0.26f) else it
+                if (locale != null)
+                    it.padding(top = maxHeight * 0.26f,
+                               start = maxWidth * 0.11f, end = maxWidth * 0.11f)
+                else it
             },
         )
         // The scrim is its own layer. On the figure it only darkened the
