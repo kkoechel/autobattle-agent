@@ -1974,9 +1974,25 @@ fun ArenaPane(
                 containerColor = MaterialTheme.colorScheme.surface,
                 shape = RoundedCornerShape(12.dp),
                 onDismissRequest = { pickAvatar = false },
-                title = { Text("\u201c${voice.whoseFace()}\u201d") },
+                // NOT IN VOICE, and that is the point. Every other dialogue
+                // on this screen is the agent speaking, but the agent is one
+                // of the three things being chosen here -- having Kard Batal
+                // ask which of Kard Batal, Dan Mage and Emma Ji you would
+                // prefer is the incoherence the old "whose face shall I
+                // wear?" was hiding. This is the player's choice, so it is
+                // addressed to the player.
+                title = { Text("Choose your Paragon") },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        // The chooser is where a new player meets the word,
+                        // so it says what one IS -- and says plainly that the
+                        // choice is register, not strength, because a player
+                        // who suspects otherwise will pick on superstition.
+                        Text("The one who builds with you at the dojo. They " +
+                            "all play the same game; they differ in how they " +
+                            "talk about it.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                         for (a in Avatar.entries) {
                             Row(
                                 Modifier.fillMaxWidth()

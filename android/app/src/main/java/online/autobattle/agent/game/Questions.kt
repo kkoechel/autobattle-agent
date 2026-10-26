@@ -112,7 +112,7 @@ object Questions {
     fun next(
         d: Directive,
         mem: Memory,
-        /** Whose face the agent is wearing, and so how it phrases things. */
+        /** Which Paragon is building with you, and so how the agent phrases things. */
         voice: Voice,
         myHandle: String?,
         standings: JSONObject?,

@@ -1,7 +1,7 @@
 package online.autobattle.agent.game
 
 /**
- * How the agent speaks, which depends on whose face it is wearing.
+ * How the agent speaks, which depends on which Paragon you are building with.
  *
  * WHY THIS IS NOT THREE COPIES OF EVERY LINE. Almost everything the agent
  * says is a fact with a framing around it -- "Shall I investigate?",
@@ -594,11 +594,11 @@ enum class Voice {
     /** Begun again, with the old deck kept. */
     fun startedAgain(deck: String): String = when (this) {
         WIZARD -> "Begun again with $deck. The old one is on the shelf. " +
-            "Whose face shall I wear for this?"
-        BRUTE -> "Started over with $deck. Old one's on the shelf. Which face " +
-            "for this run?"
+            "Who will build with you this time?"
+        BRUTE -> "Started over with $deck. Old one's on the shelf. Who's building " +
+            "with you this run?"
         SPRITE -> "We have started again with $deck, and the old one is safe " +
-            "on the shelf. Whose face would you like for this run?"
+            "on the shelf. Who would you like building with you now?"
     }
 
     /**
@@ -609,19 +609,28 @@ enum class Voice {
      */
     fun startedAgainUnsaved(deck: String): String = when (this) {
         WIZARD -> "Begun again with $deck. The shelf was full, so the old " +
-            "deck could not be kept \u2014 it is gone. Whose face shall I wear?"
+            "deck could not be kept \u2014 it is gone. Who will build with you now?"
         BRUTE -> "Started over with $deck. Shelf was full, so the old deck's " +
-            "gone, not shelved. Which face?"
+            "gone, not shelved. Who's building with you?"
         SPRITE -> "We have started again with $deck. The shelf was full, so " +
-            "I am afraid the old deck could not be kept. Whose face would " +
-            "you like?"
+            "I am afraid the old deck could not be kept. Who would you like " +
+            "building with you?"
     }
 
-    /** Opening the face chooser. */
-    fun whoseFace(): String = when (this) {
-        WIZARD -> "Whose face shall I wear?"
-        BRUTE -> "Which face?"
-        SPRITE -> "Whose face would you like me to wear?"
+    /**
+     * Offering to hand over to a different Paragon.
+     *
+     * NOT "whose face shall I wear". That line predates the Paragons, when
+     * the three choices were card ARTWORK and the agent really was putting
+     * a picture on. A Paragon is a person you build with at the dojo, not a
+     * mask: Emma Ji is not a face Kard Batal can wear. Spoken by the one
+     * stepping aside, which is the only coherent way for it to be in voice
+     * at all -- the chooser's own title is not spoken (see ui/Arena.kt).
+     */
+    fun whoTrains(): String = when (this) {
+        WIZARD -> "Who will build with you?"
+        BRUTE -> "Who's building with you?"
+        SPRITE -> "Who would you like building with you?"
     }
 
     /** A card has just been banned out of the format. */
