@@ -139,6 +139,7 @@ fun ArenaPane(
     // a run that kept going.
     val running by Training.running.collectAsState()
     val progress by Training.progress.collectAsState()
+    val dojo by Training.dojo.collectAsState()
     val finished by Training.result.collectAsState()
     var standings by remember { mutableStateOf<JSONObject?>(null) }
     var myDeck by remember { mutableStateOf<JSONObject?>(null) }
@@ -730,6 +731,12 @@ fun ArenaPane(
                 if (busy) {
                     val pr = progress
                     if (pr != null) SnesProgress(pr.done, pr.total) else SnesProgress(0, 1)
+                    // THE BENCH. Everything here is work that actually
+                    // happened: the cards are the real candidates, the
+                    // numbers are the real measurement and the verdict is
+                    // the real decision. The climb was always doing this;
+                    // it just never said so.
+                    DojoBench(dojo, pr)
                 }
                 if (!busy && q == null && awaitingRound && !planPending &&
                     justBuilt == null) {
@@ -2356,6 +2363,57 @@ private val HELP = listOf(
         "seeds it has never seen. It changes nothing \u2014 the league plays " +
         "its own games at the next round.",
 )
+
+/**
+ * What the Paragon is doing with the cards, while they do it.
+ *
+ * Newest pass FIRST: the thing a player wants on glancing down is what is
+ * happening now, and a log that grows downward pushes it off the screen.
+ * Older passes stay below so the session reads as a record of work.
+ *
+ * The honesty rule for this view: it shows what the search did, never a
+ * dressed-up version of it. A pass where nothing was good enough says so,
+ * because that is the common case and hiding it would make the agent look
+ * like it improves the deck every time, which it does not.
+ */
+@Composable
+private fun DojoBench(passes: List<Compete.Bench>, now: Compete.Progress?) {
+    if (passes.isEmpty()) {
+        // The stages before the climb genuinely are one long wait.
+        now?.step?.let {
+            Text("\u201c$it\u2026\u201d", style = snesText(12,
+                androidx.compose.ui.graphics.Color(0xFFA8C8E8)))
+        }
+        return
+    }
+    val gold = androidx.compose.ui.graphics.Color(0xFFFFE28C)
+    val green = androidx.compose.ui.graphics.Color(0xFF8CE8A0)
+    val dim = androidx.compose.ui.graphics.Color(0xFF8898B8)
+    val plain = androidx.compose.ui.graphics.Color(0xFFD8D8E8)
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        for (b in passes.asReversed()) {
+            Text("Pass ${b.pass} of ${b.of}", style = snesText(12, gold))
+            if (b.verdict == null) {
+                // Laid out, not yet measured. Named in full, because the
+                // point of watching is seeing WHICH cards were considered.
+                for (a in b.attempts.take(10)) {
+                    Text("  ${a.adds}  \u2190  ${a.cuts}", style = snesText(11, dim))
+                }
+                Text("  weighing them\u2026", style = snesText(11, dim))
+            } else {
+                for (a in b.attempts.sortedByDescending { it.wins ?: -1.0 }.take(10)) {
+                    val w = a.wins?.let { String.format("%.1fW", it) } ?: "\u2014"
+                    Text((if (a.kept) "  \u2713 " else "    ") +
+                         "${a.adds}  \u2190  ${a.cuts}   $w",
+                         style = snesText(11, if (a.kept) green else plain))
+                }
+                Text("  ${b.verdict}", style = snesText(11,
+                    if (b.attempts.any { it.kept }) green else dim))
+            }
+        }
+    }
+}
 
 /** Milliseconds until a UTC "yyyy-MM-dd HH:mm:ss" instant; 0 if past or unparseable. */
 private fun msUntil(utc: String?): Long {

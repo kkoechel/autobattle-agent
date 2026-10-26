@@ -34,14 +34,44 @@ object Training {
     private val _result = MutableStateFlow<Result?>(null)
     val result: StateFlow<Result?> = _result
 
+    /**
+     * The passes so far, so the screen is a record of work rather than one
+     * line that keeps being overwritten.
+     *
+     * A StateFlow only ever holds the LATEST value, so a UI collecting
+     * `progress` can show what is happening now and nothing about what
+     * happened a minute ago -- which is most of what makes watching
+     * worthwhile. The log is kept here rather than accumulated in the
+     * composable because the run outlives the screen: the service keeps
+     * going when the app is closed, and coming back should show the work
+     * that was done while away.
+     */
+    private val _dojo = MutableStateFlow<List<Compete.Bench>>(emptyList())
+    val dojo: StateFlow<List<Compete.Bench>> = _dojo
+
+    /** Older passes than this are dropped; the screen cannot show them anyway. */
+    private const val KEEP_PASSES = 14
+
     fun begin() {
         _result.value = null
         _running.value = true
+        _dojo.value = emptyList()
         _progress.value = Compete.Progress("Starting", 0, 1)
     }
 
     fun report(p: Compete.Progress) {
         _progress.value = p
+        val b = p.bench ?: return
+        // Each pass is reported twice -- laid out, then judged -- so the
+        // second report REPLACES the first rather than appending, or every
+        // pass would appear in the log as two.
+        val cur = _dojo.value
+        val merged = if (cur.isNotEmpty() && cur.last().pass == b.pass) {
+            cur.dropLast(1) + b
+        } else {
+            cur + b
+        }
+        _dojo.value = merged.takeLast(KEEP_PASSES)
     }
 
     fun finish(r: Result) {

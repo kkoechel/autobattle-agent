@@ -62,6 +62,26 @@ object Compete {
         return Mutate.apply(cards, plan, swaps, cat)
     }
 
+    private fun fmt(w: Double): String = String.format("%.1fW", w)
+
+    /**
+     * A mutation as the player sees it: what went in, what came out.
+     *
+     * A mutation adds copies of ONE card and takes them from whichever cards
+     * the deck already ranked lowest, so the cuts can be several -- joined
+     * here rather than shown as separate rows, because "Apothecary and Elvish
+     * Experiment out" is one decision, not two.
+     */
+    private fun attemptOf(m: Mutate.Result, cat: Catalogue): Attempt {
+        val addQty = m.swaps.sumOf { it.qty }
+        val addId = m.swaps.firstOrNull()?.add
+        val adds = if (addId == null) "?" else "${cat.name(addId)} x$addQty"
+        val cuts = m.swaps.groupBy { it.cut }
+            .map { (cid, sw) -> "${cat.name(cid)} x${sw.sumOf { it.qty }}" }
+            .joinToString(", ")
+        return Attempt(adds, cuts)
+    }
+
     /** Cards two decks share, counting copies. */
     private fun shared(a: List<Int>, b: List<Int>): Int {
         val ca = a.groupingBy { it }.eachCount()
@@ -69,7 +89,54 @@ object Compete {
         return ca.entries.sumOf { (k, v) -> minOf(v, cb[k] ?: 0) }
     }
 
-    data class Progress(val step: String, val done: Int, val total: Int)
+    data class Progress(
+        val step: String,
+        val done: Int,
+        val total: Int,
+        /**
+         * What is actually on the bench this pass, for the player to watch.
+         *
+         * Null for the stages that genuinely are one long wait (drafting,
+         * verifying); only the refine loop has something to show, because
+         * only it works card by card.
+         */
+        val bench: Bench? = null,
+    )
+
+    /**
+     * One refinement pass, as a person would see it happen.
+     *
+     * WHY THIS EXISTS. The climb already does, every pass, exactly what the
+     * dojo fiction describes: it picks up ten candidate swaps, tries each one
+     * in the deck, measures them, and keeps one or puts them all back. All of
+     * that was thrown away and replaced with the string "Refining, pass 3 of
+     * 12" -- two minutes of blank progress bar over the most interesting work
+     * the app does. Nothing here is invented or paced for effect: the
+     * attempts are the real candidates, the numbers are the real measurement,
+     * and `kept` is the real verdict.
+     *
+     * Emitted TWICE per pass: once with the attempts laid out and no scores,
+     * once with the scores and the verdict. That is the honest rhythm,
+     * because the ten are measured together in a single engine call -- 
+     * revealing them one at a time would be a pacing lie.
+     */
+    data class Bench(
+        val pass: Int,
+        val of: Int,
+        val attempts: List<Attempt>,
+        /** Null while they are still being measured. */
+        val verdict: String? = null,
+    )
+
+    data class Attempt(
+        /** "Rickity Power Station x5" */
+        val adds: String,
+        /** What came out to make room, usually one card. */
+        val cuts: String,
+        /** Wins against the field, once measured. */
+        val wins: Double? = null,
+        val kept: Boolean = false,
+    )
 
     data class Outcome(
         val name: String,
@@ -868,7 +935,26 @@ object Compete {
         var curWins = screened["c$bestI"]!!.wins
         val name = built[bestI].seedName
 
-        val addPool = candidateSeeds
+        // WHAT THE CLIMB MAY ADD IS NOT WHAT IT BUILDS AROUND.
+        //
+        // This was `candidateSeeds`, and that silently disabled refinement in
+        // the case the agent pushes hardest. Building around a named card
+        // collapses candidateSeeds to exactly that card, so every mutation
+        // tried to add a card the deck already held, mutation() returned null
+        // every time, `kids` came back empty and the climb broke on pass 1
+        // having done NOTHING. The run then reported "improved 0 times",
+        // which reads as "tried and found nothing" rather than "never tried",
+        // and the whole build finished in under two seconds. Found by trying
+        // to WATCH the refinement: there was nothing there to watch.
+        //
+        // A themed build had the same fault in weaker form -- addPool became
+        // just the themed cards, which is the "79 poison cards and nothing to
+        // support them" failure the seed-pool comment above warns about.
+        //
+        // The legal universe is the right pool: the seed decides what the
+        // deck is about, the climb may reach for anything it is allowed to
+        // play. mutation() already skips cards the deck already holds.
+        val addPool = allSeeds
         val rnd = kotlin.random.Random(System.nanoTime())
 
         // Climb: each generation keeps the best mutation that beats the
@@ -878,30 +964,51 @@ object Compete {
         var barren = 0
         val climbBlock = (0 until climbSeeds).map { 20_000 + it }
         for (g in 1..generations) {
-            onProgress(Progress("Refining, pass $g of $generations", g, generations))
-            val kids = ArrayList<Pair<List<Int>, JSONObject>>()
+            // Keep the whole Mutate.Result, not just (cards, plan): `swaps`
+            // is what names the cards, and it was being dropped on the floor.
+            val kids = ArrayList<Mutate.Result>()
             repeat(mutationsPerGen) {
                 val m = mutation(cur, curPlan, cat, addPool, rnd)
                 if (m != null && m.cards.none { c -> c in banned }) {
-                    kids.add(m.cards to m.plan)
+                    kids.add(m)
                 }
             }
             if (kids.isEmpty()) break
+
+            // On the bench, before anything is measured.
+            val laid = kids.map { k -> attemptOf(k, cat) }
+            onProgress(Progress("Refining, pass $g of $generations", g, generations,
+                Bench(g, generations, laid)))
+
             val gArms = ArrayList<Deck>()
             gArms.add(Deck("cur", cur, curPlan, name, null))
-            kids.forEachIndexed { i, k -> gArms.add(Deck("k$i", k.first, k.second, name, null)) }
+            kids.forEachIndexed { i, k -> gArms.add(Deck("k$i", k.cards, k.plan, name, null)) }
             val s = score(cat, gArms, selectAgainst, climbBlock, workers)
             val base = s["cur"]?.wins ?: break
             val bi = kids.indices.maxByOrNull { s["k$it"]?.wins ?: -1.0 } ?: break
             val bw = s["k$bi"]?.wins ?: break
-            if (bw <= base) {
+            val better = bw > base
+
+            // The same bench again, now with what each one actually did and
+            // which (if any) earned its place.
+            val scored = kids.mapIndexed { i, k ->
+                attemptOf(k, cat).copy(wins = s["k$i"]?.wins,
+                                       kept = better && i == bi)
+            }
+            onProgress(Progress("Refining, pass $g of $generations", g, generations,
+                Bench(g, generations, scored,
+                      verdict = if (better)
+                          "kept ${scored[bi].adds} (${fmt(bw)} against ${fmt(base)})"
+                      else "none beat ${fmt(base)} \u2014 all of them go back")))
+
+            if (!better) {
                 barren++
                 if (barren >= patience) break
                 continue
             }
             barren = 0
-            cur = kids[bi].first
-            curPlan = kids[bi].second
+            cur = kids[bi].cards
+            curPlan = kids[bi].plan
             curWins = bw
             climbed++
         }
