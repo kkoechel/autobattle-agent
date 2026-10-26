@@ -37,10 +37,29 @@ enum class Avatar(
     @DrawableRes val art: Int,
     /** Where the character sits in the frame, for cropping on odd aspects. */
     val focus: Alignment,
+    /**
+     * True when the art is a figure on transparency rather than a whole
+     * scene.
+     *
+     * This decides whether a locale can be drawn at all. The first three are
+     * card artwork -- a complete picture, background included -- so putting a
+     * scene behind one simply hides the scene. Only a cut-out leaves anything
+     * for a locale to show through.
+     */
+    val cutout: Boolean = false,
 ) {
     WIZARD("wizard", "The Wizard", R.drawable.avatar_fever_dreams, Alignment.TopCenter),
     BRUTE("brute", "The Brute", R.drawable.avatar_unstoppable_force, Alignment.TopCenter),
-    SPRITE("sprite", "The Sprite", R.drawable.avatar_fairy_cleaner, Alignment.TopCenter);
+    SPRITE("sprite", "The Sprite", R.drawable.avatar_fairy_cleaner, Alignment.TopCenter),
+
+    // The Paragons. Cut out of a chroma field by tools/pixelate_paragon.py,
+    // so each stands in whatever locale the moment calls for.
+    PARAGON_ONE("paragon1", "Kard Batal", R.drawable.paragon_1,
+        Alignment.TopCenter, cutout = true),
+    PARAGON_TWO("paragon2", "Emma Ji", R.drawable.paragon_2,
+        Alignment.TopCenter, cutout = true),
+    PARAGON_THREE("paragon3", "Dan Mage", R.drawable.paragon_3,
+        Alignment.TopCenter, cutout = true);
 
     companion object {
         val DEFAULT = WIZARD

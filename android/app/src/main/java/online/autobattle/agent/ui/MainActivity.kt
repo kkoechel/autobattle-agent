@@ -99,7 +99,11 @@ fun AgentApp() {
     Surface(Modifier.fillMaxSize()) {
       Box(Modifier.fillMaxSize()) {
         backdrop?.let {
-            AvatarBackdrop(it, Modifier.matchParentSize(), locale = localeFor(mood))
+            // A locale only goes behind a CUT-OUT figure. Behind a card-art
+            // avatar it would be invisible, since that art is already a
+            // complete scene.
+            AvatarBackdrop(it, Modifier.matchParentSize(),
+                locale = if (it.cutout) localeFor(mood) else null)
         }
         Column(
             // safeDrawingPadding, not padding alone: targetSdk 35+ draws
@@ -112,7 +116,7 @@ fun AgentApp() {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                "AutoBattle Agent",
+                "Cardbattle: Masters of the Shards",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
             )

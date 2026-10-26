@@ -37,13 +37,13 @@ android {
         // app. That takes their token with it, and since their handle is
         // already registered they cannot rejoin as themselves. A separate
         // applicationId installs beside it and touches nothing.
-        manifestPlaceholders = [appLabel: "AutoBattle Agent"]
+        manifestPlaceholders = [appLabel: "Cardbattle"]
         if (project.hasProperty('devId')) {
             applicationIdSuffix ".dev"
             versionNameSuffix "-dev"
             // Renamed too, or the two sit side by side on the launcher under
             // the same name and the wrong one gets opened.
-            manifestPlaceholders = [appLabel: "AB Agent (dev)"]
+            manifestPlaceholders = [appLabel: "Cardbattle (dev)"]
         }
 
         // The engine AAR ships arm64 only. Adding more ABIs means rebuilding
