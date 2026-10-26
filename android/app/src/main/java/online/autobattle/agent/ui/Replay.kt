@@ -181,7 +181,63 @@ private fun orientCss(arenaDp: Int, portrait: Boolean, flip: Boolean): String {
         ".ctl{padding:2px 8px;gap:4px}" +
         ".ctl button{font-size:13px;padding:2px 7px;min-width:32px}" +
         ".ctl .pos{font-size:10px;min-width:74px}" +
-        "#agree,#warn{display:none}"
+        "#agree,#warn{display:none}" +
+        /* TABLET FURNITURE IN A LETTERBOX.
+           Turned landscape the page is about 780 CSS px wide and only 340
+           tall -- so every `@media (min-width:560px)` rule in replay2.css
+           fires on a viewport with half a phone's height. Those rules are
+           right for a tablet and wrong here: the stat tiles go to 30px, the
+           hand rail to 90px, each hand card to -74px, the piles to 42px.
+           The result was a stats row tall enough that the bubbles, parked at
+           a fixed 52px, landed on top of it, and life and honour were buried
+           under the hand rail and the played-card spotlight in BOTH halves.
+           Width alone cannot tell a tablet from a phone on its side; the app
+           knows which it is, so it says so here.
+           Smaller than the phone defaults, not merely back to them -- there
+           is half the height to spend and two of everything to fit. */
+        ".r2-tile-v{font-size:19px}" +
+        ".r2-tile-k{font-size:.42rem;letter-spacing:.04em}" +
+        ".r2-stats{padding:.12rem .25rem}" +
+        ".r2-tile{padding:.08rem .1rem}" +
+        ".r2-hand{width:64px}" +
+        ".r2-handcard{margin-bottom:-52px}" +
+        ".r2-piles{width:32px}" +
+        ".r2-pile-v{font-size:.7rem}" +
+        ".r2-pile-k{font-size:.42rem}" +
+        ".r2-badge{font-size:.7rem}" +
+        ".r2-bubble{font-size:.6rem;padding:.16rem .32rem}" +
+        // The bubbles follow the row they are meant to clear. With the row
+        // this short, 52px left a gap; with the row at its tablet size they
+        // sat inside it.
+        ".r2-half--top .r2-bubbles,.r2-half--bottom .r2-bubbles{top:38px}" +
+        /* The centre overlays are sized for a portrait board. Over a 340px
+           viewport the damage figure and the spell card covered the seam --
+           which in landscape is where one half's stats end and the other's
+           begin, so a single strike hid four numbers. */
+        ".r2-strike{padding:.3rem .6rem}" +
+        ".r2-strike-total{font-size:1.3rem}" +
+        ".r2-strike-sym{font-size:.9rem}" +
+        ".r2-strike-sub,.r2-strike-subs{font-size:.6rem}" +
+        ".r2-spell{padding:.3rem .6rem}" +
+        ".r2-spell-name{font-size:.78rem}" +
+        ".r2-spell-tag{font-size:.52rem}" +
+        ".r2-spell-cap{max-width:170px;font-size:.6rem}" +
+        ".r2-banner{font-size:.6rem;padding:.22rem .6rem;letter-spacing:.1em}" +
+        /* The turn tag is anchored to the TOP of the arena. In portrait that
+           is empty board; side by side it is the stats rows, so "PLAYER 2 ·
+           TURN 4" sat across the seam and hid one half's shields and the
+           other's life. Nothing is anchored to the bottom in landscape, so
+           it goes there. */
+        ".r2-turntag{top:auto;bottom:.25rem}" +
+        /* THE PLAYED CARD IS A CARD, not a label. replay2.js builds it at
+           min(150, innerWidth/3) CSS px wide and the face renders about 195
+           tall -- which in portrait is a third of the arena and in landscape
+           is nearly all of it, centred, so every spell cast blanked the stats
+           rows of BOTH halves at once. Capped by height rather than width so
+           the card keeps its shape, and dropped below the midline so what is
+           left of it sits over board rather than over numbers. */
+        ".r2-spell-face svg{max-height:104px;width:auto;margin:0 auto}" +
+        ".r2-spell,.r2-strike,.r2-banner{top:58%}"
 
     val stacked = if (!portrait) "" else
         "/* replay2.css puts the halves side by side on short landscape " +
@@ -196,10 +252,18 @@ private fun orientCss(arenaDp: Int, portrait: Boolean, flip: Boolean): String {
         ".r2-bubbles{right:76px;width:auto}}"
     // The halves carry a divider on the side that faces the other one, so
     // reversing them has to move it too, or the seam lands on the outside.
-    val turn = if (!flip) "" else
-        ".r2{flex-direction:" + (if (portrait) "column-reverse" else "row-reverse") + "}" +
+    val turn = if (!flip) "" else if (portrait)
+        ".r2{flex-direction:column-reverse}" +
         ".r2-half--top{border-bottom:0;border-right:0}" +
         ".r2-half--bottom{border-bottom:1px solid rgba(255,255,255,.07)}"
+    else
+        // Side by side the seam is a VERTICAL edge, so reversing the halves
+        // has to move a border-right, not a border-bottom. Moving the bottom
+        // one drew a line under the right-hand column and left the two
+        // columns with nothing between them.
+        ".r2{flex-direction:row-reverse}" +
+        ".r2-half--top{border-right:0;border-bottom:0}" +
+        ".r2-half--bottom{border-right:1px solid rgba(255,255,255,.07);border-bottom:0}"
 
     /* BOTH STAT ROWS MEET IN THE MIDDLE, WHOEVER IS ON TOP.
        replay2.css puts each half's stats on its OUTER edge:
@@ -215,13 +279,40 @@ private fun orientCss(arenaDp: Int, portrait: Boolean, flip: Boolean): String {
        Stated outright for each case instead of inherited from the flip. The
        half rendering physically on top gets its stats LAST, the one below
        gets them FIRST, and the seam falls between them either way. */
+    //
+    // THE BUBBLES ARE PINNED HERE TOO, not left to the stylesheet. They are
+    // absolutely positioned and have to start below whatever sits at the top
+    // of their half, so replay2.css offsets them by hand -- and the copy a
+    // phone actually gets is not reliably the copy on the server: this phone
+    // was rendering bubbles at .4rem while the live file said 52px, and the
+    // result was two speech bubbles sitting on top of the bottom player's
+    // life and honour. Stating both halves outright costs two rules and
+    // removes the dependency.
     val meet = if (!portrait) "" else if (flip)
-        ".r2-half--bottom .r2-stats{order:9}.r2-half--top .r2-stats{order:0}"
+        // column-reverse: --bottom draws on top, so its stats are at its own
+        // bottom edge and nothing is above them.
+        ".r2-half--bottom .r2-stats{order:9}.r2-half--top .r2-stats{order:0}" +
+        ".r2-half--bottom .r2-bubbles{top:.4rem}" +
+        ".r2-half--top .r2-bubbles{top:58px}"
     else
-        ".r2-half--top .r2-stats{order:9}.r2-half--bottom .r2-stats{order:0}"
+        ".r2-half--top .r2-stats{order:9}.r2-half--bottom .r2-stats{order:0}" +
+        ".r2-half--top .r2-bubbles{top:.4rem}" +
+        ".r2-half--bottom .r2-bubbles{top:58px}"
+    /* ROOM FOR A BUTTON THE PAGE CANNOT SEE.
+       Close is drawn by the app over the top-right corner of the dialog, and
+       `#agree` -- the line it clears in portrait -- is hidden in landscape,
+       so the arena's first row rises to meet it and the chip covered the
+       right-hand half's shields. The whole arena is not pushed down for it:
+       that is 30px off a board already half a phone tall. Only the stats row
+       of whichever half is on the right gives up the width, and its six
+       tiles are flex:1 so they simply narrow. */
+    val clear = if (portrait) "" else
+        (if (flip) ".r2-half--top" else ".r2-half--bottom") +
+            " .r2-stats{padding-right:98px}"
+
     val chrome = if (portrait) CHROME_DP else CHROME_LAND_DP
     return "html,body{height:${arenaDp + chrome}px}\n" +
-        "#arena{height:${arenaDp}px}\n" + slim + stacked + turn + meet
+        "#arena{height:${arenaDp}px}\n" + slim + stacked + turn + meet + clear
 }
 
 /**
