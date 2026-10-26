@@ -85,11 +85,18 @@ object Rules {
         ),
         RuleQA(
             "What is energy and why am I short of it?",
-            "One a turn, every turn, and it stacks up if we do not spend it. " +
-            "Cards cost it. That is the whole economy, and it is why a deck " +
-            "full of expensive cards does nothing for the first several turns " +
-            "while a cheap one is already on the board \u2014 and why some cards " +
-            "exist only to give us more of it."
+            "Your Shard gives you one, every turn, and it stacks up if we do " +
+            "not spend it. Cards cost it. That is the whole economy, and it " +
+            "is why a deck full of expensive cards does nothing for the first " +
+            "several turns while a cheap one is already on the board \u2014 and " +
+            "why some cards exist only to give us more of it."
+        ),
+        RuleQA(
+            "What is a Shard?",
+            "The thing that gives you one energy a turn, every turn, for as " +
+            "long as you are standing. Everyone who plays has one. Nobody I " +
+            "have asked can tell me where they come from, and the ones who " +
+            "could are not the sort you ask twice."
         ),
         RuleQA(
             "What goes in a deck?",
