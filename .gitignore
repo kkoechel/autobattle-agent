@@ -20,3 +20,6 @@ android/keystore.properties
 *.jks
 *.keystore
 android/.kotlin/
+
+# personal permission overrides, not the team's
+.claude/settings.local.json
