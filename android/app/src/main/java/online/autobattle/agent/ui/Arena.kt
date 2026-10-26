@@ -11,6 +11,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.Canvas
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.RepeatMode
@@ -1906,20 +1907,42 @@ fun ArenaPane(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                             ) {
-                                // A thumbnail of the real thing, drawn the
-                                // same way: a name alone says nothing about
-                                // a picture you have not seen.
-                                Image(
-                                    painter = androidx.compose.ui.graphics.painter.BitmapPainter(
-                                        androidx.compose.ui.graphics.ImageBitmap
-                                            .imageResource(a.art),
-                                        filterQuality =
-                                            androidx.compose.ui.graphics.FilterQuality.None),
-                                    contentDescription = null,
-                                    contentScale = ContentScale.Crop,
-                                    alignment = Alignment.TopCenter,
-                                    modifier = Modifier.size(44.dp, 60.dp)
-                                        .clip(RoundedCornerShape(4.dp)))
+                                // A thumbnail of the real thing: a name alone
+                                // says nothing about a picture you have not
+                                // seen. The tile is filled and clipped so the
+                                // six rows line up whatever is in them.
+                                Box(
+                                    Modifier.size(44.dp, 60.dp)
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(androidx.compose.ui.graphics
+                                            .Color(0xFF14142A)),
+                                ) {
+                                    Image(
+                                        painter = androidx.compose.ui.graphics.painter.BitmapPainter(
+                                            androidx.compose.ui.graphics.ImageBitmap
+                                                .imageResource(a.art),
+                                            filterQuality =
+                                                androidx.compose.ui.graphics.FilterQuality.None),
+                                        contentDescription = null,
+                                        contentScale = ContentScale.Crop,
+                                        alignment = Alignment.TopCenter,
+                                        // A CUT-OUT IS A WHOLE STANDING FIGURE,
+                                        // head to boots, in a tall frame. Card
+                                        // art is a scene already composed around
+                                        // its subject, so it reads at any size;
+                                        // a full-length figure shrunk to 60dp is
+                                        // an ant. Scaled from the TOP so what
+                                        // fills the tile is the face, which is
+                                        // the thing being chosen.
+                                        modifier = Modifier.fillMaxSize().let {
+                                            if (!a.cutout) it else it.graphicsLayer {
+                                                scaleX = 2.4f; scaleY = 2.4f
+                                                transformOrigin =
+                                                    androidx.compose.ui.graphics
+                                                        .TransformOrigin(0.5f, 0f)
+                                            }
+                                        })
+                                }
                                 Text(a.label,
                                     style = MaterialTheme.typography.titleSmall,
                                     color = if (a == avatar) GoldBright
