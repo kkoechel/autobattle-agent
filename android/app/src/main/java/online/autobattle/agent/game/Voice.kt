@@ -28,6 +28,18 @@ enum class Voice {
     /** Warm and encouraging, without being soft about the numbers. */
     SPRITE;
 
+    /**
+     * What the Paragon opens Talk with.
+     *
+     * Not a greeting -- the player is mid-session and has just tapped a tab,
+     * so "hello" would be odd. It is an offer to answer something.
+     */
+    fun talkOpening(): String = when (this) {
+        WIZARD -> "Ask me anything about the game, or about where we stand."
+        BRUTE -> "Something you want to know? Ask."
+        SPRITE -> "Anything you'd like to know? I don't mind explaining twice."
+    }
+
     /** "Shall I investigate?" -- the agent proposing to do something. */
     fun ask(what: String): String = when (this) {
         WIZARD -> "Shall I $what?"

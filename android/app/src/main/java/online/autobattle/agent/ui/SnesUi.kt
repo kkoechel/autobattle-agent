@@ -319,9 +319,19 @@ fun SnesChoice(
 }
 
 
-/** The places a player can be. */
+/**
+ * The places a player can be.
+ *
+ * THREE, NOT FIVE. The old AGENT tab did two unrelated jobs -- building a
+ * deck and explaining the game -- and paid for it with a second row of
+ * buttons under the tabs holding three controls with three different
+ * purposes. Brew is everything that changes the deck; Talk is everything
+ * that explains one, which is why the binder and the ban list live there
+ * too: both are reference, which is what "how does this work" means when the
+ * answer is a card rather than a rule.
+ */
 enum class Place(val label: String) {
-    AGENT("Agent"), DOJO("Dojo"), BINDER("Binder"), BANS("Banned"),
+    BREW("Brew"), TALK("Talk"), DOJO("Dojo"),
 }
 
 /**

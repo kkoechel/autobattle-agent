@@ -165,7 +165,18 @@ fun ArenaPane(
     // Where the player currently is. The agent is a person you talk to; the
     // dojo and the binder are places you go to look things up. Keeping them
     // on one scroll meant the conversation was always buried under a table.
-    var place by remember { mutableStateOf(Place.AGENT) }
+    var place by remember { mutableStateOf(Place.BREW) }
+    /**
+     * What Talk is currently showing.
+     *
+     * null is the conversation itself; a RuleQA question is that answer;
+     * "binder" and "bans" are the two reference panes. One piece of state
+     * rather than two booleans, because they are mutually exclusive and a
+     * pair of booleans eventually gets into the state where both are true.
+     */
+    var talkPane by remember { mutableStateOf<String?>(null) }
+    /** What the Paragon last said in answer to "Any news?". */
+    var talkNews by remember { mutableStateOf<String?>(null) }
     var history by remember { mutableStateOf<JSONArray?>(null) }
     var trialBusy by remember { mutableStateOf(false) }
     var trialStep by remember { mutableStateOf<String?>(null) }
@@ -358,7 +369,10 @@ fun ArenaPane(
         }
     }
 
-    LaunchedEffect(token) { refresh() }
+    // KEYED ON `place` TOO. The figures used to update only at launch, which
+    // is why there was a refresh button wearing a conversational label.
+    // Arriving at a tab is exactly when they need to be current.
+    LaunchedEffect(token, place) { refresh() }
 
     // THE SCREEN HAS TO COME BACK TO LIFE ON ITS OWN.
     //
@@ -451,7 +465,10 @@ fun ArenaPane(
     // picture behind them fights the text for every row. Only once there is a
     // token, so the join screen stays plain.
     LaunchedEffect(place, token, avatar) {
-        onBackdrop(if (place == Place.AGENT && token != null) avatar else null)
+        // The Paragon stands behind both halves of the conversation: Brew is
+        // building a deck with them, Talk is asking them something.
+        onBackdrop(if ((place == Place.BREW || place == Place.TALK) && token != null)
+                   avatar else null)
     }
 
     Column(modifier.verticalScroll(rememberScrollState()).padding(16.dp),
@@ -502,77 +519,15 @@ fun ArenaPane(
         } else {
             SnesMenu(place) { place = it }
 
-            if (place == Place.AGENT) {
-            Row(verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                // The handle gives way, not the buttons: a long one used to
-                // push "Start over" off the edge, and a clipped control is
-                // worse than a shortened name.
-                // A nameplate, not loose text. It was the only unframed
-                // thing left on the screen, which made it read as a caption
-                // for the buttons beside it rather than as who you are.
-                // Tapping your own name opens the face chooser. It lived
-                // with "Pick a theme..." below, which is hidden whenever the
-                // agent has a question pending -- and an account whose deck
-                // holds a banned card ALWAYS has one, so the chooser was
-                // unreachable on exactly the screens that most wanted it.
-                // Your name and your face are the same question anyway.
-                Nameplate(handle.ifBlank { "You" },
-                    Modifier.weight(1f).clickable(enabled = token != null) {
-                        pickAvatar = true
-                    })
-                // It used to refresh in silence, which is indistinguishable
-                // from a dead button: nothing on screen changes unless a
-                // round happened to land in between. Now it answers.
-                GameLink("Any news?", enabled = !busy && !newsBusy) {
-                    scope.launch {
-                        newsBusy = true
-                        val wasRound = standings?.optJSONObject("round")?.optInt("id") ?: 0
-                        refresh()
-                        val nowRound = standings?.optJSONObject("round")?.optInt("id") ?: 0
-                        val mine = standings?.optJSONArray("standings")?.let { rows ->
-                            (0 until rows.length()).map { rows.getJSONObject(it) }
-                                .firstOrNull { it.optString("handle") == handle }
-                        }
-                        justBuilt = when {
-                            nowRound > wasRound && mine != null ->
-                                "\u201c${voice.scored(nowRound,
-                                    mine.optInt("placement"),
-                                    standings?.optJSONObject("round")?.optInt("decks") ?: 0,
-                                    mine.optInt("wins"), mine.optInt("losses"),
-                                    mine.optInt("draws"))}\u201d"
-                            nowRound > wasRound ->
-                                "\u201c${voice.scoredBare(nowRound)}\u201d"
-                            else -> "\u201c${voice.nothingNew()} " +
-                                (standings?.optJSONObject("round")?.optString("next_at")
-                                    ?.takeIf { it.isNotBlank() }?.let { untilRound(it) + "." }
-                                    ?: "A round is scored every half hour.") + "\u201d"
-                        }
-                        newsBusy = false
-                    }
-                }
-                GameLink("Start again", enabled = !busy) { confirmReset = true }
-                // UP HERE BECAUSE THIS ROW ALWAYS RENDERS.
-                //
-                // It was first put beside "Pick a theme..." and "Let's talk",
-                // which live behind `q == null` -- so it vanished exactly
-                // when the agent had a question up, which is most of the
-                // time. The "nothing to decide" fallback on "Let's talk"
-                // cannot carry this either: that path forces past the
-                // per-round cap, and once a plan is set there is nearly
-                // always an angle to offer, so it would almost never fire.
-                // Wanting to know how the game works is not conditional on
-                // the agent having run out of things to say.
-                // SHORT ENOUGH TO FIT. GameLink is maxLines=1, softWrap=false
-                // and clips rather than wrapping, and three of these beside a
-                // nameplate ran past the edge -- "How does this work?" was
-                // losing its last word on an S22.
-                GameLink("How it works") {
-                    rulesPick = null
-                    rulesIdle = false
-                    showRules = true
-                }
-            }
+            if (place == Place.BREW) {
+            // THE SECOND ROW IS GONE. It held a nameplate and three
+            // buttons -- refresh the standings, throw the deck away, read
+            // the rules -- three purposes sharing a strip of screen that the
+            // dialogue and the Paragon both wanted. Each went where it
+            // belongs: "Start again" into Brew's own choices, because it
+            // discards a deck; "Any news?" and "How it works" into Talk; the
+            // nameplate, which is also how the avatar chooser is reached,
+            // into Talk beside them.
 
             // SETTLE THE STANDING ORDERS BY PLAYING THEM.
             //
@@ -1279,6 +1234,17 @@ fun ArenaPane(
                                 error = null; note = null; trial = null
                                 TrainingService.start(ctx)
                             })
+                        // CAME DOWN FROM THE TOP ROW. It throws the deck
+                        // away and takes a fresh starter, which is a Brew
+                        // decision and a destructive one -- it had no
+                        // business sitting permanently on screen next to
+                        // "how does this work".
+                        if (!planPending && myDeck != null) SnesChoice(
+                            label = "Start again",
+                            detail = "Give up on this deck entirely and take " +
+                                "a fresh one to work from.",
+                            enabled = !busy && !trialBusy,
+                            onClick = { confirmReset = true })
                     }
                 }
                 if (trialBusy) SnesProgress(0, 1)
@@ -1296,7 +1262,7 @@ fun ArenaPane(
                     // already measured a dozen archetypes against this
                     // field; starting from one of those leaves the phone
                     // four passes of polish instead of twelve of search.
-                    GameLink("Start from a measured deck") {
+                    GameLink("Measured decks\u2026") {
                         shells = null; shellsError = null; showShells = true
                         scope.launch {
                             val t = token
@@ -1361,7 +1327,96 @@ fun ArenaPane(
             note?.let {
                 Text(it, style = snesText(13, androidx.compose.ui.graphics.Color(0xFFFFE28C)))
             }
-            }   // end Place.AGENT
+            }   // end Place.BREW
+
+            // ---- TALK -------------------------------------------------
+            //
+            // The same dialogue box and choice list Brew uses, so the
+            // Paragon is answering rather than a manual being browsed. The
+            // rules entries were already written (game/Rules.kt) and were
+            // already reachable -- but only through a button hoisted into
+            // the old top row, because the choice list they belonged in
+            // vanishes whenever the agent has a question pending, which is
+            // most of the time. Here there is no question pending, ever.
+            if (place == Place.TALK && talkPane == null) {
+                // WHO YOU ARE, where looking at your Paragon belongs. Tapping
+                // it opens the face chooser, as it did in the old top row.
+                Nameplate(handle.ifBlank { "You" },
+                    Modifier.fillMaxWidth().clickable(enabled = token != null) {
+                        pickAvatar = true
+                    })
+                // ROOM FOR THE FACE. The figure is placed by fraction of the
+                // screen (ui/Avatars.kt), tuned against Brew -- where a
+                // dialogue box and a long choice list push the text down the
+                // screen. Talk has four choices and no deck report, so
+                // without this its box climbs to just under the tabs and
+                // sits squarely over the Paragon's face. Cheaper to give
+                // Talk the clearance than to move the figure and spoil the
+                // framing on the screen it was set for.
+                Spacer(Modifier.height(132.dp))
+                Text("\u201c${voice.talkOpening()}\u201d", style = snesText(13))
+                SnesChoiceBox {
+                    SnesChoice(
+                        label = "Any news?",
+                        detail = "What has happened in the league since we " +
+                            "last looked.",
+                        enabled = !busy && !newsBusy,
+                        onClick = {
+                            scope.launch {
+                                newsBusy = true
+                                val wasRound = standings?.optJSONObject("round")?.optInt("id") ?: 0
+                                refresh()
+                                val nowRound = standings?.optJSONObject("round")?.optInt("id") ?: 0
+                                val mine = standings?.optJSONArray("standings")?.let { rows ->
+                                    (0 until rows.length()).map { rows.getJSONObject(it) }
+                                        .firstOrNull { it.optString("handle") == handle }
+                                }
+                                talkNews = when {
+                                    nowRound > wasRound && mine != null ->
+                                        voice.scored(nowRound,
+                                            mine.optInt("placement"),
+                                            standings?.optJSONObject("round")?.optInt("decks") ?: 0,
+                                            mine.optInt("wins"), mine.optInt("losses"),
+                                            mine.optInt("draws"))
+                                    nowRound > wasRound -> voice.scoredBare(nowRound)
+                                    else -> voice.nothingNew() + " " +
+                                        (standings?.optJSONObject("round")?.optString("next_at")
+                                            ?.takeIf { it.isNotBlank() }?.let { untilRound(it) + "." }
+                                            ?: "A round is scored every half hour.")
+                                }
+                                newsBusy = false
+                            }
+                        })
+                    SnesChoice(
+                        label = "How the game works",
+                        detail = "Plain answers about the league, the cards " +
+                            "and the rules.",
+                        onClick = {
+                            rulesPick = null; rulesIdle = false; showRules = true
+                        })
+                    SnesChoice(
+                        label = "Show me my cards",
+                        detail = "Everything you own, and what each one does.",
+                        onClick = { talkPane = "binder" })
+                    SnesChoice(
+                        label = "What is out of the format?",
+                        detail = "The cards nobody may play at the moment.",
+                        onClick = { talkPane = "bans" })
+                }
+                talkNews?.let {
+                    Spacer(Modifier.height(10.dp))
+                    Text("\u201c$it\u201d", style = snesText(13))
+                }
+                if (newsBusy) SnesProgress(0, 1)
+            }
+
+            // The two reference panes get a way back, since they replace the
+            // conversation rather than sitting on top of it.
+            if (place == Place.TALK && talkPane != null) {
+                GameLink("\u2039 Back") { talkPane = null }
+                Spacer(Modifier.height(8.dp))
+            }
+
 
         // The overlays belong to no place: a card tapped in the binder opens
         // the same popup as one tapped in the dialogue.
@@ -1878,7 +1933,7 @@ fun ArenaPane(
                 style = MaterialTheme.typography.bodyMedium)
         }
 
-            if (place == Place.BINDER) {
+            if (place == Place.TALK && talkPane == "binder") {
                 // The binder needs every card's name and art, so the
                 // catalogue is pulled on arrival rather than behind a
                 // "show cards" tap -- the page IS the content here. The
@@ -2084,7 +2139,7 @@ fun ArenaPane(
             }
         }
 
-        if (place == Place.BANS) {
+        if (place == Place.TALK && talkPane == "bans") {
             LaunchedEffect(token) { ensureNames() }
             SnesWindow {
                 Text("Out of the format", style = snesText(15, androidx.compose.ui.graphics.Color(0xFFFFE28C)))
