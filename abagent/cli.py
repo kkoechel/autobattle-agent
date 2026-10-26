@@ -630,6 +630,19 @@ def cmd_ask(args, api: Api) -> int:
     return 0
 
 
+def _theme_tags(args) -> set[str] | None:
+    """The tags this agent may build around, or None for no constraint.
+
+    Empty string means unconstrained rather than "no tags allowed" -- the
+    flag is absent for most agents and an empty set would silently stop them
+    composing anything at all.
+    """
+    raw = (getattr(args, "theme_tags", "") or "").strip()
+    if not raw:
+        return None
+    return {t.strip() for t in raw.split(",") if t.strip()}
+
+
 def enter_tournaments(api: Api, deck_id: int, log=print) -> int:
     """Enter every open tournament this deck is legal for.
 
@@ -1634,13 +1647,15 @@ def cmd_explore(args, api: Api) -> int:
         cstore = _combo.load(COMBO_STORE)
         measured = _combo.measured_archetypes(cstore, catalog, meta["decks"],
                                               mod=args.theme_mod,
-                                              rem=args.theme_rem)
+                                              rem=args.theme_rem,
+                                              only=_theme_tags(args))
         # Decks built AROUND a confirmed combo, which is the one thing neither
         # other generator can do: affinity() sees a shared word, compose()
         # sees what a card is worth alone, and only the pair sweep can see
         # that two cards need each other.
         combos = _combo.combo_archetypes(cstore, catalog, meta["decks"],
-                                         mod=args.theme_mod, rem=args.theme_rem)
+                                         mod=args.theme_mod, rem=args.theme_rem,
+                                         only=_theme_tags(args))
         if combos:
             # seed_name is the hub CARD's name now, not "combo <name>" --
             # the old [6:] slice stripped six real characters and logged
@@ -2657,6 +2672,13 @@ def main(argv=None) -> int:
                         "agent builds the same deck and all but one are "
                         "rejected as duplicates")
     e.add_argument("--theme-rem", type=int, default=0)
+    e.add_argument("--theme-tags", default="",
+                   help="comma-separated tags this agent may build around, "
+                        "e.g. poison,dishonor,sacrifice. Empty means no "
+                        "constraint. Gives an agent a CHARACTER rather than a "
+                        "shard: --theme-mod/--theme-rem split the vocabulary "
+                        "so agents do not duplicate work, this says which "
+                        "part of it one is allowed to touch at all.")
     e.add_argument("--register", action="store_true", default=False,
                    help="assert a standing arena registration for the deck "
                         "this agent owns; only meaningful without a rental slot")

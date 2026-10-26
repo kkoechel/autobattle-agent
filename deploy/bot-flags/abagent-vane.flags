@@ -1,2 +1,2 @@
 ABAGENT_ARENA=pure
-ABAGENT_FLAGS=--seed-mod 4 --seed-rem 2 --theme-mod 5 --theme-rem 1 --max-overlap 30 --floor-frac 0.75
+ABAGENT_FLAGS=--seed-mod 4 --seed-rem 2 --theme-mod 5 --theme-rem 1 --max-overlap 30 --floor-frac 0.75 --theme-tags poison,amplify-poison,dishonor,lose-honor,sacrifice,mill,exile,curse,demon,horror,undead,skeleton,zombie,vampire,reanimate,void,discard,drawback,piercing,destroy

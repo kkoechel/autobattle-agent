@@ -465,7 +465,8 @@ def compose(store: dict, tag: str, catalog: dict[int, dict],
 
 def measured_archetypes(store: dict, catalog: dict[int, dict],
                         meta_decks: list[dict],
-                        mod: int = 1, rem: int = 0) -> list:
+                        mod: int = 1, rem: int = 0,
+                        only: set[str] | None = None) -> list:
     """One composed deck per theme that has been swept.
 
     Partitioned by theme, because compose() is deterministic: every agent
@@ -482,7 +483,18 @@ def measured_archetypes(store: dict, catalog: dict[int, dict],
     new themes, which is a few hours once and then never again.
     """
     out = []
-    for i, tag in enumerate(sorted((store.get("themes") or {}).keys())):
+    tags = sorted((store.get("themes") or {}).keys())
+    # A NAMED CONSTRAINT, applied BEFORE the shard.
+    #
+    # mod/rem splits the theme vocabulary so several agents explore different
+    # things; `only` says which things this agent is allowed to explore at
+    # all. Filtering first means a constrained agent still gets its whole
+    # allowance -- sharding an already-short list would leave it with one
+    # theme or none, and an agent that composes nothing falls back to the
+    # generic path and quietly ignores the constraint entirely.
+    if only:
+        tags = [t for t in tags if t in only]
+    for i, tag in enumerate(tags):
         if mod > 1 and i % mod != rem:
             continue
         a = compose(store, tag, catalog, meta_decks)
@@ -637,11 +649,20 @@ def compose_from_cluster(store: dict, hub: int, partners: list[tuple[int, str, f
 
 
 def combo_archetypes(store: dict, catalog: dict[int, dict], meta_decks: list[dict],
-                     mod: int = 1, rem: int = 0, top: int = 8) -> list:
-    """One deck per combo hub, partitioned across agents like the others."""
+                     mod: int = 1, rem: int = 0, top: int = 8,
+                     only: set[str] | None = None) -> list:
+    """One deck per combo hub, partitioned across agents like the others.
+
+    `only` filters by the HUB CARD's tags: a combo is on-theme when the card
+    it is built around is. Judging by the partners instead would let a single
+    off-theme partner drag in a cluster that has nothing to do with the
+    agent's remit.
+    """
     out = []
     for i, (hub, _name, partners) in enumerate(clusters(store)[:top]):
         if mod > 1 and i % mod != rem:
+            continue
+        if only and not (set(catalog.get(hub, {}).get("tags") or []) & only):
             continue
         a = compose_from_cluster(store, hub, partners, catalog, meta_decks)
         if a:
