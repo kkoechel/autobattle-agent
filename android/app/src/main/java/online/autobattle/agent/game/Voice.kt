@@ -421,8 +421,11 @@ enum class Voice {
          * sentence.
          */
         fun forAvatar(key: String?): Voice = when (key) {
-            "brute" -> BRUTE
-            "sprite" -> SPRITE
+            "brute", "paragon2" -> BRUTE      // Dan Mage
+            "sprite", "paragon3" -> SPRITE     // Emma Ji
+            // paragon1 (Kard Batal) and anything unknown take WIZARD. For
+            // Kard that is a choice rather than a fallback: precise and
+            // bloodless suits the one who is meant to be best at this.
             else -> WIZARD
         }
     }

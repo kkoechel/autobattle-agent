@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -56,9 +58,9 @@ enum class Avatar(
     // so each stands in whatever locale the moment calls for.
     PARAGON_ONE("paragon1", "Kard Batal", R.drawable.paragon_1,
         Alignment.TopCenter, cutout = true),
-    PARAGON_TWO("paragon2", "Emma Ji", R.drawable.paragon_2,
+    PARAGON_TWO("paragon2", "Dan Mage", R.drawable.paragon_2,
         Alignment.TopCenter, cutout = true),
-    PARAGON_THREE("paragon3", "Dan Mage", R.drawable.paragon_3,
+    PARAGON_THREE("paragon3", "Emma Ji", R.drawable.paragon_3,
         Alignment.TopCenter, cutout = true);
 
     companion object {
@@ -116,7 +118,7 @@ fun AvatarBackdrop(
     locale: Int? = null,
 ) {
     val bmp = androidx.compose.ui.graphics.ImageBitmap.imageResource(avatar.art)
-    Box(modifier.fillMaxSize()) {
+    BoxWithConstraints(modifier.fillMaxSize()) {
         if (locale != null) {
             Image(
                 painter = BitmapPainter(
@@ -130,24 +132,37 @@ fun AvatarBackdrop(
         Image(
             painter = BitmapPainter(bmp, filterQuality = FilterQuality.None),
             contentDescription = null,
-            // A cut-out figure must not be cropped to fill: that would scale
-            // it until its head left the frame. The scene behind already
-            // covers the screen, so the figure only has to FIT.
-            contentScale = if (locale != null) ContentScale.Fit else ContentScale.Crop,
+            contentScale = ContentScale.Crop,
             alignment = avatar.focus,
-            modifier = Modifier.fillMaxSize().drawWithContent {
-                drawContent()
-                // Heavier at the bottom, where the dialogue and the choices
-                // sit, and light at the top so the character's head still
-                // reads. A flat scrim strong enough for the text turned the
-                // whole picture to mud.
-                drawRect(Brush.verticalGradient(
-                    0.0f to Color(0x66101020),
-                    0.45f to Color(0x99101020),
-                    1.0f to Color(0xD9101020),
-                ))
+            // THE HEAD HAS TO CLEAR THE CHROME. A cut-out figure fills its
+            // frame from the very top, so drawn flush it puts the face
+            // directly behind the tab row -- which is exactly what happened
+            // the moment the title was removed and the UI moved up. The old
+            // card-art avatars never showed this because their subjects sit
+            // lower inside their own artwork.
+            //
+            // A FRACTION, NOT A DP. The chrome is a share of the screen, not
+            // a fixed number of pixels, and a hardcoded offset would be wrong
+            // on every phone but this one. The figure is allowed to overflow
+            // the bottom; the dialogue box covers it.
+            modifier = Modifier.fillMaxSize().let {
+                if (locale != null) it.padding(top = maxHeight * 0.26f) else it
             },
         )
+        // The scrim is its own layer. On the figure it only darkened the
+        // figure's own box, so with the offset above it would have left the
+        // top quarter of the screen unshaded and the tabs unreadable.
+        Box(Modifier.fillMaxSize().drawWithContent {
+            drawContent()
+            // Heavier at the bottom, where the dialogue and the choices sit,
+            // and light at the top so the character still reads. A flat scrim
+            // strong enough for the text turned the whole picture to mud.
+            drawRect(Brush.verticalGradient(
+                0.0f to Color(0x66101020),
+                0.45f to Color(0x99101020),
+                1.0f to Color(0xD9101020),
+            ))
+        })
     }
 }
 

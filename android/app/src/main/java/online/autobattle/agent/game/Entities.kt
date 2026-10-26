@@ -52,10 +52,23 @@ object Entities {
      */
     fun styled(handle: String, deckName: String, placement: Int): String {
         val title = rank(placement)
-        return if (deckName.isBlank()) "$title $handle"
-        else "$title $handle, $deckName"
+        return if (deckName.isBlank()) "$title ${bare(handle)}"
+        else "$title ${bare(handle)}, $deckName"
     }
 
+    /**
+     * The registered handle with its scaffolding removed.
+     *
+     * Half the house agents were registered as "Agent Quill", "Agent Rook"
+     * and so on, which is how the deploy script names them rather than
+     * anything about the character -- and titling them produces "Archon Agent
+     * Rook", three nouns deep. The prefix is dropped for display only; the
+     * handle itself is what the league knows them by and is never rewritten.
+     */
+    private fun bare(handle: String): String =
+        handle.removePrefix("Agent ").ifBlank { handle }
+
     /** The short form, where a row has its own line for the deck name. */
-    fun titled(handle: String, placement: Int): String = "${rank(placement)} $handle"
+    fun titled(handle: String, placement: Int): String =
+        "${rank(placement)} ${bare(handle)}"
 }

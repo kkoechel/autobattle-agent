@@ -115,11 +115,6 @@ fun AgentApp() {
                 .padding(top = 16.dp, bottom = 10.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(
-                "Cardbattle: Masters of the Shards",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
-            )
             ArenaPane(Modifier.fillMaxSize(),
                 onBackdrop = { backdrop = it }, onMood = { mood = it })
         }
