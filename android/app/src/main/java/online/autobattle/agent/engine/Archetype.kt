@@ -145,6 +145,43 @@ object Archetype {
         }
         if (total < size) { picks.add(INFINITE_FILLER to (size - total)); total = size }
 
+        // DROP WHAT THIS DECK COULD NEVER PLAY.
+        //
+        // Measured first: a 72.1% deck in the live league runs ten copies of
+        // Shield Soldier, which demands a shield gained this turn, in a
+        // poison list with no shield source at all. Ten slots that can never
+        // be spent. The generator has no idea, because affinity() scores on
+        // tag overlap and a tag says what a card CAN do, not what it can do
+        // here.
+        //
+        // Judged against the finished list, not as cards are chosen: whether
+        // a gate can open depends on what else ended up in the deck, so the
+        // question is only answerable once there IS a deck. One pass, not a
+        // loop -- removing a card can in principle kill another (cut the one
+        // honour source and an honour cost dies with it), but chasing that
+        // to a fixed point risks unravelling a list over a single slot, and
+        // the freed capacity goes back to cards that already earned theirs.
+        val picked = picks.flatMap { (id, q) -> List(q) { id } }
+        val dead = picks.map { it.first }.filter {
+            Castable.deadReason(it, picked, cat) != null
+        }.toSet()
+        if (dead.isNotEmpty()) {
+            var freed = 0
+            for (i in picks.indices.reversed()) {
+                if (picks[i].first in dead) { freed += picks[i].second; picks.removeAt(i) }
+            }
+            // Give the slots to cards already in the deck, by the same
+            // top-up rule used above: more of something that fits beats a
+            // card that can never be cast.
+            for (i in picks.indices) {
+                if (freed <= 0) break
+                val (id, q) = picks[i]
+                val headroom = minOf(cat.deckLimit(id) - q, freed)
+                if (headroom > 0) { picks[i] = id to (q + headroom); freed -= headroom }
+            }
+            if (freed > 0) picks.add(INFINITE_FILLER to freed)
+        }
+
         val cards = ArrayList<Int>(size)
         for ((id, q) in picks) repeat(q) { cards.add(id) }
         if (cards.size != size) return null

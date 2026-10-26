@@ -33,7 +33,8 @@ import json
 import os
 from dataclasses import dataclass, field
 
-from . import archetype, explore
+from . import archetype
+from . import castable, explore
 from .moves import is_playable
 
 # Tags that describe provenance or timing, never a deck's plan.
@@ -530,6 +531,34 @@ def _fill(picks: list[tuple[int, int]], total: int, catalog: dict[int, dict],
     if total < size:
         picks.append((archetype.INFINITE_FILLER, size - total))
         total = size
+
+    # DROP WHAT THIS DECK COULD NEVER PLAY.
+    #
+    # Measured in the live league: a 72.1% poison deck carries ten copies of
+    # Shield Soldier, which demands a shield gained this turn, with no shield
+    # source anywhere in the list. compose() cannot see that -- it scores on
+    # measured theme strength, and a theme says what a card can do, not what
+    # it can do HERE.
+    #
+    # Judged against the finished list, because whether a gate can open
+    # depends on what else ended up in the deck. One pass, not a loop:
+    # removing a card can in principle kill another, but chasing that to a
+    # fixed point risks unravelling a whole list over one slot.
+    picked = [cid for cid, q in picks for _ in range(q)]
+    dead = castable.dead_cards(picked, catalog)
+    if dead:
+        freed = sum(q for cid, q in picks if cid in dead)
+        picks = [(cid, q) for cid, q in picks if cid not in dead]
+        for i, (cid, q) in enumerate(picks):
+            if freed <= 0:
+                break
+            head = min(limit(cid) - q, freed)
+            if head > 0:
+                picks[i] = (cid, q + head)
+                freed -= head
+        if freed > 0:
+            picks.append((archetype.INFINITE_FILLER, freed))
+        total = sum(q for _, q in picks)
     return picks, total
 
 
