@@ -2107,14 +2107,13 @@ fun ArenaPane(
                                                         r
                                                     }
                                                 }.onSuccess { r ->
-                                                    note = "\u201cRebuilt it without " +
+                                                    note = "\u201c" + voice.rebuiltWithout(
                                                         r.removed.joinToString(", ") {
                                                             cardsById[it]?.name ?: "card $it"
-                                                        } + ", leaning on " +
+                                                        },
                                                         r.added.take(2).joinToString(" and ") {
                                                             cardsById[it.first]?.name ?: "card"
-                                                        } + " instead. The copy on the " +
-                                                        "shelf is untouched.\u201d"
+                                                        }) + "\u201d"
                                                     openSaved = null
                                                     refresh()
                                                 }.onFailure { error = readable(it) }
@@ -2398,14 +2397,14 @@ fun ArenaPane(
                                                 fixed
                                             }
                                         }.onSuccess { fixed ->
-                                            note = if (fixed.removed.isEmpty())
-                                                "\u201cBack to the deck from round " +
-                                                    "$rid, exactly as it played.\u201d"
-                                            else "\u201cBack to the deck from round " +
-                                                "$rid, without " +
-                                                fixed.removed.joinToString(", ") {
-                                                    cardsById[it]?.name ?: "card $it"
-                                                } + " \u2014 banned since.\u201d"
+                                            note = "\u201c" + (
+                                                if (fixed.removed.isEmpty())
+                                                    voice.restored(rid)
+                                                else voice.restoredWithout(rid,
+                                                    fixed.removed.joinToString(", ") {
+                                                        cardsById[it]?.name ?: "card $it"
+                                                    } + " \u2014 banned since")
+                                            ) + "\u201d"
                                             refresh()
                                         }.onFailure { error = readable(it) }
                                         reviveBusy = null

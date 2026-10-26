@@ -575,11 +575,18 @@ enum class Voice {
         SPRITE -> "Back to the deck from round $round, though without $cards."
     }
 
-    /** The deck had to be rebuilt around cards that left the format. */
-    fun rebuiltWithout(cards: String): String = when (this) {
-        WIZARD -> "Rebuilt it without $cards."
-        BRUTE -> "Rebuilt it without $cards."
-        SPRITE -> "I've rebuilt it without $cards."
+    /**
+     * The deck had to be rebuilt around cards that left the format, and the
+     * shelved copy is deliberately left alone -- the player may want it back
+     * when the ban rotates out.
+     */
+    fun rebuiltWithout(removed: String, leaning: String): String = when (this) {
+        WIZARD -> "Rebuilt it without $removed, leaning on $leaning instead. " +
+            "The copy on the shelf is untouched."
+        BRUTE -> "Rebuilt it without $removed. Leaning on $leaning now. The " +
+            "shelved copy is untouched."
+        SPRITE -> "I've rebuilt it without $removed, leaning on $leaning " +
+            "instead. The copy on the shelf is untouched."
     }
 
     companion object {
