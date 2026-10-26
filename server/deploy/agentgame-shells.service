@@ -1,0 +1,19 @@
+[Unit]
+Description=AutoBattle Agent game — rebuild the quick-build shell pool
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=/etc/agentgame-round.env
+ExecStart=/usr/bin/python3 -u /var/www/games/agentgame/bin/make_shells.py
+# Yields to the round, which is the thing players are waiting on. A late
+# shell pool costs nobody anything; a late round shows as a frozen table.
+Nice=15
+CPUWeight=30
+MemoryMax=600M
+# Measuring 24 candidates against the whole field is about as much work as a
+# round (18-20 min at 39 decks), so the ceiling is generous. It is a oneshot
+# on a four-hourly timer, so overrunning delays nothing but itself.
+TimeoutStartSec=2700
+ReadWritePaths=/var/www/games/agentgame/var

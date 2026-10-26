@@ -128,6 +128,58 @@ object Compete {
         val verdict: String? = null,
     )
 
+    /**
+     * A deck the server already measured against this field.
+     *
+     * Carried with its figure so the player can be told what they are
+     * starting from. `wins` is out of `opponents` as of `round`, not a rate:
+     * a shell measured against 39 decks is not comparable to one measured
+     * against 12, and a percentage would hide that.
+     */
+    data class Shell(
+        val name: String,
+        val cards: List<Int>,
+        val plan: JSONObject,
+        val wins: Double,
+        val opponents: Int,
+        val round: Int,
+        val distinct: Int,
+    )
+
+    /**
+     * Read GET /shells into Shells.
+     *
+     * HERE RATHER THAN AT EITHER CALL SITE, because there are two: the
+     * picker shows the pool and the training service resolves one by name at
+     * build time. Parsed twice is parsed two ways eventually.
+     */
+    fun readShells(client: GameClient): List<Shell> {
+        val arr = client.shells()
+        val out = ArrayList<Shell>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val entries = o.optJSONArray("cards") ?: continue
+            val cards = ArrayList<Int>()
+            for (j in 0 until entries.length()) {
+                val e = entries.getJSONObject(j)
+                repeat(e.getInt("quantity")) { cards.add(e.getInt("card_id")) }
+            }
+            // A shell that is not a legal hundred is a server-side bug, and
+            // offering it would surface as the player's deck being rejected.
+            if (cards.size != 100) continue
+            out.add(Shell(
+                name = o.optString("name"),
+                cards = cards,
+                plan = o.optJSONObject("battle_plan") ?: JSONObject(),
+                wins = o.optDouble("wins", 0.0),
+                opponents = o.optInt("opponents"),
+                round = o.optInt("round"),
+                distinct = o.optInt("distinct_cards"),
+            ))
+        }
+        return out
+    }
+
     data class Attempt(
         /** "Rickity Power Station x5" */
         val adds: String,
@@ -820,6 +872,18 @@ object Compete {
         // belongs to the instrument, not the deck.
         climbSeeds: Int = 31,
         generations: Int = directive.generations,
+        /**
+         * Start from this instead of drafting.
+         *
+         * A QUICK BUILD IS THE SAME CLIMB, SHORTER. The expensive stages are
+         * skipped -- the seed pool, the drafts, the screen that ranks them --
+         * because the server has already done that work against this field.
+         * Everything after is untouched: the same mutation pool, the same
+         * bench the player watches, the same verify on seeds nothing was
+         * selected on. So a quick build is as honest as a deep one; there is
+         * simply less of it.
+         */
+        shell: Shell? = null,
         mutationsPerGen: Int = 10,
         // One barren generation is not a plateau. Stopping on the first
         // failure makes the whole climb a coin flip on ten random swaps.
@@ -880,7 +944,12 @@ object Compete {
             else -> allSeeds
         }
         val stride = maxOf(1, candidateSeeds.size / seedCount)
-        val picked = candidateSeeds.filterIndexed { i, _ -> i % stride == 0 }.take(seedCount)
+        // A SHELL DRAFTS NOTHING. The pool above is still computed because
+        // the climb reaches into `allSeeds` for what it may add; the drafting
+        // that follows is the expensive part and a shell replaces its whole
+        // output, so there is nothing to draft.
+        val picked = if (shell != null) emptyList()
+                     else candidateSeeds.filterIndexed { i, _ -> i % stride == 0 }.take(seedCount)
 
         val built = ArrayList<Archetype.Built>()
         picked.forEachIndexed { i, s ->
@@ -907,7 +976,7 @@ object Compete {
         // cap can reject everything, and "your agent did nothing" is a worse
         // answer than "it could not avoid the field this time".
         var relaxed = false
-        if (built.isEmpty() && directive.maxOverlap != null) {
+        if (shell == null && built.isEmpty() && directive.maxOverlap != null) {
             relaxed = true
             picked.forEach { s ->
                 val b = Archetype.build(s, cat, meta,
@@ -917,7 +986,7 @@ object Compete {
                 if (b.cards.size == 100 && b.cards.none { it in banned }) built.add(b)
             }
         }
-        require(built.isNotEmpty()) { "could not build a legal deck" }
+        require(built.isNotEmpty() || shell != null) { "could not build a legal deck" }
 
         // Targeting changes who the agent SELECTS against, never who it is
         // finally judged against -- a deck built to beat one rival routinely
@@ -926,14 +995,32 @@ object Compete {
             ?.let { t -> opponents.filter { it.name == t } }
             ?.takeIf { it.isNotEmpty() } ?: opponents
 
-        onProgress(Progress("Comparing ${built.size} drafts", 0, 1))
-        val arms = built.mapIndexed { i, b -> Deck("c$i", b.cards, b.plan, b.seedName, null) }
-        val screened = score(cat, arms, selectAgainst, seeds, workers)
-        var bestI = arms.indices.maxByOrNull { screened["c$it"]?.wins ?: -1.0 }!!
-        var cur = built[bestI].cards
-        var curPlan = built[bestI].plan
-        var curWins = screened["c$bestI"]!!.wins
-        val name = built[bestI].seedName
+        // NOTHING TO MEASURE YET WHEN A SHELL IS GIVEN. The climb re-scores
+        // `cur` alongside its mutations in one payload every pass (see the
+        // gArms list below), so the figure carried in here is only a
+        // fallback for the case where the very first pass finds no legal
+        // mutation. The server's own number is the honest thing to put there
+        // -- it is what that deck actually did against this field.
+        var cur: List<Int>
+        var curPlan: JSONObject
+        var curWins: Double
+        val name: String
+        if (shell != null) {
+            onProgress(Progress("Reading ${shell.name}", 0, 1))
+            cur = shell.cards
+            curPlan = shell.plan
+            curWins = shell.wins
+            name = shell.name
+        } else {
+            onProgress(Progress("Comparing ${built.size} drafts", 0, 1))
+            val arms = built.mapIndexed { i, b -> Deck("c$i", b.cards, b.plan, b.seedName, null) }
+            val screened = score(cat, arms, selectAgainst, seeds, workers)
+            val bestI = arms.indices.maxByOrNull { screened["c$it"]?.wins ?: -1.0 }!!
+            cur = built[bestI].cards
+            curPlan = built[bestI].plan
+            curWins = screened["c$bestI"]!!.wins
+            name = built[bestI].seedName
+        }
 
         // WHAT THE CLIMB MAY ADD IS NOT WHAT IT BUILDS AROUND.
         //
@@ -1021,5 +1108,8 @@ object Compete {
             opponents, verify, workers)["fin"]?.wins ?: curWins
         return Outcome(name, cur, curPlan, finalWins, opponents.size, built.size,
             climbed, relaxed)
+        // built.size is 0 for a quick build, which is the truth: it drafted
+        // nothing. The caller says "started from <name>" rather than
+        // "considered N drafts".
     }
 }

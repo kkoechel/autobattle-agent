@@ -157,6 +157,39 @@ if ($path === 'field' && $method === 'GET') {
     reply(['ok' => true, 'decks' => $out]);
 }
 
+// ---- GET /shells --------------------------------------------------------
+// The quick-build pool: measured archetypes the phone can start from instead
+// of climbing from a cold seed.
+//
+// Returns the CARD LISTS, which POST /deck/reset deliberately does not --
+// that route installs a starter server-side and tells the player only its
+// name. Here the phone needs the hundred cards, because it is going to spend
+// three or four refine passes on them locally and submit the result.
+//
+// `wins` is against `opponents` as of `round_no`, not a percentage: a shell
+// measured when the field was 39 decks is not comparable to one measured at
+// 12, and rounding it to a rate would hide that.
+if ($path === 'shells' && $method === 'GET') {
+    require_player();
+    $rows = db()->query(
+        'SELECT name, cards_json, plan_json, wins, opponents, round_no,
+                distinct_cards, created_at
+           FROM shells ORDER BY wins DESC, id'
+    )->fetchAll();
+    $out = [];
+    foreach ($rows as $r) {
+        $out[] = ['name' => $r['name'],
+                  'cards' => json_decode($r['cards_json'], true),
+                  'battle_plan' => json_decode($r['plan_json'], true) ?: new stdClass(),
+                  'wins' => (float)$r['wins'],
+                  'opponents' => (int)$r['opponents'],
+                  'round' => (int)$r['round_no'],
+                  'distinct_cards' => (int)$r['distinct_cards'],
+                  'measured_at' => $r['created_at']];
+    }
+    reply(['ok' => true, 'shells' => $out]);
+}
+
 // ---- GET /standings -----------------------------------------------------
 if ($path === 'standings' && $method === 'GET') {
     $rd = db()->query(
@@ -387,6 +420,53 @@ if ($path === 'starters' && $method === 'POST') {
         fail(500, 'could not store starters: ' . $e->getMessage());
     }
     reply(['ok' => true, 'starters' => count($rows)]);
+}
+
+// ---- POST /shells -------------------------------------------------------
+// Replaces the quick-build pool wholesale, like POST /starters. Written by
+// bin/make_shells.py, which composes archetypes and measures them against the
+// live field. Replace rather than append for the same reason: a shell that
+// was strong against a field which has since moved on is no longer a good
+// place to start.
+if ($path === 'shells' && $method === 'POST') {
+    $tok = (string)($_SERVER['HTTP_X_ADMIN_TOKEN'] ?? '');
+    $want = (string)(cfg()['admin_token'] ?? '');
+    if ($want === '' || !hash_equals($want, $tok)) fail(403, 'admin token required');
+    $rows = body()['shells'] ?? null;
+    if (!is_array($rows) || !$rows) fail(400, 'shells must be a non-empty array');
+
+    // Same validation as the player path. A shell is a deck nobody chose
+    // card by card, so an illegal one is a server-authored bug that would
+    // surface as the player's deck being rejected.
+    foreach ($rows as $i => $r) {
+        if ($why = deck_problem($r['cards'] ?? [])) fail(400, "shell $i: $why");
+    }
+    db()->beginTransaction();
+    try {
+        db()->exec('DELETE FROM shells');
+        $ins = db()->prepare(
+            'INSERT INTO shells (name, cards_json, plan_json, wins, opponents,
+                                 round_no, distinct_cards)
+             VALUES (?,?,?,?,?,?,?)');
+        foreach ($rows as $r) {
+            $norm = [];
+            foreach ($r['cards'] as $e) {
+                $norm[] = ['card_id' => (int)$e['card_id'],
+                           'quantity' => (int)$e['quantity']];
+            }
+            usort($norm, fn($a, $x) => $a['card_id'] <=> $x['card_id']);
+            $ins->execute([substr((string)($r['name'] ?? 'Shell'), 0, 80),
+                           json_encode($norm),
+                           json_encode($r['battle_plan'] ?? [], JSON_FORCE_OBJECT),
+                           (float)($r['wins'] ?? 0), (int)($r['opponents'] ?? 0),
+                           (int)($r['round'] ?? 0), count($norm)]);
+        }
+        db()->commit();
+    } catch (Throwable $e) {
+        db()->rollBack();
+        fail(500, 'could not store shells: ' . $e->getMessage());
+    }
+    reply(['ok' => true, 'shells' => count($rows)]);
 }
 
 // ---- POST /bans ---------------------------------------------------------
@@ -806,7 +886,8 @@ if ($path === 'health' && $method === 'GET') {
     reply(['ok' => true, 'cards' => count(catalogue()),
            'players' => (int)db()->query('SELECT COUNT(*) FROM players')->fetchColumn(),
            'decks' => (int)db()->query('SELECT COUNT(*) FROM decks')->fetchColumn(),
-           'starters' => (int)db()->query('SELECT COUNT(*) FROM starters')->fetchColumn()]);
+           'starters' => (int)db()->query('SELECT COUNT(*) FROM starters')->fetchColumn(),
+           'shells' => (int)db()->query('SELECT COUNT(*) FROM shells')->fetchColumn()]);
 }
 
 fail(404, 'no such endpoint');

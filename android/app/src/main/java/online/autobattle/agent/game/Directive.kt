@@ -44,6 +44,17 @@ data class Directive(
      * askable, so an untouched directive builds the same deck it always did.
      */
     val plan: PlanPrefs = PlanPrefs(),
+    /**
+     * The measured archetype this build starts from, by name.
+     *
+     * Persisted with the rest so a later rebuild repeats the choice instead
+     * of quietly falling back to a cold climb -- the player picked a starting
+     * point, and "build it again" should mean the same thing the second time.
+     * The NAME rather than the list: the pool is rebuilt every few hours
+     * against a moving field, and starting from a stale copy of a deck would
+     * be worse than starting from the current one with the same idea.
+     */
+    val shellName: String? = null,
 ) {
     enum class Breadth { WIDE, BALANCED, DEEP }
 
@@ -76,8 +87,17 @@ data class Directive(
         Breadth.WIDE -> 60; Breadth.BALANCED -> 36; Breadth.DEEP -> 18
     }
 
-    /** Refinement rounds spent on the chosen design. */
-    val generations: Int get() = when (breadth) {
+    /**
+     * Refinement rounds spent on the chosen design.
+     *
+     * A quick build takes four whatever the breadth says. Breadth describes
+     * how widely to search for an IDEA, and a shell is the idea already
+     * chosen and already measured -- the big wins are found, so twelve more
+     * passes would mostly be the bench reporting that nothing beat the
+     * current deck. Four is enough to show real work and to let the deck
+     * adapt to a field that has moved since the pool was built.
+     */
+    val generations: Int get() = if (shellName != null) 4 else when (breadth) {
         Breadth.WIDE -> 3; Breadth.BALANCED -> 6; Breadth.DEEP -> 12
     }
 
@@ -132,6 +152,7 @@ data class Directive(
         .putOpt("seedCardName", seedCardName)
         .put("style", style.name)
         .put("plan", plan.toJson())
+        .putOpt("shellName", shellName)
 
     companion object {
         private const val PREFS = "abagent"
@@ -154,6 +175,7 @@ data class Directive(
                 style = runCatching { Style.valueOf(o.optString("style", "ANY")) }
                     .getOrDefault(Style.ANY),
                 plan = PlanPrefs.fromJson(o.optJSONObject("plan")),
+                shellName = str(o, "shellName"),
             )
         } catch (e: Exception) {
             // A directive that cannot be read is not worth crashing over;

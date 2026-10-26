@@ -84,6 +84,17 @@ class GameClient(private val token: String?, private val base: String = BASE) {
     fun idea(): JSONObject = call("GET", "/idea")
 
     /**
+     * The quick-build pool: archetypes the server has already measured
+     * against this field, with their card lists.
+     *
+     * The point of fetching the hundred cards rather than a name is that the
+     * phone starts FROM one of these. Candidate generation was never what
+     * made a build take six minutes -- measuring is, it depends on a field
+     * that moves, and this is that measurement already done.
+     */
+    fun shells(): JSONArray = call("GET", "/shells").optJSONArray("shells") ?: JSONArray()
+
+    /**
      * Form over a window of recent rounds. One round is noisy enough that a
      * player cannot tell improvement from luck by looking at it.
      */

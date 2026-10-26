@@ -101,6 +101,26 @@ CREATE TABLE IF NOT EXISTS starters (
   created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Quick-build shells: the BEST measured deck per archetype, as opposed to
+-- `starters` above, which deliberately targets the field's median so a new
+-- player's first deck neither wins nor comes last. A shell is a starting
+-- point a player CHOSE, so it wants to be the strongest version of its idea;
+-- the phone then spends three or four refine passes on it instead of the
+-- twelve a cold climb needs. Same shape as starters plus the round it was
+-- measured in (so the app can say how fresh it is) and the distinct-card
+-- count (so it can say how focused it is).
+CREATE TABLE IF NOT EXISTS shells (
+  id             INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  name           VARCHAR(80)  NOT NULL,
+  cards_json     MEDIUMTEXT   NOT NULL,
+  plan_json      MEDIUMTEXT   NOT NULL,
+  wins           DECIMAL(5,2) NOT NULL DEFAULT 0,
+  opponents      SMALLINT     NOT NULL DEFAULT 0,
+  round_no       INT UNSIGNED NOT NULL DEFAULT 0,
+  distinct_cards SMALLINT     NOT NULL DEFAULT 0,
+  created_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- A player's keepers. The agent replaces the ONE deck it is working on, so
 -- without somewhere to put a deck that is doing well, trying a new idea
 -- means losing the old one: "if I were to switch deck ideas right now, I'd

@@ -34,6 +34,10 @@ class TrainingService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    /** One shell out of GET /shells, by name, or null if it is not offered. */
+    private fun readShell(c: GameClient, want: String): Compete.Shell? =
+        Compete.readShells(c).firstOrNull { it.name == want }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (job?.isActive == true) return START_NOT_STICKY
         startForeground(NOTIF_ID, notification("Starting…"))
@@ -47,7 +51,21 @@ class TrainingService : Service() {
             val r = runCatching {
                 require(token != null) { "not joined yet" }
                 val c = GameClient(token)
-                val outcome = Compete.train(c, handle, directive) { p ->
+                // RESOLVED HERE, NOT STORED. The directive keeps the shell's
+                // NAME; the list is fetched now, so a rebuild starts from the
+                // current measurement of that idea rather than a copy taken
+                // when the player first chose it. If the pool no longer has
+                // it -- an archetype can stop being buildable when a card is
+                // banned -- this falls through to an ordinary build rather
+                // than failing, which is the same deck the player asked for,
+                // arrived at the long way.
+                val shell = directive.shellName?.let { want ->
+                    runCatching { readShell(c, want) }.getOrNull()
+                }
+                if (directive.shellName != null && shell == null) {
+                    note("That deck is no longer offered; building it from scratch…")
+                }
+                val outcome = Compete.train(c, handle, directive, shell = shell) { p ->
                     Training.report(p)
                     note(p.step + if (p.total > 1) "  (${p.done}/${p.total})" else "")
                 }

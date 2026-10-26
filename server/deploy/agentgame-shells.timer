@@ -1,0 +1,18 @@
+[Unit]
+Description=Rebuild the Agent game quick-build shells, four-hourly
+
+[Timer]
+# NOT every round, deliberately. agentgame-round.timer fires every thirty
+# minutes and a round takes eighteen to twenty to score thirty-nine decks, so
+# the box is already busy most of the time; this costs about as much as a
+# round again. Four-hourly is affordable and ample -- the field barely moves
+# faster than that while the bot decks are frozen and only players change.
+#
+# :21 so it starts after a round that began at :04 has finished and before
+# the one at :34, rather than racing either.
+OnCalendar=00/4:21
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

@@ -156,6 +156,12 @@ fun ArenaPane(
     var cardsById by remember { mutableStateOf<Map<Int, CardInfo>>(emptyMap()) }
     var showCard by remember { mutableStateOf<CardInfo?>(null) }
     var showThemes by remember { mutableStateOf(false) }
+    // The quick-build pool, fetched when the player opens the picker rather
+    // than on every screen: it is a round-trip nobody waiting for standings
+    // needs, and the pool only changes every few hours.
+    var showShells by remember { mutableStateOf(false) }
+    var shells by remember { mutableStateOf<List<Compete.Shell>?>(null) }
+    var shellsError by remember { mutableStateOf<String?>(null) }
     // Where the player currently is. The agent is a person you talk to; the
     // dojo and the binder are places you go to look things up. Keeping them
     // on one scroll meant the conversation was always buried under a table.
@@ -1284,6 +1290,23 @@ fun ArenaPane(
                     // "name a card", which is the half of the game that was
                     // already over-represented.
                     GameLink("Pick a theme\u2026") { showThemes = true }
+                    // THE QUICK WAY IN. A cold build is twelve refine passes
+                    // and about six minutes, because measuring is the cost
+                    // and it depends on a field that moves. The server has
+                    // already measured a dozen archetypes against this
+                    // field; starting from one of those leaves the phone
+                    // four passes of polish instead of twelve of search.
+                    GameLink("Start from a measured deck") {
+                        shells = null; shellsError = null; showShells = true
+                        scope.launch {
+                            val t = token
+                            if (t == null) { shellsError = "not joined yet"; return@launch }
+                            runCatching {
+                                withContext(Dispatchers.IO) { Compete.readShells(GameClient(t)) }
+                            }.onSuccess { shells = it }
+                             .onFailure { shellsError = readable(it) }
+                        }
+                    }
                     GameLink("Let's talk") {
                         // IT DID NOTHING MOST OF THE TIME, and the reason was
                         // not the memory it was clearing. `q` is forced to
@@ -1580,6 +1603,84 @@ fun ArenaPane(
                         Text(if (directive.themeLabels.isEmpty()) "That's all"
                              else "Build " + directive.themeLabels.joinToString(" + "))
                     }
+                })
+        }
+
+        // THE QUICK-BUILD PICKER.
+        //
+        // Shows what each shell actually DID, not a rating: "21.4 wins of 38
+        // in round 746". A percentage would hide that a shell measured
+        // against 39 decks is not comparable to one measured against 12, and
+        // the round number is what tells a player how fresh the figure is.
+        if (showShells) {
+            AlertDialog(
+                containerColor = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(12.dp),
+                onDismissRequest = { showShells = false },
+                title = { Text("\u201cWhich of these shall I start from?\u201d") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("\u201cI have already played each of these against " +
+                            "the field. Starting from one leaves me polishing " +
+                            "rather than searching, which is a minute instead " +
+                            "of six.\u201d",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        val list = shells
+                        when {
+                            shellsError != null -> Text(shellsError!!,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error)
+                            list == null -> SnesProgress(0, 1)
+                            list.isEmpty() -> Text("\u201cThe pool is empty just " +
+                                "now \u2014 it is rebuilt every few hours. Pick a " +
+                                "theme instead and I will build from scratch.\u201d",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            else -> Column(
+                                Modifier.verticalScroll(rememberScrollState()),
+                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                            ) {
+                                for (sh in list) {
+                                    val on = sh.name == directive.shellName
+                                    Column(
+                                        Modifier.fillMaxWidth()
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .clickable {
+                                                directive = directive.copy(
+                                                    shellName = sh.name,
+                                                    // The shell IS the idea, so a
+                                                    // theme or seed card chosen
+                                                    // earlier would now be describing
+                                                    // a build that is not happening.
+                                                    themes = emptyList(),
+                                                    themeLabels = emptyList(),
+                                                    seedCard = null, seedCardName = null)
+                                                Directive.save(ctx, directive)
+                                                showShells = false
+                                                error = null; note = null; trial = null
+                                                TrainingService.start(ctx)
+                                            }
+                                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                                    ) {
+                                        Text((if (on) "\u25c6 " else "") + sh.name,
+                                            style = MaterialTheme.typography.titleSmall,
+                                            color = if (on) GoldBright
+                                                    else MaterialTheme.colorScheme.primary)
+                                        Text(String.format("%.1f", sh.wins) +
+                                            " wins of ${sh.opponents}" +
+                                            " in round ${sh.round}" +
+                                            "  \u00b7  ${sh.distinct} distinct cards",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showShells = false }) { Text("Not now") }
                 })
         }
 
