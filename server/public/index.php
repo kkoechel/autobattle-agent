@@ -140,7 +140,7 @@ if ($path === 'deck/reset' && $method === 'POST') {
 if ($path === 'field' && $method === 'GET') {
     require_player();
     $rows = db()->query(
-        'SELECT p.id AS player_id, p.handle, p.is_bot, d.name, d.revision,
+        'SELECT p.id AS player_id, p.handle, p.is_bot, p.faction, d.name, d.revision,
                 d.cards_json, d.plan_json
            FROM decks d JOIN players p ON p.id = d.player_id
           ORDER BY p.id'
@@ -148,7 +148,8 @@ if ($path === 'field' && $method === 'GET') {
     $out = [];
     foreach ($rows as $r) {
         $out[] = ['player_id' => (int)$r['player_id'], 'handle' => $r['handle'],
-                  'is_bot' => (bool)$r['is_bot'], 'deck_name' => $r['name'],
+                  'is_bot' => (bool)$r['is_bot'], 'faction' => (string)$r['faction'],
+                  'deck_name' => $r['name'],
                   'revision' => (int)$r['revision'],
                   'cards' => json_decode($r['cards_json'], true),
                   'battle_plan' => json_decode($r['plan_json'], true) ?: new stdClass()];
@@ -163,7 +164,7 @@ if ($path === 'standings' && $method === 'GET') {
           ORDER BY id DESC LIMIT 1')->fetch();
     if (!$rd) reply(['ok' => true, 'round' => null, 'standings' => []]);
     $st = db()->prepare(
-        'SELECT r.placement, p.handle, p.is_bot, r.deck_name, r.revision,
+        'SELECT r.placement, p.handle, p.is_bot, p.faction, r.deck_name, r.revision,
                 r.wins, r.losses, r.draws
            FROM results r JOIN players p ON p.id = r.player_id
           WHERE r.round_id = ? ORDER BY r.placement');
@@ -202,7 +203,7 @@ if ($path === 'leaderboard' && $method === 'GET') {
         ->fetchColumn();
     $since = $latest - $window;
     $st = db()->prepare(
-        'SELECT p.handle, p.is_bot,
+        'SELECT p.handle, p.is_bot, p.faction,
                 COUNT(*)            AS rounds,
                 AVG(r.placement)    AS avg_place,
                 AVG(r.wins)         AS avg_wins,
@@ -218,6 +219,7 @@ if ($path === 'leaderboard' && $method === 'GET') {
         $rows[] = [
             'handle'     => $r['handle'],
             'is_bot'     => (int)$r['is_bot'],
+            'faction'    => (string)$r['faction'],
             'rounds'     => (int)$r['rounds'],
             'avg_place'  => round((float)$r['avg_place'], 2),
             'avg_wins'   => round((float)$r['avg_wins'], 2),
