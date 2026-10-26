@@ -763,7 +763,10 @@ def prune_dead_clauses(cards: list[int], plan: dict, catalog: dict[int, dict],
         c: "needs " + "/".join(sorted(m))
         for c, m in dead_clause_cards(cards, catalog).items()
     }
-    for c, why in castable.dead_cards(cards, catalog).items():
+    # proven_only: this CUTS the card, so it may only use the tests that are
+    # proofs. The cost-floor test is a judgement about reachable energy and
+    # would be cutting cards on a guess.
+    for c, why in castable.dead_cards(cards, catalog, proven_only=True).items():
         dead.setdefault(c, why)
 
     # Never prune something another card needs: a tutor's target, or the only

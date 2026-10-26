@@ -20,6 +20,15 @@ from __future__ import annotations
 import json
 
 # Energy a long game plausibly reaches, for the cost-floor test.
+#
+# NOTE WHAT KIND OF NUMBER THIS IS. Energy is +1 a turn and a match runs to
+# 600, so 33 energy is reachable by a deck that simply never spends -- this
+# constant is a judgement about what a deck PLAUSIBLY reaches, not a proof
+# that it cannot. It is therefore the one test in this module that breaks the
+# promise at the top of the file, and callers who ACT on a verdict (cutting
+# the card) must pass proven_only=True to leave it out. Generation-time
+# filtering may use it: preferring not to draft a 33-cost card is cheap and
+# reversible, where cutting one from a finished deck is neither.
 REACHABLE_ENERGY = 25
 
 # Metrics a deck drives ITSELF, and the effect types that drive them.
@@ -56,16 +65,23 @@ def _deck_can_produce(deck_ids, catalog, effect_types) -> bool:
     return False
 
 
-def dead_reason(cid: int, deck_ids, catalog: dict) -> str | None:
-    """Why this card can never be played in this deck, or None."""
+def dead_reason(cid: int, deck_ids, catalog: dict,
+                proven_only: bool = False) -> str | None:
+    """Why this card can never be played in this deck, or None.
+
+    proven_only drops the cost-floor test, which is a plausibility judgement
+    rather than a proof -- see REACHABLE_ENERGY. Pass it whenever the verdict
+    will be acted on rather than merely preferred.
+    """
     eff = _effects(catalog.get(cid, {}))
     if not eff:
         return None
 
-    cs = eff.get("cost_scaling") or {}
-    floor = cs.get("minimum")
-    if isinstance(floor, int) and floor > REACHABLE_ENERGY:
-        return f"costs at least {floor} energy"
+    if not proven_only:
+        cs = eff.get("cost_scaling") or {}
+        floor = cs.get("minimum")
+        if isinstance(floor, int) and floor > REACHABLE_ENERGY:
+            return f"costs at least {floor} energy"
 
     ac = eff.get("additional_cost") or {}
     honor = ac.get("honor") or 0
@@ -84,11 +100,12 @@ def dead_reason(cid: int, deck_ids, catalog: dict) -> str | None:
     return None
 
 
-def dead_cards(deck_ids, catalog: dict) -> dict[int, str]:
+def dead_cards(deck_ids, catalog: dict,
+               proven_only: bool = False) -> dict[int, str]:
     """Every provably unplayable card in this deck, with its reason."""
     out = {}
     for cid in set(deck_ids):
-        why = dead_reason(cid, deck_ids, catalog)
+        why = dead_reason(cid, deck_ids, catalog, proven_only=proven_only)
         if why:
             out[cid] = why
     return out
