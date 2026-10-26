@@ -55,8 +55,14 @@ import kotlinx.coroutines.delay
 
 private val FRAME_OUT = Color(0xFF0A0A12)
 private val FRAME_LIT = Color(0xFFF2EFE4)
-private val FILL_TOP  = Color(0xFF2B2A4A)
-private val FILL_BOT  = Color(0xFF14142A)
+// THE WINDOW IS SLIGHTLY TRANSPARENT so the Paragon standing behind it is
+// not cut in half by it. Not much: the text sits on this fill and has to
+// stay readable over whatever locale happens to be behind, which ranges from
+// a pale sky to a dark cave. The frame and the bright inlay stay opaque --
+// they are what keeps the window reading as a window rather than as a stain
+// on the picture.
+private val FILL_TOP  = Color(0xE62B2A4A)
+private val FILL_BOT  = Color(0xE614142A)
 
 /** One logical pixel of the window's own grid, so the frame stays crisp. */
 private val UNIT = 2.dp

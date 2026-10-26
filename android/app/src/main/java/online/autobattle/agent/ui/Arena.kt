@@ -1381,12 +1381,24 @@ fun ArenaPane(
             // vanishes whenever the agent has a question pending, which is
             // most of the time. Here there is no question pending, ever.
             if (place == Place.TALK && talkPane == null) {
-                // WHO YOU ARE, where looking at your Paragon belongs. Tapping
-                // it opens the face chooser, as it did in the old top row.
-                Nameplate(handle.ifBlank { "You" },
+                // THE PARAGON, NOT THE HANDLE. This plate opens the face
+                // chooser, so it has to say what it changes. It showed the
+                // league handle, which made it read as a profile button --
+                // and on the dev account that handle is "PickerProbe", so
+                // the control for choosing who you play as was labelled with
+                // a test name.
+                //
+                // The handle is still worth showing, because it is the name
+                // the standings call you, so it sits under the plate where
+                // it is identification rather than a button.
+                Text("Current Paragon",
+                    style = snesText(11, androidx.compose.ui.graphics.Color(0xFF8898B8)))
+                Nameplate(avatar.label,
                     Modifier.fillMaxWidth().clickable(enabled = token != null) {
                         pickAvatar = true
                     })
+                Text("You play as ${handle.ifBlank { "\u2014" }} in the league.",
+                    style = snesText(11, androidx.compose.ui.graphics.Color(0xFF8898B8)))
                 // ROOM FOR THE FACE. The figure is placed by fraction of the
                 // screen (ui/Avatars.kt), tuned against Brew -- where a
                 // dialogue box and a long choice list push the text down the

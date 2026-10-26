@@ -51,10 +51,14 @@ enum class Avatar(
      */
     val cutout: Boolean = false,
 ) {
-    WIZARD("wizard", "The Wizard", R.drawable.avatar_fever_dreams, Alignment.TopCenter),
-    BRUTE("brute", "The Brute", R.drawable.avatar_unstoppable_force, Alignment.TopCenter),
-    SPRITE("sprite", "The Sprite", R.drawable.avatar_fairy_cleaner, Alignment.TopCenter),
-
+    // ONLY PARAGONS NOW. The first three faces were card artwork -- the
+    // Wizard, the Brute and the Sprite -- from before the game had Paragons
+    // in it. A Paragon is a person you are playing as; a piece of card art
+    // is a picture of a card you might draw, and the two cannot both be "who
+    // your agent is" without the fiction going soft. Their drawables stay in
+    // the tree because the keys below still map old saved preferences onto a
+    // Paragon rather than crashing on them.
+    //
     // The Paragons. Cut out of a chroma field by tools/pixelate_paragon.py,
     // so each stands in whatever locale the moment calls for.
     PARAGON_ONE("paragon1", "Kard Batal", R.drawable.paragon_1,
@@ -65,8 +69,18 @@ enum class Avatar(
         Alignment.TopCenter, cutout = true);
 
     companion object {
-        val DEFAULT = WIZARD
-        fun of(key: String?) = entries.firstOrNull { it.key == key } ?: DEFAULT
+        val DEFAULT = PARAGON_ONE
+        /**
+         * Reads a saved preference, including one written when the three
+         * card-art faces existed -- "wizard", "brute" and "sprite" are no
+         * longer offered, and anyone carrying one gets the Paragon whose
+         * VOICE matches, so the agent keeps speaking the way it did.
+         */
+        fun of(key: String?) = entries.firstOrNull { it.key == key } ?: when (key) {
+            "brute" -> PARAGON_TWO     // Dan Mage is the blunt one
+            "sprite" -> PARAGON_THREE  // Emma Ji is the warm one
+            else -> DEFAULT            // "wizard", null, anything unknown
+        }
 
         private const val PREFS = "agent_look"
         private const val KEY = "avatar"
