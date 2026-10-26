@@ -224,7 +224,15 @@ fun TypedLine(
     Box(modifier) {
         // The full string laid out invisibly underneath, so the window does
         // not grow line by line as the text arrives.
-        Text(text, style = body.copy(color = Color.Transparent))
+        //
+        // SHADOW NULLED, NOT JUST THE COLOUR. snesText carries a drop shadow,
+        // and a Text whose colour is transparent still draws it -- so the
+        // words not yet typed were sitting there as dark ghosts, spoiling the
+        // one effect this composable exists for. It went unnoticed while the
+        // window behind was opaque and nearly the same colour as the shadow;
+        // the moment the window became translucent over a bright locale, the
+        // whole remaining line was legible before it was typed.
+        Text(text, style = body.copy(color = Color.Transparent, shadow = null))
         ClickableText(annotated, style = body) { off ->
             val hit = annotated.getStringAnnotations("card", off, off).firstOrNull()
             if (hit != null) cards.values.firstOrNull { it.id.toString() == hit.item }

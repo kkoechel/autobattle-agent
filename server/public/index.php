@@ -178,8 +178,17 @@ if ($path === 'shells' && $method === 'GET') {
     )->fetchAll();
     $out = [];
     foreach ($rows as $r) {
+        // DO NOT OFFER A DECK THE LEAGUE WOULD REFUSE. The pool is rebuilt
+        // every few hours and bans rotate on their own clock, so a shell can
+        // go illegal between the two -- which is not hypothetical: a shell
+        // holding The Silent Queen was offered for hours after that card was
+        // banned, and picking it ended in a bare "HTTP 400" after a
+        // two-minute build. Checked with deck_problem(), the same function
+        // PUT /deck would have rejected it with.
+        $cards = json_decode($r['cards_json'], true);
+        if (deck_problem($cards) !== null) continue;
         $out[] = ['name' => $r['name'],
-                  'cards' => json_decode($r['cards_json'], true),
+                  'cards' => $cards,
                   'battle_plan' => json_decode($r['plan_json'], true) ?: new stdClass(),
                   'wins' => (float)$r['wins'],
                   'opponents' => (int)$r['opponents'],

@@ -616,6 +616,8 @@ object Compete {
     fun testDeck(
         client: GameClient,
         myHandle: String?,
+        /** Play this out instead of the entered deck. See `mine` below. */
+        bench: Workbench? = null,
         seedCount: Int = 31,
         workers: Int = 4,
         onProgress: (Progress) -> Unit = {},
@@ -629,16 +631,26 @@ object Compete {
         val opponents = opponentsOf(field, myHandle)
         require(opponents.isNotEmpty()) { "there is nobody to play against yet" }
 
-        val me = client.me().optJSONObject("deck")
-            ?: error("you do not have a deck yet")
-        val entries = me.optJSONArray("cards") ?: error("your deck is empty")
-        val flat = ArrayList<Int>(100)
-        for (j in 0 until entries.length()) {
-            val e = entries.getJSONObject(j)
-            repeat(e.getInt("quantity")) { flat.add(e.getInt("card_id")) }
+        // THE DECK UNDER TEST, which is not necessarily the entered one.
+        //
+        // This read `client.me().deck` unconditionally, which quietly meant
+        // you could only rehearse an idea you had ALREADY committed to --
+        // the opposite of what a rehearsal is for. A bench deck is exactly
+        // the case worth playing out, because nothing has been risked on it
+        // yet.
+        val mine = if (bench != null) {
+            Deck("me", bench.cards, bench.plan, bench.name, null)
+        } else {
+            val me = client.me().optJSONObject("deck")
+                ?: error("you do not have a deck yet")
+            val entries = me.optJSONArray("cards") ?: error("your deck is empty")
+            val flat = ArrayList<Int>(100)
+            for (j in 0 until entries.length()) {
+                val e = entries.getJSONObject(j)
+                repeat(e.getInt("quantity")) { flat.add(e.getInt("card_id")) }
+            }
+            Deck("me", flat, me.optJSONObject("battle_plan"), me.optString("name"), null)
         }
-        val mine = Deck("me", flat, me.optJSONObject("battle_plan"),
-            me.optString("name"), null)
 
         // A seed block none of the training stages use (7k screen, 20k climb,
         // 50k verify). Re-reading the seeds a deck was tuned on would flatter
@@ -686,7 +698,7 @@ object Compete {
             if (margin > bestMargin) { bestMargin = margin; best = nm }
             if (margin < worstMargin) { worstMargin = margin; worst = nm }
         }
-        return Trial(me.optString("name"), s.wins, opponents.size, block.size,
+        return Trial(mine.name.ifBlank { "your deck" }, s.wins, opponents.size, block.size,
             beaten, lost, even, best, worst,
             games = games, mine = mine, rivals = opponents,
             cardDefs = builder.cardDefs, display = displayMap(cardsJson))
@@ -948,7 +960,8 @@ object Compete {
         // the climb reaches into `allSeeds` for what it may add; the drafting
         // that follows is the expensive part and a shell replaces its whole
         // output, so there is nothing to draft.
-        val picked = if (shell != null) emptyList()
+        val usingShell = shell != null && shell.cards.none { it in banned }
+        val picked = if (usingShell) emptyList()
                      else candidateSeeds.filterIndexed { i, _ -> i % stride == 0 }.take(seedCount)
 
         val built = ArrayList<Archetype.Built>()
@@ -976,7 +989,7 @@ object Compete {
         // cap can reject everything, and "your agent did nothing" is a worse
         // answer than "it could not avoid the field this time".
         var relaxed = false
-        if (shell == null && built.isEmpty() && directive.maxOverlap != null) {
+        if (!usingShell && built.isEmpty() && directive.maxOverlap != null) {
             relaxed = true
             picked.forEach { s ->
                 val b = Archetype.build(s, cat, meta,
@@ -986,7 +999,7 @@ object Compete {
                 if (b.cards.size == 100 && b.cards.none { it in banned }) built.add(b)
             }
         }
-        require(built.isNotEmpty() || shell != null) { "could not build a legal deck" }
+        require(built.isNotEmpty() || usingShell) { "could not build a legal deck" }
 
         // Targeting changes who the agent SELECTS against, never who it is
         // finally judged against -- a deck built to beat one rival routinely
@@ -1005,7 +1018,17 @@ object Compete {
         var curPlan: JSONObject
         var curWins: Double
         val name: String
-        if (shell != null) {
+        // A SHELL IS A STARTING POINT, NOT AN EXEMPTION. The climb refuses
+        // mutations that add a banned card, but the shell is the BASE and was
+        // never checked against the ban list -- so a pool built before a ban
+        // handed back a deck the league then refused, after two minutes of
+        // work, with nothing but "HTTP 400" to show for it. The server no
+        // longer serves such a shell; this is the second line, because the
+        // pool can go stale between being fetched and being submitted.
+        if (shell != null && !usingShell) {
+            onProgress(Progress("${shell.name} has a card that is now banned", 0, 1))
+        }
+        if (usingShell && shell != null) {
             onProgress(Progress("Reading ${shell.name}", 0, 1))
             cur = shell.cards
             curPlan = shell.plan

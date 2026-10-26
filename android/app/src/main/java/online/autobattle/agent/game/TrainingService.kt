@@ -40,6 +40,8 @@ class TrainingService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (job?.isActive == true) return START_NOT_STICKY
+        // Set only by the ban path, where the entered deck is illegal.
+        val forced = intent?.getBooleanExtra(EXTRA_FORCED, false) ?: false
         startForeground(NOTIF_ID, notification("Starting…"))
         Training.begin()
 
@@ -69,9 +71,41 @@ class TrainingService : Service() {
                     Training.report(p)
                     note(p.step + if (p.total > 1) "  (${p.done}/${p.total})" else "")
                 }
-                note("Submitting…")
-                val rev = c.putDeck(outcome.name, outcome.cards, outcome.plan)
-                Training.Result(outcome, rev, null)
+                // ENTER IT, OR PUT IT ON THE BENCH.
+                //
+                // The same test the screen uses (ui/Arena.kt): a deck is
+                // waiting for a result when the league's last round finished
+                // BEFORE the entered deck was submitted. Asked here rather
+                // than passed in, because the answer can change during a
+                // build -- a six-minute climb can straddle a round -- and
+                // the honest moment to ask is when the deck is ready.
+                //
+                // Three cases enter straight away. Forced: a ban has made
+                // the entered deck ILLEGAL, so it must be replaced rather
+                // than parked behind a decision. No deck yet: there is
+                // nothing to protect. Already scored: the result the player
+                // was waiting for has arrived, so nothing is lost.
+                val entered = runCatching { c.me().optJSONObject("deck") }.getOrNull()
+                val scoredAt = runCatching {
+                    c.standings().optJSONObject("round")?.optString("finished_at")
+                }.getOrNull().orEmpty()
+                val submittedAt = entered?.optString("updated_at").orEmpty()
+                val awaiting = submittedAt.isNotBlank() && scoredAt.isNotBlank() &&
+                    scoredAt <= submittedAt
+                if (forced || entered == null || !awaiting) {
+                    note("Submitting…")
+                    val rev = c.putDeck(outcome.name, outcome.cards, outcome.plan)
+                    Training.Result(outcome, rev, null)
+                } else {
+                    val round = runCatching {
+                        c.standings().optJSONObject("round")?.optInt("id") ?: 0
+                    }.getOrDefault(0)
+                    Workbench.save(this@TrainingService, Workbench(
+                        name = outcome.name, cards = outcome.cards,
+                        plan = outcome.plan, wins = outcome.wins,
+                        opponents = outcome.opponents, builtAtRound = round))
+                    Training.Result(outcome, 0, null, benched = true)
+                }
             }.getOrElse { Training.Result(null, 0, readableError(it)) }
             Training.finish(r)
             // TELL THEM IT LANDED. The ongoing notification is the contract
@@ -123,7 +157,18 @@ class TrainingService : Service() {
     }
 
     private fun readableError(t: Throwable): String = when (t) {
-        is GameException -> "The league said no (HTTP ${t.status})."
+        // SAY WHAT THE LEAGUE OBJECTED TO. The status alone sent me to the
+        // server to find out that a shell held a card banned since the pool
+        // was built; a player has no such option. PUT /deck answers with
+        // deck_problem()'s own sentence -- "card N is banned", "deck must
+        // hold exactly 100 cards" -- which is the useful half of the reply.
+        is GameException -> {
+            val why = runCatching {
+                org.json.JSONObject(t.body).optString("error").takeIf { it.isNotBlank() }
+            }.getOrNull()
+            if (why != null) "The league said no: $why"
+            else "The league said no (HTTP ${t.status})."
+        }
         else -> t.message ?: t.javaClass.simpleName
     }
 
@@ -200,9 +245,17 @@ class TrainingService : Service() {
         private const val NOTIF_ID = 1001
         private const val DONE_CHANNEL = "training_done"
         private const val DONE_ID = 1002
+        private const val EXTRA_FORCED = "forced"
 
-        fun start(ctx: Context) {
-            ctx.startForegroundService(Intent(ctx, TrainingService::class.java))
+        /**
+         * @param forced the entered deck is illegal (a ban landed on it), so
+         * the result must go straight into the league rather than onto the
+         * bench -- there is no sense protecting a deck that cannot play.
+         */
+        fun start(ctx: Context, forced: Boolean = false) {
+            ctx.startForegroundService(
+                Intent(ctx, TrainingService::class.java)
+                    .putExtra(EXTRA_FORCED, forced))
         }
 
         fun stop(ctx: Context) {

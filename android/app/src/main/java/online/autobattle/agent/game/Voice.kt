@@ -540,6 +540,36 @@ enum class Voice {
             "screen off and let you know when it's ready."
     }
 
+    /**
+     * A deck was built while the entered one was still waiting for a result,
+     * so it is on the bench rather than in the league.
+     *
+     * Says WHY in terms of the measurement, because that is the actual
+     * reason and it is the same rule the agent applies to its own card
+     * swaps: it will not call something better without having played both.
+     */
+    fun benched(name: String, wins: String, opponents: Int): String = when (this) {
+        WIZARD -> "$name is ready \u2014 it won $wins of $opponents on fresh " +
+            "matchups. I have not entered it: the deck in the league has yet " +
+            "to play, and until it does I cannot tell you which of the two is " +
+            "the better. Say the word and I will swap them."
+        BRUTE -> "$name is done. $wins of $opponents on fresh matchups. Not " +
+            "entered it \u2014 the one in the league hasn't played, so I can't " +
+            "tell you which is better yet. Say so and I'll swap them."
+        SPRITE -> "$name is ready, and it won $wins of $opponents on fresh " +
+            "matchups. I have kept it aside for now \u2014 the deck in the league " +
+            "still has not played, so there is nothing to compare it against " +
+            "yet. Just say and I will put it in."
+    }
+
+    /** The bench deck has gone into the league in place of the old one. */
+    fun entered(name: String, revision: Int): String = when (this) {
+        WIZARD -> "$name is in, revision $revision. The old one is out."
+        BRUTE -> "$name is in, revision $revision. Old one's out."
+        SPRITE -> "$name is in now, revision $revision \u2014 the old one has " +
+            "stepped aside."
+    }
+
     /** Opening the face chooser. */
     fun whoseFace(): String = when (this) {
         WIZARD -> "Whose face shall I wear?"

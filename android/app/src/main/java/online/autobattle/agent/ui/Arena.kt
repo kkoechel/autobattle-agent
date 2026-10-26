@@ -54,6 +54,7 @@ import online.autobattle.agent.game.GameException
 import online.autobattle.agent.game.CardInfo
 import online.autobattle.agent.game.Keyword
 import online.autobattle.agent.game.Act
+import online.autobattle.agent.game.Workbench
 import online.autobattle.agent.game.Memory
 import online.autobattle.agent.game.Rules
 import online.autobattle.agent.game.Training
@@ -253,6 +254,8 @@ fun ArenaPane(
     // triggers arriving together still result in exactly one refresh.
     var wantRefresh by remember { mutableIntStateOf(0) }
     var confirmReset by remember { mutableStateOf(false) }
+    /** A deck built while a result was pending, waiting to be entered. */
+    var bench by remember { mutableStateOf<Workbench?>(Workbench.load(ctx)) }
     var directive by remember { mutableStateOf(Directive.load(ctx)) }
     var avatar by remember { mutableStateOf(Avatar.load(ctx)) }
     // The face and the register travel together: picking the Brute and
@@ -444,6 +447,9 @@ fun ArenaPane(
         if (r.error != null) {
             error = r.error
         } else if (r.outcome != null) {
+            // A benched build is not an entry: the league is unchanged and
+            // there is no revision to report.
+            if (r.benched) bench = Workbench.load(ctx)
             val o = r.outcome
             // A QUICK BUILD DRAFTS NOTHING, so `screened` is 0 and "picked
             // from 0 designs" is both meaningless and faintly alarming. It
@@ -451,6 +457,16 @@ fun ArenaPane(
             // had already measured. Say that instead.
             val provenance = if (o.screened == 0) "started from a measured deck"
                              else "picked from ${o.screened} designs"
+            if (r.benched) {
+                // NOT "submitted", because it was not. The league is
+                // unchanged and r.revision is 0; saying otherwise would be
+                // the one thing a player must be able to trust this screen
+                // about.
+                note = null
+                justBuilt = "\u201c" + voice.benched(o.name,
+                    "%.1f".format(o.wins), o.opponents) + "\u201d"
+                return@LaunchedEffect
+            }
             note = "Submitted \"${o.name}\" (revision ${r.revision}). " +
                 "Checked on fresh matchups it won ${"%.1f".format(o.wins)} of " +
                 "${o.opponents} — $provenance, improved " +
@@ -936,8 +952,14 @@ fun ArenaPane(
                                         // agreed. It does NOT hold here: waiting
                                         // out a round for a deck that may not
                                         // legally play it is not patience.
+                                        // `forced` travels into the service
+                                        // as well: a deck replacing an illegal
+                                        // one must go straight into the league,
+                                        // not onto the bench, or the player is
+                                        // left entered with a deck that cannot
+                                        // play.
                                         if (awaitingRound && !forced) planPending = true
-                                        else TrainingService.start(ctx)
+                                        else TrainingService.start(ctx, forced = forced)
                                     } else if (planChanged) {
                                         // DELIBERATELY DOES NOT VOID A
                                         // PATIENCE PROMISE. A rebuild does,
@@ -1138,6 +1160,40 @@ fun ArenaPane(
                                 })
                         }
                     }
+                    // THE BENCH. Offered above everything else, because a
+                    // deck built and not entered is the one thing on this
+                    // screen the player has to decide about -- leave it
+                    // further down and it reads as a note rather than a
+                    // choice.
+                    bench?.let { b ->
+                        SnesChoice(
+                            label = "Enter ${b.name} in the league",
+                            detail = "Replaces the deck that is in now. It won " +
+                                "${"%.1f".format(b.wins)} of ${b.opponents} on " +
+                                "fresh matchups when I built it.",
+                            enabled = !busy && !trialBusy && token != null,
+                            onClick = {
+                                scope.launch {
+                                    uiBusy = true; error = null
+                                    runCatching {
+                                        withContext(Dispatchers.IO) {
+                                            GameClient(token!!).putDeck(b.name, b.cards, b.plan)
+                                        }
+                                    }.onSuccess { rev ->
+                                        Workbench.clear(ctx); bench = null
+                                        justBuilt = "\u201c${voice.entered(b.name, rev)}\u201d"
+                                        refresh()
+                                    }.onFailure { error = readable(it) }
+                                    uiBusy = false
+                                }
+                            })
+                        SnesChoice(
+                            label = "Let it go",
+                            detail = "Throws away ${b.name}. The deck in the " +
+                                "league is untouched either way.",
+                            enabled = !busy && !trialBusy,
+                            onClick = { Workbench.clear(ctx); bench = null })
+                    }
                     if (q == null) {
                         // Offered whenever there is a deck, not only while
                         // one is waiting for its round. Rehearsing changes
@@ -1145,18 +1201,29 @@ fun ArenaPane(
                         // can watch -- gating it behind "your deck has not
                         // played yet" meant watching was reachable for about
                         // fifteen minutes out of every fifteen.
-                        if (justBuilt == null && myDeck != null) {
+                        if (justBuilt == null && (myDeck != null || bench != null)) {
                             SnesChoice(
+                                // NAMES WHICH DECK. With something on the
+                                // bench there are two, and "show me what it
+                                // can do" would be ambiguous about the one
+                                // thing the player needs to be sure of.
                                 label = if (trialBusy) (trialStep ?: "Playing it out\u2026")
+                                        else if (bench != null)
+                                            "Show me what ${bench!!.name} can do"
                                         else "Show me what it can do",
+                                detail = if (bench != null)
+                                    "Plays the one on the bench, not the one " +
+                                    "in the league. Nothing is entered." else null,
                                 enabled = !trialBusy,
                                 onClick = {
                                     error = null; note = null; trial = null
                                     trialBusy = true
+                                    val under = bench
                                     scope.launch {
                                         runCancellable {
                                             withContext(Dispatchers.Default) {
                                                 Compete.testDeck(GameClient(token), handle,
+                                                    bench = under,
                                                     onProgress = { trialStep = it.step })
                                             }
                                         }.onSuccess { trial = it }
@@ -1258,10 +1325,16 @@ fun ArenaPane(
                             // the agent was asking you to wait. It says what
                             // it costs now, and carries the warning as its
                             // detail line.
-                            label = if (awaitingRound) "Discard it and start a new deck"
+                            // IT NO LONGER THROWS THE DECK AWAY. Building
+                            // while a result is pending puts the new deck on
+                            // the bench; the entered one keeps its place in
+                            // the round. The label said "discard" because
+                            // that is what it used to do.
+                            label = if (awaitingRound) "Work on another idea"
                                     else "Get to work",
                             detail = if (awaitingRound)
-                                "Throws away the deck that has not played yet." else null,
+                                "Keeps the deck that is waiting for its round " +
+                                "and builds the new one alongside it." else null,
                             enabled = !trialBusy,
                             onClick = {
                                 error = null; note = null; trial = null

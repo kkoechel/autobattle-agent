@@ -22,6 +22,12 @@ object Training {
         val outcome: Compete.Outcome?,
         val revision: Int,
         val error: String?,
+        /**
+         * The deck went to the bench instead of into the league, because the
+         * entered one has not been scored yet. `revision` is 0 in that case:
+         * nothing was submitted.
+         */
+        val benched: Boolean = false,
     )
 
     private val _progress = MutableStateFlow<Compete.Progress?>(null)
