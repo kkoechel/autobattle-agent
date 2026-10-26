@@ -147,7 +147,19 @@ fun AvatarBackdrop(
         Image(
             painter = BitmapPainter(bmp, filterQuality = FilterQuality.None),
             contentDescription = null,
-            contentScale = ContentScale.Crop,
+            // FIT, NOT CROP, FOR A CUT-OUT.
+            //
+            // Crop covers the box, and the box here is proportionally WIDER
+            // than the art (135x240 against roughly 1058x1802 on an S22), so
+            // it scaled to the width and shaved the surplus off the bottom --
+            // which on a standing figure is the feet. Emma Ji was walking
+            // around with her boots cut off at the ankle.
+            //
+            // A cut-out has nothing to lose by fitting: it is a figure on
+            // transparency, so the spare width is invisible rather than
+            // letterboxed. Card art still crops, because there the spare
+            // space is picture and leaving it in would shrink the subject.
+            contentScale = if (avatar.cutout) ContentScale.Fit else ContentScale.Crop,
             alignment = avatar.focus,
             // THE HEAD HAS TO CLEAR THE CHROME. A cut-out figure fills its
             // frame from the very top, so drawn flush it puts the face
