@@ -1596,10 +1596,16 @@ fun ArenaPane(
                     seed = g.seed,
                     youFirst = g.youFirst,
                     expected = g.outcome,
+                    avatar = avatar,
                     // Measured HERE, in the activity's window, because the
                     // dialog's own window spans the whole display and reports
                     // no insets at all.
                     edge = WindowInsets.safeDrawing.asPaddingValues(),
+                    // The bar on its own, for the face in the corner --
+                    // safeDrawing and the navigation bar do not agree inside
+                    // the dialog's window, and the face is placed against
+                    // the bar. See ReplayScreen's `bars`.
+                    bars = WindowInsets.navigationBars.asPaddingValues(),
                     onDismiss = { watching = null },
                 )
             } else {

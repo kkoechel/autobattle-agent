@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.imageResource
+import androidx.compose.ui.unit.IntRect
 import online.autobattle.agent.R
 
 /**
@@ -50,6 +51,23 @@ enum class Avatar(
      * for a locale to show through.
      */
     val cutout: Boolean = false,
+    /**
+     * The face alone, as a box in the 135x240 source: left, top, right,
+     * bottom.
+     *
+     * A CROP, NOT A SECOND ASSET. Three more PNGs at five densities is
+     * fifteen files that can drift from the figures they are cut from, and
+     * the crop costs nothing -- BitmapPainter takes a source rectangle, so
+     * the same bitmap already in memory for the backdrop is what gets
+     * drawn.
+     *
+     * Placed by eye at eight times size. All three figures stand the same
+     * way in their frames (head between y 0 and 40, shoulders from 36), so
+     * the boxes are near-identical; they differ by a pixel or two because
+     * Kard's hair spikes right, Emma's falls wide, and a box that suits one
+     * clips the other.
+     */
+    val head: IntRect,
 ) {
     // ONLY PARAGONS NOW. The first three faces were card artwork -- the
     // Wizard, the Brute and the Sprite -- from before the game had Paragons
@@ -62,11 +80,11 @@ enum class Avatar(
     // The Paragons. Cut out of a chroma field by tools/pixelate_paragon.py,
     // so each stands in whatever locale the moment calls for.
     PARAGON_ONE("paragon1", "Kard Batal", R.drawable.paragon_1,
-        Alignment.TopCenter, cutout = true),
+        Alignment.TopCenter, cutout = true, head = IntRect(34, 1, 88, 56)),
     PARAGON_TWO("paragon2", "Dan Mage", R.drawable.paragon_2,
-        Alignment.TopCenter, cutout = true),
+        Alignment.TopCenter, cutout = true, head = IntRect(38, 1, 92, 54)),
     PARAGON_THREE("paragon3", "Emma Ji", R.drawable.paragon_3,
-        Alignment.TopCenter, cutout = true);
+        Alignment.TopCenter, cutout = true, head = IntRect(38, 0, 90, 54));
 
     companion object {
         val DEFAULT = PARAGON_ONE
@@ -206,6 +224,33 @@ fun AvatarBackdrop(
             ))
         })
     }
+}
+
+/**
+ * The Paragon's face alone, for a corner.
+ *
+ * Drawn from the SAME bitmap the backdrop uses, through BitmapPainter's
+ * source rectangle -- so switching Paragon costs nothing beyond the box,
+ * and there is no second set of files to keep in step with the first.
+ *
+ * FilterQuality.None for the same reason the backdrop has it: the source
+ * is pixel art about fifty pixels across, and default filtering turns it
+ * into a smear at any size worth looking at.
+ *
+ * No scrim and no frame. In the replay the figure is a watcher at the edge
+ * of the board rather than a piece of furniture, and a plate around it
+ * would make it the latter.
+ */
+@Composable
+fun ParagonHead(avatar: Avatar, modifier: Modifier = Modifier) {
+    val bmp = androidx.compose.ui.graphics.ImageBitmap.imageResource(avatar.art)
+    Image(
+        painter = BitmapPainter(bmp, avatar.head.topLeft, avatar.head.size,
+                                filterQuality = FilterQuality.None),
+        contentDescription = null,
+        contentScale = ContentScale.Fit,
+        modifier = modifier,
+    )
 }
 
 /**

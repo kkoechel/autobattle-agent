@@ -4,11 +4,13 @@ import android.annotation.SuppressLint
 import android.webkit.WebView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -56,6 +58,21 @@ fun ReplayScreen(
     youFirst: Boolean,
     /** What the Go engine scored, from your side: won / lost / drew. */
     expected: String,
+    /** Who you are playing as, for the face in the corner. */
+    avatar: Avatar,
+    /**
+     * The navigation bar alone, measured in the ACTIVITY like `edge`.
+     *
+     * WHY THE FACE NEEDS THIS AS WELL AS `edge`. The page is padded by the
+     * safe area and that is right for the page, but the figure is placed
+     * against the NAVIGATION BAR specifically -- flush to it, in both
+     * orientations, which is where Ryan put it. The two are not the same
+     * number, and `edge` alone put the figure through the bar.
+     *
+     * See `corner` below for the other half of it: the dialog's window is
+     * also displaced, so the bar on its own is not enough either.
+     */
+    bars: PaddingValues,
     /**
      * The safe area, measured in the ACTIVITY and handed in.
      *
@@ -85,6 +102,44 @@ fun ReplayScreen(
     // only orientation signal worth trusting is the one Android gives the app.
     val portrait = cfg.screenHeightDp >= cfg.screenWidthDp
 
+    // HOW MUCH WIDTH THE PAGE GIVES UP ON ITS RIGHT, derived rather than
+    // typed in. The page is laid out inside the `edge` box and the figure
+    // against the navigation bar, so the gap between the page's right edge
+    // and the figure's left edge is the figure's width PLUS however much
+    // further in the bar is than `edge` thinks the safe area is. On this
+    // phone that difference is nothing in portrait and 27dp in landscape;
+    // on a phone where the two agree it is nothing in both, and the
+    // arithmetic still holds.
+    val ld = LocalLayoutDirection.current
+    val headH = if (portrait) HEAD_H_DP else HEAD_H_LAND_DP
+
+    // WHERE THE FIGURE'S CORNER IS, and why it is not simply the navigation
+    // bar.
+    //
+    // The dialog's window is the whole display in SIZE but its origin is the
+    // activity's content origin, so the whole thing is displaced by the
+    // leading safe inset and overshoots the far edge by the same amount.
+    // Measured on the device: the box reports 360x780dp -- the full screen --
+    // while its top sits about 81px down, so its bottom falls 81px below the
+    // glass. Padding by the navigation bar alone therefore left the figure
+    // 81px into the bar, which is exactly what it did.
+    //
+    // The displacement is the leading inset `edge` already carries, so the
+    // correction is derived rather than dialled in: the bar, plus however far
+    // the window has been pushed along that axis.
+    val shiftEnd = bars.calculateEndPadding(ld) + edge.calculateStartPadding(ld)
+    val shiftBottom = bars.calculateBottomPadding() + edge.calculateTopPadding()
+    val corner = PaddingValues(end = shiftEnd, bottom = shiftBottom)
+
+    // HOW MUCH WIDTH THE PAGE GIVES UP ON ITS RIGHT, derived the same way.
+    // The page's right edge is the window's less `edge`; the figure's left
+    // edge is the window's less the corner above, less its own width. The
+    // gap between them is what the seek bar must keep clear -- 187dp in
+    // portrait here, 141 in landscape, and whatever the arithmetic gives on
+    // a phone whose bars are different.
+    val inset = (shiftEnd - edge.calculateEndPadding(ld)).value.coerceAtLeast(0f)
+    val reserve = (headH * HEAD_WIDEST + inset + 8f).toInt()
+
     Dialog(
         onDismissRequest = onDismiss,
         // decorFitsSystemWindows = false, or the inset padding below reads
@@ -97,10 +152,15 @@ fun ReplayScreen(
             decorFitsSystemWindows = false,
         ),
     ) {
+        // TWO BOXES, AND THE DIFFERENCE IS THE POINT. The outer one is the
+        // whole window; the inner one is the window less the safe area, and
+        // the page lives in it. The Paragon is a child of the OUTER box, so
+        // it can be placed against the navigation bar instead of against
+        // whatever `edge` reports.
+        Box(Modifier.fillMaxSize().background(Color(0xFF07081A))) {
         Box(
             Modifier
                 .fillMaxSize()
-                .background(Color(0xFF07081A))
                 // The safe area, passed in rather than queried here --
                 // see `edge`. The page itself never overflowed: measured on
                 // the device it is 780 CSS px wide with content fitting in
@@ -124,7 +184,7 @@ fun ReplayScreen(
                             loadDataWithBaseURL(
                                 BASE,
                                 page(mine, rival, cardDefs, display, seed, youFirst,
-                                    expected, avail, portrait),
+                                    expected, avail, portrait, reserve),
                                 "text/html", "utf-8", null,
                             )
                         }
@@ -143,7 +203,7 @@ fun ReplayScreen(
                         val css = JSONObject.quote(orientCss(
                             (avail - (if (portrait) CHROME_DP else CHROME_LAND_DP))
                                 .coerceAtLeast(if (portrait) 220 else 120),
-                            portrait, !youFirst))
+                            portrait, !youFirst, reserve))
                         wv.evaluateJavascript(
                             "(function(){var s=document.getElementById('orient');" +
                             "if(!s)return;s.textContent=$css;" +
@@ -154,6 +214,31 @@ fun ReplayScreen(
                     onDismiss()
                 }
             }
+        }
+            // THE PARAGON WATCHES, from OUTSIDE the padded box.
+            //
+            // A sibling of the page rather than a child of it, so the corner
+            // it sits in is the screen's corner less the navigation bar --
+            // see `bars` -- rather than whatever `edge` believes. Placed by
+            // Ryan on a scale model of this exact screen, and he put it
+            // flush against the bar in both orientations, which is what this
+            // reproduces.
+            //
+            // No touch handling at all: an Image consumes nothing, so the
+            // controls underneath stay usable at the edges it overlaps.
+            //
+            // HEIGHT ALONE IS NOT A SIZE. With only the height set the Image
+            // takes its WIDTH from the painter's intrinsic size -- the crop
+            // is 54 source pixels across, eighteen dp at this density -- so
+            // Fit shrank the face into an 18dp box and drew a thumbnail. The
+            // crop's own aspect ratio supplies the other dimension.
+            ParagonHead(
+                avatar,
+                Modifier.align(Alignment.BottomEnd)
+                    .padding(corner)
+                    .height(if (portrait) HEAD_H_DP.dp else HEAD_H_LAND_DP.dp)
+                    .aspectRatio(avatar.head.width.toFloat() / avatar.head.height),
+            )
         }
     }
 }
@@ -167,7 +252,8 @@ fun ReplayScreen(
  * restart the battle, and a replay that jumps back to turn one because you
  * tilted the phone is worse than one that does not rotate at all.
  */
-private fun orientCss(arenaDp: Int, portrait: Boolean, flip: Boolean): String {
+private fun orientCss(arenaDp: Int, portrait: Boolean, flip: Boolean,
+                      reserve: Int): String {
     /* THE CHROME IS SIZED FOR PORTRAIT and has to give ground sideways.
        Turned landscape this phone offers about 336dp of height, and the game
        picker, the transport row, the speed row and their margins want 216 of
@@ -310,20 +396,84 @@ private fun orientCss(arenaDp: Int, portrait: Boolean, flip: Boolean): String {
         (if (flip) ".r2-half--top" else ".r2-half--bottom") +
             " .r2-stats{padding-right:98px}"
 
+    /* ROOM FOR THE FACE IN THE CORNER, same problem as `clear` above and a
+       different corner. The Paragon is drawn by the APP over the bottom
+       right of the dialog, so the page cannot see it any more than it can
+       see Close; what it covered was the right-hand end of the seek bar and,
+       entirely, the step readout -- "turn 2 \u00b7 11/451", the one line that
+       says where in the battle you are.
+
+       SO THE BAR GOES ON A LINE OF ITS OWN AND THE STEPS DROP BELOW IT.
+       Simply reserving the figure's width on the existing row does not work:
+       the four transport buttons want about 176dp of a 360dp row, so taking
+       134 for the head left the seek bar 36dp long and unusable. Given the
+       whole width (less the figure) it is a real scrub bar again, and the
+       buttons and the readout sit underneath where the figure does not
+       reach, since both are left-aligned and short.
+
+       ONLY THE BAR GIVES UP THE WIDTH, for the same reason. Nothing else on
+       these rows comes anywhere near the right edge.
+
+       The readout takes a line of its own in portrait only. Landscape has
+       seven hundred dp to spend and the figure is ninety of them, so there
+       it stays beside the buttons and costs no height. */
+    val headroom =
+        "#ctl{flex-wrap:wrap}" +
+        "#ctl #seek{order:-1;min-width:0;" +
+        // THE MARGIN IS WHAT KEEPS THE LINE TO ITSELF. Sized at
+        // calc(100% - head) alone it left exactly the head's width free, and
+        // two of the four transport buttons wrapped up into that gap -- under
+        // the figure. Basis plus margin fills the line, so the buttons have
+        // nowhere to go but the next one.
+        "flex:0 0 calc(100% - ${reserve}px);margin-right:${reserve}px}" +
+        (if (portrait) "#ctl .pos{flex:0 0 100%;min-width:0;text-align:left}" else "")
+
     val chrome = if (portrait) CHROME_DP else CHROME_LAND_DP
     return "html,body{height:${arenaDp + chrome}px}\n" +
-        "#arena{height:${arenaDp}px}\n" + slim + stacked + turn + meet + clear
+        "#arena{height:${arenaDp}px}\n" + slim + stacked + turn + meet + clear +
+        headroom
 }
+
+/**
+ * How tall the Paragon's head is in the corner, in dp.
+ *
+ * PLACED, NOT CHOSEN. Ryan put it there on a scale model of this screen,
+ * built from screenshots of the real replay at true size, and these are the
+ * heights he left it at. The width follows from the crop's aspect ratio.
+ */
+private const val HEAD_H_DP = 176
+private const val HEAD_H_LAND_DP = 104
+
+/**
+ * The widest of the three crops, Dan Mage's 54x53, as width over height.
+ *
+ * ONE RESERVE FOR ALL THREE PARAGONS. A figure narrower than the reserve
+ * leaves a little more air beside it; one wider than it would sit on the
+ * seek bar, so the widest decides.
+ */
+private const val HEAD_WIDEST = 54f / 53f
+
+/**
+ * What the control bar grows by once the seek bar is on its own line.
+ *
+ * A line the arena is not told about is a line of controls pushed off the
+ * bottom of the screen, which is exactly how the speed row was lost once
+ * before. Portrait gains two lines -- the bar, then the readout under the
+ * buttons -- and landscape gains one, since there the readout still fits
+ * beside the buttons.
+ */
+private const val POS_LINE_DP = 40
+private const val POS_LINE_LAND_DP = 18
 
 /**
  * Vertical room the host page's own furniture needs: the game picker, the
  * control bar, the speed row and the margins between them. Subtracted from
  * the space the dialog reports so the arena takes what is actually left.
  */
-private const val CHROME_DP = 96 + 58 + 46 + 16
+private const val CHROME_DP = 96 + 58 + 46 + 16 + POS_LINE_DP
 
 /** The same furniture once the landscape rules above have shrunk it. */
-private const val CHROME_LAND_DP = 52 + 40 + 34 + 8
+private const val CHROME_LAND_DP = 52 + 40 + 34 + 8 + POS_LINE_LAND_DP
 
 private const val BASE = "https://autobattle.online/"
 
@@ -332,6 +482,7 @@ private fun flat(d: Deck) = JSONArray().apply { d.cards.forEach { put(it) } }
 private fun page(
     mine: Deck, rival: Deck, cardDefs: String, display: String, seed: Int,
     youFirst: Boolean, expected: String, availDp: Int, portrait: Boolean,
+    reserve: Int,
 ): String {
     // What the arena gets is what is left after everything else on the page:
     // the agreement line and game picker above it, and BOTH control rows
@@ -364,7 +515,7 @@ private fun page(
     // different match, which is the one thing this screen must not do.
     val youAreSlot = if (youFirst) 0 else 1
     val flip = youAreSlot == 1
-    val orient = orientCss(arenaDp, portrait, flip)
+    val orient = orientCss(arenaDp, portrait, flip, reserve)
     val expectedJs = JSONObject.quote(expected)
     return """
 <!doctype html><html><head><meta charset="utf-8">
