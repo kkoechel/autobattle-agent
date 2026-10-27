@@ -1872,22 +1872,56 @@ fun ArenaPane(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
+                        // WHAT CAN BE SEARCHED, built once rather than per
+                        // keystroke: 1,183 cards, and the haystack for each
+                        // is its name, its rules text and its tags.
+                        //
+                        // RETIRED CARDS ARE NOT IN IT. 358 of the 1,183 are
+                        // retired, VIP, tokens or have no deck limit, and
+                        // half of what a search for "bone" returned was
+                        // retired -- five dead ends in ten rows, each of
+                        // which could only be opened to be told no. They are
+                        // not cards you may ever put in a deck, so they are
+                        // not answers to "which card shall I build around".
+                        //
+                        // BANNED CARDS STAY, deliberately, which is why the
+                        // Catalogue here is built WITHOUT the ban list. A
+                        // ban lasts hours and the card is real; hiding it
+                        // would answer "no such card", which is a lie. It is
+                        // labelled instead, and the popup says the rest.
+                        val pool = remember(rawCards, cardsById.size) {
+                            val raw = rawCards
+                            if (raw == null) emptyList()
+                            else {
+                                val cat = Catalogue(raw)
+                                cardsById.values
+                                    .filter { cat.isPlayable(it.id) }
+                                    .map { c ->
+                                        val tags = cat.tags(c.id)
+                                        Findable(c, tags,
+                                            (c.name + " " + c.rules + " " +
+                                                tags.joinToString(" ")).lowercase())
+                                    }
+                            }
+                        }
                         // CAPPED, and the cap is stated. An unqualified
-                        // search matches the whole catalogue, and a list of
-                        // 865 rows inside a dialog is not a list anybody
-                        // reads -- it is just slow.
-                        val hits = remember(cardQuery, cardsById.size) {
-                            val q = cardQuery.trim()
+                        // search matches half the catalogue, and a list that
+                        // long inside a dialog is not a list anybody reads.
+                        val hits = remember(cardQuery, pool) {
+                            val q = cardQuery.trim().lowercase()
                             if (q.length < 2) emptyList()
-                            else cardsById.values
-                                .filter { it.name.contains(q, ignoreCase = true) }
-                                // The ones that START with what was typed
-                                // first: somebody typing "bone" wants Bone
-                                // Colossus before Dragonbone Relic.
+                            else pool.filter { q in it.hay }
+                                // Name first, and a name that STARTS with it
+                                // before one that merely contains it:
+                                // somebody typing "bone" wants Bone Colossus
+                                // before Dragonbone Relic, and both before a
+                                // card that only mentions bones in its text.
                                 .sortedWith(
-                                    compareByDescending<CardInfo> {
-                                        it.name.startsWith(q, ignoreCase = true)
-                                    }.thenBy { it.name })
+                                    compareByDescending<Findable> {
+                                        it.card.name.lowercase().startsWith(q)
+                                    }.thenByDescending {
+                                        q in it.card.name.lowercase()
+                                    }.thenBy { it.card.name })
                         }
                         when {
                             cardQuery.trim().length < 2 ->
@@ -1903,13 +1937,26 @@ fun ArenaPane(
                                     .verticalScroll(rememberScrollState()),
                                 verticalArrangement = Arrangement.spacedBy(2.dp),
                             ) {
-                                for (c in hits.take(40)) {
+                                val q = cardQuery.trim().lowercase()
+                                for (f in hits.take(40)) {
+                                    val c = f.card
                                     SnesChoice(
                                         label = c.name,
                                         detail = listOfNotNull(
                                             "${c.cost}e",
                                             c.rarity.takeIf { it.isNotBlank() },
                                             c.subtype.takeIf { it.isNotBlank() },
+                                            // WHY THIS ONE IS HERE. Searching
+                                            // "poison" returns Scorpioid,
+                                            // whose whole rules text is the
+                                            // word "Envenom" -- it matched on
+                                            // a tag, and without saying so
+                                            // the row looks like a mistake.
+                                            if (q in c.name.lowercase()) null
+                                            else f.tags.firstOrNull { q in it }
+                                                ?: "in its text",
+                                            "out of the format"
+                                                .takeIf { c.id in banned },
                                         ).joinToString(" \u00b7 "),
                                         onClick = { showCard = c },
                                     )
@@ -3133,6 +3180,20 @@ private fun msUntil(utc: String?): Long {
         0L
     }
 }
+
+/**
+ * One searchable card: the card, its tags, and everything searchable about it
+ * flattened and lowercased.
+ *
+ * The haystack is precomputed because the alternative is lowercasing a
+ * thousand names, rules texts and tag lists on every keystroke. The tags are
+ * kept apart from it so a row can say WHICH one it matched.
+ */
+private class Findable(
+    val card: CardInfo,
+    val tags: Set<String>,
+    val hay: String,
+)
 
 private fun untilRound(utc: String): String = try {
     val fmt = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
