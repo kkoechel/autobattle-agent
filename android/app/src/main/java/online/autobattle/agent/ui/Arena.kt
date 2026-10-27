@@ -192,6 +192,16 @@ fun ArenaPane(
     // on one scroll meant the conversation was always buried under a table.
     var place by remember { mutableStateOf(Place.BREW) }
     /**
+     * The main column's scroll, held by name so an answer can be scrolled to.
+     *
+     * The agent appends its replies BELOW the choice list, which is fine when
+     * the list is short and invisible when it is not: tapping "Is there
+     * another way to play?" wrote the answer and both buttons off the bottom
+     * of the screen, so the choice read as dead. Ryan reported it as the link
+     * not working. It had worked every time.
+     */
+    val pageScroll = rememberScrollState()
+    /**
      * What Talk is currently showing.
      *
      * null is the conversation itself; a RuleQA question is that answer;
@@ -204,6 +214,11 @@ fun ArenaPane(
     var talkNews by remember { mutableStateOf<String?>(null) }
     /** Whether the Paragon has been asked about the other game. */
     var talkPlay by remember { mutableStateOf(false) }
+    // An answer nobody can see has not been given. Both of these append
+    // below the choices, so both bring themselves into view.
+    LaunchedEffect(talkPlay, talkNews) {
+        if (talkPlay || talkNews != null) pageScroll.animateScrollTo(pageScroll.maxValue)
+    }
     /** The find-a-card sheet, and what has been typed into it. */
     var cardSearch by remember { mutableStateOf(false) }
     var cardQuery by remember { mutableStateOf("") }
@@ -465,6 +480,15 @@ fun ArenaPane(
         cardSearch = false
         error = null; trial = null
         note = voice.buildingAround(c.name)
+        // AND TAKES YOU WHERE THE WORK IS. The progress line, the pass
+        // counter and the agent's note are all drawn inside Brew. Started
+        // from the binder or from a card name in the dialogue -- which is
+        // most of the ways to reach a card -- the popup closed and left the
+        // player on Talk looking at the same page, with a four-minute build
+        // running invisibly behind it. Ryan: "pressable, but doesnt take me
+        // anywhere". It was building the whole time.
+        place = Place.BREW
+        talkPane = null
         TrainingService.start(ctx)
     }
 
@@ -589,7 +613,7 @@ fun ArenaPane(
                    avatar else null)
     }
 
-    Column(modifier.verticalScroll(rememberScrollState()).padding(16.dp),
+    Column(modifier.verticalScroll(pageScroll).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
 
         if (token == null) {
@@ -3133,20 +3157,34 @@ private fun untilRound(utc: String): String = try {
  */
 private fun openAutoBattle(ctx: android.content.Context) {
     val id = "com.autobattle.game"
-    val go = { uri: String ->
+    val play = "com.android.vending"
+    val go = { uri: String, pkg: String? ->
         ctx.startActivity(
             android.content.Intent(android.content.Intent.ACTION_VIEW,
                                    android.net.Uri.parse(uri))
+                .setPackage(pkg)
                 .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
     }
+    // NAME THE STORE. market:// on its own is not unambiguous: on a Samsung
+    // the Galaxy Store claims it too, so the tap produced an "Open with"
+    // chooser between two shops instead of the listing. Measured on the S22.
+    // The listing is a Google Play listing, so ask Google Play for it.
+    //
+    // Each fallback is a real device, not defensive padding: a phone with
+    // Play missing or disabled takes the plain market:// (whatever store it
+    // does have), and one with neither takes the browser.
     try {
-        go("market://details?id=$id")
+        go("market://details?id=$id", play)
     } catch (e: Exception) {
         try {
-            go("https://play.google.com/store/apps/details?id=$id")
+            go("market://details?id=$id", null)
         } catch (e2: Exception) {
-            // No browser and no store. Nothing useful left to do, and a
-            // crash here would be over a side remark in a conversation.
+            try {
+                go("https://play.google.com/store/apps/details?id=$id", null)
+            } catch (e3: Exception) {
+                // No store and no browser. Nothing useful left to do, and a
+                // crash here would be over a side remark in a conversation.
+            }
         }
     }
 }

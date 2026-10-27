@@ -15,6 +15,18 @@
          without the notification the service cannot run at all. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- PACKAGE VISIBILITY, for the one outbound link this app has.
+         From API 30 an app cannot see, and so cannot target, a package it has
+         not declared. Naming Google Play is what lets the Talk topic open the
+         AutoBattle listing directly instead of asking which shop to use. -->
+    <queries>
+        <package android:name="com.android.vending" />
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+    </queries>
+
     <application
         android:label="${appLabel}"
         android:icon="@mipmap/ic_launcher"
