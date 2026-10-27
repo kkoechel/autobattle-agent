@@ -40,6 +40,33 @@ enum class Voice {
         SPRITE -> "Anything you'd like to know? I don't mind explaining twice."
     }
 
+    /**
+     * The other game: the same cards, played by hand.
+     *
+     * HONEST ABOUT THE DISAPPOINTMENT, deliberately. A player who taps
+     * through to a store listing expecting their deck and their record to
+     * follow them finds a stranger's empty account, and that is a worse
+     * first impression than never mentioning it. The two games share a card
+     * pool and nothing else -- separate servers, separate accounts -- so the
+     * line says so before the player leaves rather than after.
+     */
+    fun otherGame(): String = when (this) {
+        WIZARD -> "There is. The same cards exist in a game you play " +
+            "yourself \u2014 AutoBattle, on the Play Store. Hand by hand, " +
+            "no agent between you and the board. Nothing crosses over, " +
+            "though. Your standing here, this deck, the hundred rounds we " +
+            "have spent on it: none of it travels. You would be starting " +
+            "from nothing over there."
+        BRUTE -> "There is. AutoBattle. Same cards, you play them yourself, " +
+            "no me. It's on the Play Store. Don't expect to take anything " +
+            "with you \u2014 new account, new deck, nothing carries."
+        SPRITE -> "There is, yes! It's called AutoBattle, and it's on the " +
+            "Play Store \u2014 the same cards, only you play them yourself " +
+            "instead of sending me. One thing to know before you go: " +
+            "nothing comes with you. Everything we've built stays here, " +
+            "waiting."
+    }
+
     /** "Shall I investigate?" -- the agent proposing to do something. */
     fun ask(what: String): String = when (this) {
         WIZARD -> "Shall I $what?"

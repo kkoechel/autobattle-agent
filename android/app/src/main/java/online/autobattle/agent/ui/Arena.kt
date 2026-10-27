@@ -193,6 +193,8 @@ fun ArenaPane(
     var talkPane by remember { mutableStateOf<String?>(null) }
     /** What the Paragon last said in answer to "Any news?". */
     var talkNews by remember { mutableStateOf<String?>(null) }
+    /** Whether the Paragon has been asked about the other game. */
+    var talkPlay by remember { mutableStateOf(false) }
     var history by remember { mutableStateOf<JSONArray?>(null) }
     var trialBusy by remember { mutableStateOf(false) }
     var trialStep by remember { mutableStateOf<String?>(null) }
@@ -1529,10 +1531,29 @@ fun ArenaPane(
                         label = "What is out of the format?",
                         detail = "The cards nobody may play at the moment.",
                         onClick = { talkPane = "bans" })
+                    // The other game. A TALK TOPIC, NOT A BANNER: the player
+                    // is here to build a deck, and a permanent button
+                    // pointing at a different game is an advert sitting on
+                    // top of the one they opened. Asked for, it is an
+                    // answer; unasked, it would be a pitch.
+                    SnesChoice(
+                        label = "Is there another way to play?",
+                        detail = "The same cards, in a game you play " +
+                            "yourself.",
+                        onClick = { talkPlay = true })
                 }
                 talkNews?.let {
                     Spacer(Modifier.height(10.dp))
                     Text("\u201c$it\u201d", style = snesText(13))
+                }
+                if (talkPlay) {
+                    Spacer(Modifier.height(10.dp))
+                    Text("\u201c${voice.otherGame()}\u201d", style = snesText(13))
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        GameLink("Open the Play Store") { openAutoBattle(ctx) }
+                        GameLink("Never mind") { talkPlay = false }
+                    }
                 }
                 if (newsBusy) SnesProgress(0, 1)
             }
@@ -2918,5 +2939,33 @@ private fun untilRound(utc: String): String = try {
         else -> "Next round in about $mins minutes"
     }
 } catch (e: Exception) {
-    "A round is scored every 15 minutes"
+    "A round is scored every half hour"
+}
+
+/**
+ * Open AutoBattle's Play listing.
+ *
+ * The market:// form hands the request straight to the installed Play app
+ * and is what lands on the listing rather than in a browser; it throws
+ * ActivityNotFoundException on a device without Play, so the https form is
+ * the fallback rather than the first choice. Both are the same listing.
+ */
+private fun openAutoBattle(ctx: android.content.Context) {
+    val id = "com.autobattle.game"
+    val go = { uri: String ->
+        ctx.startActivity(
+            android.content.Intent(android.content.Intent.ACTION_VIEW,
+                                   android.net.Uri.parse(uri))
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+    try {
+        go("market://details?id=$id")
+    } catch (e: Exception) {
+        try {
+            go("https://play.google.com/store/apps/details?id=$id")
+        } catch (e2: Exception) {
+            // No browser and no store. Nothing useful left to do, and a
+            // crash here would be over a side remark in a conversation.
+        }
+    }
 }
