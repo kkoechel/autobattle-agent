@@ -67,6 +67,23 @@ enum class Voice {
             "waiting."
     }
 
+    /**
+     * The player picked a card and told the agent to build around it.
+     *
+     * Said as an INSTRUCTION ACCEPTED, not as a suggestion weighed. When the
+     * seed is named the generator stops screening thirty-six drafts and
+     * spends the whole budget on this one, and the line should carry that:
+     * the player has made the decision, not asked for an opinion.
+     */
+    fun buildingAround(card: String): String = when (this) {
+        WIZARD -> "Around $card, then. I will spend the whole search making " +
+            "that one work rather than weighing it against others."
+        BRUTE -> "$card it is. No drafting, no shortlist \u2014 I build that " +
+            "deck and I make it work."
+        SPRITE -> "$card it is! I won't weigh it against anything else \u2014 " +
+            "the whole search goes on making that one work."
+    }
+
     /** "Shall I investigate?" -- the agent proposing to do something. */
     fun ask(what: String): String = when (this) {
         WIZARD -> "Shall I $what?"

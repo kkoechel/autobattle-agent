@@ -8,6 +8,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.*
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -47,6 +48,26 @@ fun CardWeb(
     keywords: Map<String, Keyword> = emptyMap(),
     cardsById: Map<Int, CardInfo> = emptyMap(),
     onOpenCard: (CardInfo) -> Unit = {},
+    /**
+     * Build a deck around THIS card. Null leaves the card a card.
+     *
+     * The popup is where a player is already looking at a card and deciding
+     * whether they like it, which makes it the right place to act on that --
+     * and it is reachable from everywhere a card appears: the binder, a card
+     * name inside the agent's own dialogue, a rival's deck, the search.
+     */
+    onBuildAround: (() -> Unit)? = null,
+    /**
+     * Why this card cannot anchor a deck, when it cannot -- shown in place of
+     * the button.
+     *
+     * NOT a hidden button. The generator takes its seeds from the cards that
+     * are legal and playable, and a `seedCard` outside that set is silently
+     * ignored: the agent would accept the instruction and then build
+     * something else, which reads as the app lying. Saying why is the whole
+     * point.
+     */
+    buildBlocked: String? = null,
 ) {
     var defining by remember { mutableStateOf<Keyword?>(null) }
     // The renderer lives on the network. When it cannot be reached the card
@@ -69,6 +90,10 @@ fun CardWeb(
     }
 
     Dialog(onDismissRequest = onDismiss) {
+        Column(
+            Modifier.width(CARD_W.dp),
+            horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+        ) {
         Box(Modifier.width(CARD_W.dp).heightIn(max = 640.dp)) {
             AndroidView(
                 modifier = Modifier.width(CARD_W.dp).height((CARD_W * ratio).dp),
@@ -119,6 +144,16 @@ fun CardWeb(
             )
             // The card itself fills the dialog, so dismissal is the scrim --
             // swallowing taps here would also swallow the keyword taps.
+        }
+        if (onBuildAround != null && buildBlocked == null) {
+            Spacer(Modifier.height(10.dp))
+            GameLink("Build a deck around this card", Modifier.fillMaxWidth()) {
+                onBuildAround()
+            }
+        } else if (buildBlocked != null) {
+            Spacer(Modifier.height(10.dp))
+            Text(buildBlocked, style = snesText(12, Color(0xFF8A8AA8)))
+        }
         }
     }
 

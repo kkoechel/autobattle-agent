@@ -204,6 +204,9 @@ fun ArenaPane(
     var talkNews by remember { mutableStateOf<String?>(null) }
     /** Whether the Paragon has been asked about the other game. */
     var talkPlay by remember { mutableStateOf(false) }
+    /** The find-a-card sheet, and what has been typed into it. */
+    var cardSearch by remember { mutableStateOf(false) }
+    var cardQuery by remember { mutableStateOf("") }
     var history by remember { mutableStateOf<JSONArray?>(null) }
     var trialBusy by remember { mutableStateOf(false) }
     var trialStep by remember { mutableStateOf<String?>(null) }
@@ -413,6 +416,56 @@ fun ArenaPane(
             banned = ban
             keywords = kw
         }
+    }
+
+    /**
+     * Why the agent cannot build around this card, or null if it can.
+     *
+     * THE SAME TEST THE GENERATOR USES, deliberately: Compete draws its seeds
+     * from the cards that are neither banned nor unplayable, and a `seedCard`
+     * outside that set falls through the `when` and is silently ignored. The
+     * agent would take the instruction, say nothing, and build a different
+     * deck. Checking here is what turns that into a sentence.
+     *
+     * Retired cards are the reason this is not just the ban list: 38% of the
+     * catalogue is retired, the engine simulates one perfectly happily, and
+     * the deck is only rejected when it reaches the server.
+     */
+    fun seedBlock(c: CardInfo): String? {
+        val raw = rawCards ?: return null
+        if (c.id in banned) return "\u201cThat one is out of the format at " +
+            "the moment. Nobody may play it, so I cannot build on it.\u201d"
+        if (!Catalogue(raw, banned).isPlayable(c.id))
+            return "\u201cI cannot anchor a deck on that one \u2014 it is not " +
+                "a card you may put in a deck.\u201d"
+        return null
+    }
+
+    /**
+     * Take the card as the instruction and start building.
+     *
+     * Clears the themes for the same reason answering "Investigate <card>"
+     * does (game/Questions.kt): a named seed and a theme are two answers to
+     * the same question, and leaving the old theme on would quietly reshape
+     * the deck the player thought they were asking for. The shell clears
+     * itself -- Directive only reports one while there is no theme and no
+     * seed card.
+     *
+     * It STARTS the build rather than only setting the directive, because the
+     * button says "build". Answering one of the agent's own questions just
+     * sets the directive and waits for "Get to work", which is right there
+     * and wrong here.
+     */
+    fun buildAround(c: CardInfo) {
+        directive = directive.copy(
+            seedCard = c.id, seedCardName = c.name,
+            themes = emptyList(), themeLabels = emptyList())
+        Directive.save(ctx, directive)
+        showCard = null
+        cardSearch = false
+        error = null; trial = null
+        note = voice.buildingAround(c.name)
+        TrainingService.start(ctx)
     }
 
     // KEYED ON `place` TOO. The figures used to update only at launch, which
@@ -1402,6 +1455,17 @@ fun ArenaPane(
                     // "name a card", which is the half of the game that was
                     // already over-represented.
                     GameLink("Pick a theme\u2026") { showThemes = true }
+                    // NAMING A CARD IS BACK, and on purpose. The note beside
+                    // "Pick a theme..." says "Build around..." was renamed
+                    // because it read as "name a card", which was then the
+                    // over-represented half of the game. Ryan asked for it
+                    // directly on 10-26: he wants to search a card and build
+                    // around it. It is a separate door rather than a renamed
+                    // one, so the theme route is untouched.
+                    GameLink("Find a card\u2026") {
+                        cardQuery = ""; cardSearch = true
+                        scope.launch { ensureNames() }
+                    }
                     // THE QUICK WAY IN. A cold build is twelve refine passes
                     // and about six minutes, because measuring is the cost
                     // and it depends on a field that moves. The server has
@@ -1602,6 +1666,8 @@ fun ArenaPane(
             CardWeb(
                 card = c,
                 onDismiss = { showCard = null },
+                onBuildAround = { buildAround(c) },
+                buildBlocked = seedBlock(c),
                 keywords = keywords,
                 cardsById = cardsById,
                 onOpenCard = { showCard = it },
@@ -1757,6 +1823,89 @@ fun ArenaPane(
         // The agent proposes a theme on its own, but only one at a time and
         // only once per scored round, so a player who already knows they want
         // poison had no way to say so.
+        // FIND A CARD. Search by name, tap to see the card, build from the
+        // card itself -- rather than a "build" button on each result row.
+        // A cold build is minutes of the phone's time, so the last thing
+        // before committing to one should be the card at full size, with its
+        // rules text, not a line in a list.
+        if (cardSearch) {
+            AlertDialog(
+                containerColor = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(12.dp),
+                onDismissRequest = { cardSearch = false },
+                title = { Text("\u201cWhich card?\u201d") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        OutlinedTextField(
+                            value = cardQuery,
+                            onValueChange = { cardQuery = it },
+                            singleLine = true,
+                            label = { Text("Card name") },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        if (cardsById.isEmpty()) {
+                            Text("Fetching the catalogue\u2026",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        // CAPPED, and the cap is stated. An unqualified
+                        // search matches the whole catalogue, and a list of
+                        // 865 rows inside a dialog is not a list anybody
+                        // reads -- it is just slow.
+                        val hits = remember(cardQuery, cardsById.size) {
+                            val q = cardQuery.trim()
+                            if (q.length < 2) emptyList()
+                            else cardsById.values
+                                .filter { it.name.contains(q, ignoreCase = true) }
+                                // The ones that START with what was typed
+                                // first: somebody typing "bone" wants Bone
+                                // Colossus before Dragonbone Relic.
+                                .sortedWith(
+                                    compareByDescending<CardInfo> {
+                                        it.name.startsWith(q, ignoreCase = true)
+                                    }.thenBy { it.name })
+                        }
+                        when {
+                            cardQuery.trim().length < 2 ->
+                                Text("Two letters or more.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            hits.isEmpty() ->
+                                Text("No card by that name.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            else -> Column(
+                                Modifier.heightIn(max = 320.dp)
+                                    .verticalScroll(rememberScrollState()),
+                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                            ) {
+                                for (c in hits.take(40)) {
+                                    SnesChoice(
+                                        label = c.name,
+                                        detail = listOfNotNull(
+                                            "${c.cost}e",
+                                            c.rarity.takeIf { it.isNotBlank() },
+                                            c.subtype.takeIf { it.isNotBlank() },
+                                        ).joinToString(" \u00b7 "),
+                                        onClick = { showCard = c },
+                                    )
+                                }
+                                if (hits.size > 40) {
+                                    Text("\u2026and ${hits.size - 40} more. " +
+                                        "Type a little more of the name.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { cardSearch = false }) { Text("Close") }
+                },
+            )
+        }
+
         if (showThemes) {
             AlertDialog(
                 containerColor = MaterialTheme.colorScheme.surface,
