@@ -160,6 +160,15 @@ fun ArenaPane(
     var typed by remember { mutableStateOf(Secrets.handle(ctx) ?: "") }
     var uiBusy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    /**
+     * The message the LAST FAILED REFRESH put on screen, if it is still there.
+     *
+     * Kept so a refresh can clear up after itself without wiping a message it
+     * did not write. An action that failed -- a deck that would not save, a
+     * shell with a banned card in it -- says so in the same `error` line, and
+     * the player may not have read it yet when the next refresh lands.
+     */
+    var lastNetError by remember { mutableStateOf<String?>(null) }
     var note by remember { mutableStateOf<String?>(null) }
     // Observed from the service, so the screen can be left and come back to
     // a run that kept going.
@@ -347,7 +356,24 @@ fun ArenaPane(
                 lastPlacement = mineRow?.optInt("placement") ?: mem.lastPlacement,
                 lastLeader = lead?.optString("handle") ?: mem.lastLeader)
             Memory.save(ctx, mem)
-        }.onFailure { watch(it); error = readable(it) }
+            // THE SCREEN HEALS ITSELF. Nothing used to clear this, so one
+            // failed poll -- the phone's resolver going stale while the app
+            // sat in the background is the common one, "Unable to resolve
+            // host agent.autobattle.online" -- left the message up for the
+            // rest of the session. Every later refresh succeeded and left it
+            // sitting there, so the only way out was restarting the app.
+            // Observed by Ryan 10-26.
+            //
+            // Only the message this function put there: compared by value,
+            // so an action's own error survives a refresh that happens to
+            // land before it has been read.
+            if (error != null && error == lastNetError) error = null
+            lastNetError = null
+        }.onFailure {
+            watch(it)
+            error = readable(it)
+            lastNetError = error
+        }
 
         if (expired) {
             // Drop the dead credential so the join screen comes back. The
