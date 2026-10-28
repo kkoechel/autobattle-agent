@@ -12,6 +12,23 @@ CREATE TABLE IF NOT EXISTS players (
   -- then only the app holds it: a leaked database should not hand out logins.
   key_hash    CHAR(64)     NOT NULL,
   is_bot      TINYINT(1)   NOT NULL DEFAULT 0,
+  -- Out of the league, but not out of its history.
+  --
+  -- Scoring is O(decks^2): 42 decks is 861 pairings by 21 seeds, about 18,000
+  -- matches, and on a contended single core that stopped fitting in the
+  -- scorer's budget -- six consecutive runs were killed and no round was
+  -- recorded for four hours. Most of that field was never a player; 24 of the
+  -- 42 accounts were probes from building the app.
+  --
+  -- A flag rather than a DELETE, because `results` and `round_decks` are ON
+  -- DELETE CASCADE: removing a player takes every round they played with
+  -- them, past placements renumber, and every finished season's ladder
+  -- silently changes. See the note on fk_res_player below for what that
+  -- looked like the first time.
+  --
+  -- Read in exactly one place, GET /field, which is where both the phones and
+  -- bin/round.py get the opposition from.
+  retired     TINYINT(1)   NOT NULL DEFAULT 0,
   created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   last_seen   DATETIME     NULL,
   UNIQUE KEY uq_handle (handle),

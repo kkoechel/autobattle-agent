@@ -1,0 +1,20 @@
+-- Retire an account instead of deleting it.
+--
+-- The league's cost is O(decks^2) -- 42 decks is 861 pairings by 21 seeds,
+-- about 18,000 matches -- and on a contended single core that stopped fitting
+-- in the scorer's 25-minute budget on 2026-10-28: six consecutive runs were
+-- killed and no round was recorded for four hours. Most of that field was
+-- never a player. 27 of the 42 accounts are probes from building the app,
+-- idle since 2026-10-20.
+--
+-- RETIRED, NOT DELETED. `results` and `round_decks` are ON DELETE CASCADE, so
+-- dropping a player takes every round they ever played with them -- past
+-- placements renumber and every finished season's ladder silently changes.
+-- The schema already carries a note about exactly that failure, where the
+-- standings rendered 1..8, 10, 11 and looked broken to everyone else. A flag
+-- costs one column and keeps history true.
+--
+-- A retired account is simply absent from GET /field, which is the only place
+-- the round-robin gets its field from -- so it stops being scored and stops
+-- being iterated against on players' phones, from one WHERE clause.
+ALTER TABLE players ADD COLUMN retired TINYINT(1) NOT NULL DEFAULT 0;

@@ -12,14 +12,32 @@ EnvironmentFile=/etc/agentgame-round.env
 
 ExecStart=/usr/bin/python3 -u /var/www/games/agentgame/bin/round.py
 
-# Below the live games on this box and below the deck agents, but above the
-# background sweeps: a round is small and players are waiting on it.
-Nice=14
-CPUWeight=40
+# Above the background sweeps, decisively, and still below the live games.
+#
+# RAISED FROM Nice=14 / CPUWeight=40 ON 2026-10-28, after the league stopped
+# scoring entirely: six consecutive runs were killed by the timeout and no
+# round was recorded between 09:26 and 14:27.
+#
+# The old weight looked right and was not. 40 beats every sweep on the box
+# individually -- abagent is 10, explore and discover 15, combo 19 -- but
+# there are SEVEN validator processes across those units and CPUWeight is
+# shared out against their sum, not against the largest. 40 against ~100 is
+# 29% of one core, and the measurement agreed: round 804 took 23m25s of wall
+# clock to consume 5m23s of CPU. The work was never the problem. It was
+# getting a quarter of the machine.
+#
+# 400 against ~100 is ~80%, which should put a healthy round near 7 minutes.
+# Nothing in the abagent units is touched: they are the main game's, and this
+# only raises our own side.
+Nice=5
+CPUWeight=400
 MemoryMax=500M
-# Five minutes inside the 30-minute period, so a pathological run is killed
-# before the next one is due rather than racing it. A healthy round is 18-20.
-TimeoutStartSec=1500
+# Inside the 30-minute period, so a pathological run is still killed before
+# the next one is due rather than racing it -- that rationale was right and
+# is kept. Widened 1500 -> 1740 because a legitimate 23m25s round came within
+# 90 seconds of the axe on 2026-10-28; with the weight above a healthy round
+# should be nowhere near either number.
+TimeoutStartSec=1740
 
 NoNewPrivileges=yes
 PrivateTmp=yes

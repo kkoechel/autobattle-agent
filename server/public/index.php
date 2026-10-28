@@ -137,12 +137,21 @@ if ($path === 'deck/reset' && $method === 'POST') {
 // ---- GET /field ---------------------------------------------------------
 // Everyone's current deck, so the phone can iterate against the real
 // opposition locally instead of guessing at it.
+//
+// THIS IS ALSO THE FIELD THE ROUND IS PLAYED OVER. bin/round.py is a client
+// of this route rather than a second thing that knows the schema, so the one
+// WHERE clause below decides both what a phone iterates against and what the
+// round-robin scores. Retiring an account therefore takes it out of the
+// league without deleting a thing -- which matters, because `results` is ON
+// DELETE CASCADE and deleting a player would renumber every placement they
+// ever shared a round with.
 if ($path === 'field' && $method === 'GET') {
     require_player();
     $rows = db()->query(
         'SELECT p.id AS player_id, p.handle, p.is_bot, p.faction, d.name, d.revision,
                 d.cards_json, d.plan_json
            FROM decks d JOIN players p ON p.id = d.player_id
+          WHERE p.retired = 0
           ORDER BY p.id'
     )->fetchAll();
     $out = [];

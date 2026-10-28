@@ -3011,10 +3011,19 @@ fun ArenaPane(
                     Text(
                         if (!current && scored == 0) "Not played yet."
                         else if (!current) "Finished \u2014 $scored rounds scored."
+                        // ROUNDS, NOT HOURS. This said "about 31 hours",
+                        // computed from the half-hourly schedule -- and the
+                        // schedule is not what the league keeps. Measured
+                        // 2026-10-28, the gaps between recorded rounds ran
+                        // 25, 28, 30, 34, 36, 57, 59, 61, 64 and once 182
+                        // minutes, because scoring competes for a single
+                        // core and a run that overruns is killed and records
+                        // nothing. A countdown that is precise and wrong is
+                        // worse than a count that is simply true.
                         else "$scored of $len rounds scored" +
                             (if (left <= 0) ", and the season is done."
                              else if (left == 1) ". One round to go."
-                             else ". $left to go \u2014 ${roughly(left)}."),
+                             else ". $left to go."),
                         style = snesText(12, androidx.compose.ui.graphics.Color(0xFF8A8AA8)))
                     // The rule, stated. A ladder whose numbers cannot be
                     // accounted for is a ladder a player cannot aim at.
@@ -3180,25 +3189,6 @@ fun ArenaPane(
     }
 }
 
-
-/**
- * How long a number of rounds is, roughly, in words.
- *
- * Rounds are scored at :04 and :34, so one round is half an hour, and that
- * ratio is the only thing this knows. Deliberately vague: the exact wall
- * clock of a round 62 rounds away depends on the scorer keeping up for
- * thirty-one hours, which it will not do to the minute, and a countdown that
- * is precise and wrong is worse than one that is approximate and honest.
- */
-private fun roughly(rounds: Int): String {
-    val h = rounds / 2
-    return when {
-        h < 1 -> "under an hour"
-        h == 1 -> "about an hour"
-        h < 36 -> "about $h hours"
-        else -> "about ${h / 24} days"
-    }
-}
 
 /**
  * 1st, 2nd, 3rd, 4th -- and 11th, 12th, 13th, which the obvious version of
