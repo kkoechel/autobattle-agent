@@ -348,10 +348,13 @@ if ($path === 'season' && $method === 'GET') {
     $from = season_first($s);
     $to   = season_last($s);
 
+    // n_decks rides along because a placement is meaningless without it.
     $st = db()->prepare(
         'SELECT r.player_id, p.handle, p.is_bot, p.faction,
-                r.round_id, r.wins, r.placement, r.deck_name
-           FROM results r JOIN players p ON p.id = r.player_id
+                r.round_id, r.wins, r.placement, r.deck_name, rd.n_decks
+           FROM results r
+           JOIN players p ON p.id = r.player_id
+           JOIN rounds  rd ON rd.id = r.round_id
           WHERE r.round_id BETWEEN ? AND ?
           ORDER BY r.round_id');
     $st->execute([$from, $to]);
@@ -365,7 +368,9 @@ if ($path === 'season' && $method === 'GET') {
             $acc[$id] = ['handle' => $r['handle'], 'is_bot' => (int)$r['is_bot'],
                          'faction' => (string)$r['faction'], 'points' => 0,
                          'rounds' => 0, 'wins' => 0, 'firsts' => 0,
-                         'best_place' => 0, 'best_round' => 0, 'best_pts' => 0,
+                         'best_share' => 1.0,
+                         'best_place' => 0, 'best_of' => 0,
+                         'best_round' => 0, 'best_pts' => 0,
                          'first_round' => (int)$r['round_id'], 'deck_name' => ''];
         }
         $a =& $acc[$id];
@@ -375,8 +380,23 @@ if ($path === 'season' && $method === 'GET') {
         $a['rounds']++;
         $a['wins']   += (int)$r['wins'];
         if ($place === 1) $a['firsts']++;
-        if ($place > 0 && ($a['best_place'] === 0 || $place < $a['best_place'])) {
+        // BEST BY SHARE OF THE FIELD, not by the raw number.
+        //
+        // Comparing placements across rounds of different sizes is the error
+        // the /leaderboard route above is written to avoid -- finishing 5th
+        // of 11 is better than 5th of 6 -- and it bit here the moment 24
+        // probe accounts were retired on 2026-10-28. The field went 42 -> 18
+        // mid-season, and a 14th of 18 began outranking a 24th of 42 for
+        // every player who had both, which is backwards: 0.78 of the field
+        // against 0.57 of it.
+        $of = max(1, (int)$r['n_decks']);
+        $share = $place / $of;
+        if ($place > 0 && ($a['best_place'] === 0 || $share < $a['best_share'])) {
+            $a['best_share'] = $share;
             $a['best_place'] = $place;
+            // Reported WITH the placement, always, so the number is readable
+            // on its own and a season spanning a resize cannot mislead.
+            $a['best_of']    = $of;
             $a['best_round'] = (int)$r['round_id'];
             // What that round was worth, carried along rather than
             // recomputed later: it is the points of THAT round, and nothing
@@ -397,9 +417,11 @@ if ($path === 'season' && $method === 'GET') {
     // handle when one of them had finished higher than the other all season.
     // An unplaced best is sorted last rather than treated as a win.
     usort($acc, fn($x, $y) => [$y['points'], $y['wins'],
-                               $x['best_place'] ?: PHP_INT_MAX, $x['handle']]
+                               $x['best_place'] ? $x['best_share'] : PHP_INT_MAX,
+                               $x['handle']]
                           <=> [$x['points'], $x['wins'],
-                               $y['best_place'] ?: PHP_INT_MAX, $y['handle']]);
+                               $y['best_place'] ? $y['best_share'] : PHP_INT_MAX,
+                               $y['handle']]);
     // Whether a player was here when the season started, measured against the
     // first round actually SCORED rather than against $from. The nominal
     // first round of a season has not been played yet at the top of one, and

@@ -3102,8 +3102,16 @@ fun ArenaPane(
                                 // best finish, so every row says something.
                                 val firsts = r.optInt("firsts")
                                 val best = r.optInt("best_place")
+                                val bestOf = r.optInt("best_of")
                                 Text(
                                     if (firsts > 0) "won $firsts"
+                                    // OF HOW MANY, always. The field is not a
+                                    // constant -- it went 42 to 18 inside
+                                    // this very season -- and "best 14th"
+                                    // reads as an improvement on "best 24th"
+                                    // when it is the opposite.
+                                    else if (best > 0 && bestOf > 0)
+                                        "best ${ordinal(best)}/$bestOf"
                                     else if (best > 0) "best ${ordinal(best)}"
                                     else "",
                                     style = snesText(11, androidx.compose.ui.graphics.Color(0xFF8A8AA8)))
@@ -3122,6 +3130,7 @@ fun ArenaPane(
                             // or the number is just a number.
                             val bp = r.optInt("best_place")
                             val br = r.optInt("best_round")
+                            val bo = r.optInt("best_of")
                             if (bp > 0 && br > 0) {
                                 Text(
                                     if (bp == 1)
@@ -3129,7 +3138,9 @@ fun ArenaPane(
                                         "${r.optInt("best_pts")} points."
                                     else
                                         "    Your best was round $br \u2014 " +
-                                        "${ordinal(bp)}, ${r.optInt("best_pts")} points.",
+                                        "${ordinal(bp)}" +
+                                        (if (bo > 0) " of $bo" else "") +
+                                        ", ${r.optInt("best_pts")} points.",
                                     style = snesText(11,
                                         androidx.compose.ui.graphics.Color(0xFFFFE28C)))
                             }
