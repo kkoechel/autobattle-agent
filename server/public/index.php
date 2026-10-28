@@ -273,6 +273,126 @@ if ($path === 'leaderboard' && $method === 'GET') {
            'table' => $rows]);
 }
 
+// ---- GET /season --------------------------------------------------------
+// The ladder: who is winning the league, as opposed to who won the last
+// round (/standings) or who has been steadiest lately (/leaderboard).
+//
+// WHY A THIRD TABLE, AND NOT A SORT OF ONE OF THE OTHER TWO. The two that
+// exist answer the two questions a player asks about a DECK, and neither
+// answers the one they ask about themselves. A round snapshot is 21 seeds
+// against the field and bounces for reasons that have nothing to do with the
+// list. A 48-round average is stable but forgets: a player whose new build
+// just took first place is still rated by the forty-seven rounds its
+// predecessors played, so their best night reads as mid-table. A ladder has
+// to let a good round COUNT, permanently, which means accumulating -- and
+// accumulating means a season, or the house agents that have been here since
+// round one are unreachable by arithmetic rather than by merit.
+//
+// NOT "YOUR BEST N ROUNDS OF THE SEASON", which is the obvious way to make a
+// peak count while capping how much simply being here early is worth. It is
+// selection on noise, and this project already knows what that costs: a
+// round's win count has a standard deviation of about 6, so the best 24 of
+// 96 rounds average roughly +1.3 standard deviations -- some 180 points of
+// pure luck handed to whoever has the most rounds to choose from. That is
+// the participation advantage it was supposed to remove, rebuilt out of
+// variance and harder to see. Every round counts once, at face value.
+if ($path === 'season' && $method === 'GET') {
+    $latest = (int)db()->query(
+        'SELECT COALESCE(MAX(id),0) FROM rounds WHERE finished_at IS NOT NULL')
+        ->fetchColumn();
+    $now = season_of($latest);
+    // A season may be asked for by number so a finished ladder can still be
+    // read. Clamped at the bottom only: asking for one that has not happened
+    // yet is answered with an empty table and its round range, which is a
+    // true answer to "what is season 12", rather than an error.
+    $s = (int)($_GET['season'] ?? $now);
+    if ($s < 1) $s = $now;
+    $from = season_first($s);
+    $to   = season_last($s);
+
+    $st = db()->prepare(
+        'SELECT r.player_id, p.handle, p.is_bot, p.faction,
+                r.round_id, r.wins, r.placement, r.deck_name
+           FROM results r JOIN players p ON p.id = r.player_id
+          WHERE r.round_id BETWEEN ? AND ?
+          ORDER BY r.round_id');
+    $st->execute([$from, $to]);
+
+    $acc = [];
+    $scored = [];
+    foreach ($st->fetchAll() as $r) {
+        $id = (int)$r['player_id'];
+        $scored[(int)$r['round_id']] = true;
+        if (!isset($acc[$id])) {
+            $acc[$id] = ['handle' => $r['handle'], 'is_bot' => (int)$r['is_bot'],
+                         'faction' => (string)$r['faction'], 'points' => 0,
+                         'rounds' => 0, 'wins' => 0, 'firsts' => 0,
+                         'best_place' => 0, 'best_round' => 0, 'best_pts' => 0,
+                         'first_round' => (int)$r['round_id'], 'deck_name' => ''];
+        }
+        $a =& $acc[$id];
+        $place = (int)$r['placement'];
+        $pts = round_points((int)$r['wins'], $place);
+        $a['points'] += $pts;
+        $a['rounds']++;
+        $a['wins']   += (int)$r['wins'];
+        if ($place === 1) $a['firsts']++;
+        if ($place > 0 && ($a['best_place'] === 0 || $place < $a['best_place'])) {
+            $a['best_place'] = $place;
+            $a['best_round'] = (int)$r['round_id'];
+            // What that round was worth, carried along rather than
+            // recomputed later: it is the points of THAT round, and nothing
+            // else in the row still knows which round it was.
+            $a['best_pts']   = $pts;
+        }
+        // Rows arrive in round order, so the last one seen is the deck they
+        // are on now. The name is for the row's second line and must be the
+        // CURRENT list, not whichever one happened to score best.
+        $a['deck_name'] = (string)$r['deck_name'];
+        unset($a);
+    }
+
+    // Points, then total wins, then the best finish of the season, then the
+    // alphabet. The later keys are not padding: the probe accounts run
+    // identical decks and tie on points AND wins exactly, and with the live
+    // field two players were being separated by the first letter of their
+    // handle when one of them had finished higher than the other all season.
+    // An unplaced best is sorted last rather than treated as a win.
+    usort($acc, fn($x, $y) => [$y['points'], $y['wins'],
+                               $x['best_place'] ?: PHP_INT_MAX, $x['handle']]
+                          <=> [$x['points'], $x['wins'],
+                               $y['best_place'] ?: PHP_INT_MAX, $y['handle']]);
+    // Whether a player was here when the season started, measured against the
+    // first round actually SCORED rather than against $from. The nominal
+    // first round of a season has not been played yet at the top of one, and
+    // may be missing entirely after a scorer outage at the boundary --
+    // comparing against it marks the whole league as late joiners.
+    $opened = $scored ? min(array_keys($scored)) : $from;
+    $table = [];
+    $rank = 0;
+    foreach ($acc as $a) {
+        $a['rank'] = ++$rank;
+        // A mid-season joiner is low on the ladder for a reason that is not
+        // about their deck, and the app cannot say so unless it is told.
+        $a['joined_late'] = $a['first_round'] > $opened ? 1 : 0;
+        $table[] = $a;
+    }
+
+    reply(['ok' => true,
+           'season' => ['number' => $s, 'from' => $from, 'to' => $to,
+                        'length' => SEASON_LEN,
+                        'current' => $s === $now ? 1 : 0,
+                        // Rounds of this season that have actually been
+                        // scored, which is not $latest - $from + 1: a round
+                        // the scorer missed leaves a hole, and claiming
+                        // "round 34 of 96" when 33 ran would be a small lie
+                        // in the one place a player checks their progress.
+                        'scored' => count($scored),
+                        'rounds_left' => max(0, $to - $latest)],
+           'latest_round' => $latest,
+           'table' => $table]);
+}
+
 // ---- GET /cards ---------------------------------------------------------
 // The forked catalogue plus the ban list. Served whole: the phone needs
 // effects_json and stats_json to run the engine, so a slim variant would

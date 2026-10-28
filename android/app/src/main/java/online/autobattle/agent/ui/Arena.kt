@@ -300,6 +300,14 @@ fun ArenaPane(
     var field by remember { mutableStateOf<Map<String, JSONObject>>(emptyMap()) }
     var openDeck by remember { mutableStateOf<String?>(null) }
     var myForm by remember { mutableStateOf<JSONObject?>(null) }
+    // The season ladder, and which season is being looked at: 0 means the one
+    // in progress. Held as 0 rather than as its number so that the live
+    // ladder stays the live ladder when the season rolls over underneath a
+    // screen somebody left open.
+    var season by remember { mutableStateOf<JSONObject?>(null) }
+    var seasonView by remember { mutableStateOf(0) }
+    var seasonNow by remember { mutableStateOf<Int?>(null) }
+    var seasonTried by remember { mutableStateOf(false) }
 
     // Standings and the player's own deck only. Card NAMES are a ~1MB
     // catalogue, and fetching them here made the whole screen wait on a
@@ -606,6 +614,36 @@ fun ArenaPane(
     // Only on the Agent tab: the Dojo and the Binder are dense tables and a
     // picture behind them fights the text for every row. Only once there is a
     // token, so the join screen stays plain.
+    // The ladder, fetched on its own rather than inside refresh().
+    //
+    // Keyed on the ROUND, so it is re-read exactly when a new round lands and
+    // not on every ordinary refresh that finds the same one -- and on
+    // seasonView, so the arrows work. Points only change when a round is
+    // scored, so any other trigger would be a request that cannot return
+    // anything new.
+    val shownRound = standings?.optJSONObject("round")?.optInt("id") ?: 0
+    LaunchedEffect(seasonView, shownRound, token, loaded) {
+        // Held until the first refresh has landed, so this runs ONCE at
+        // startup. Without the guard it fires on the composition where
+        // standings is still null and again when the round arrives, and the
+        // first result is fetched only to be thrown away. `loaded` is set on
+        // both the success and the failure path of refresh(), so a league
+        // that cannot be reached at all still lets the ladder be attempted.
+        if (!loaded) return@LaunchedEffect
+        runCancellable {
+            withContext(Dispatchers.IO) { GameClient(token).season(seasonView) }
+        }.onSuccess { sn ->
+            season = sn
+            val m = sn.optJSONObject("season")
+            if (m != null && m.optInt("current") == 1) seasonNow = m.optInt("number")
+        }
+        // Tried, whatever came of it. The screen cannot otherwise tell a
+        // ladder that failed from one still in flight, and it showed "could
+        // not be read" for the whole of a slow fetch -- which is not slow,
+        // it is wrong.
+        seasonTried = true
+    }
+
     LaunchedEffect(place, token, avatar) {
         // The Paragon stands behind both halves of the conversation: Brew is
         // building a deck with them, Talk is asking them something.
@@ -2934,9 +2972,244 @@ fun ArenaPane(
             }   // end the league table window
         }
         }   // end Place.DOJO
+
+        // ---- Place.LEAGUE: the season ladder ----------------------------
+        //
+        // THE THIRD TABLE, and the only one that accumulates. The Dojo's
+        // table is the last round, which bounces for reasons that have
+        // nothing to do with the list; `myForm` above it is a 48-round
+        // average, which is steady but forgets -- a player whose new build
+        // just took first place is still rated by the rounds its
+        // predecessors played, so their best night reads as mid-table.
+        //
+        // A ladder has to let a good round COUNT, which means adding points
+        // up, which means a season: without one the house agents have been
+        // here since round one and are out of reach by arithmetic rather
+        // than by merit.
+        if (place == Place.LEAGUE) {
+            val sn = season
+            val meta = sn?.optJSONObject("season")
+            val tbl = sn?.optJSONArray("table")
+            if (sn == null) {
+                Text(if (seasonTried) "The ladder could not be read." else
+                     "\u201cLet me see how the season stands\u2026\u201d",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                SnesWindow {
+                    val num = meta?.optInt("number") ?: 0
+                    val len = meta?.optInt("length") ?: 0
+                    val scored = meta?.optInt("scored") ?: 0
+                    val left = meta?.optInt("rounds_left") ?: 0
+                    val current = (meta?.optInt("current") ?: 0) == 1
+                    Text("SEASON $num",
+                        style = snesText(14, androidx.compose.ui.graphics.Color(0xFFFFE28C)))
+                    // SCORED, not "round 34 of 96". The two differ whenever
+                    // the scorer missed a round, and the one place a player
+                    // checks their progress is the worst place to round a
+                    // number up.
+                    Text(
+                        if (!current && scored == 0) "Not played yet."
+                        else if (!current) "Finished \u2014 $scored rounds scored."
+                        else "$scored of $len rounds scored" +
+                            (if (left <= 0) ", and the season is done."
+                             else if (left == 1) ". One round to go."
+                             else ". $left to go \u2014 ${roughly(left)}."),
+                        style = snesText(12, androidx.compose.ui.graphics.Color(0xFF8A8AA8)))
+                    // The rule, stated. A ladder whose numbers cannot be
+                    // accounted for is a ladder a player cannot aim at.
+                    Text("A point for every deck you beat, every round. " +
+                        "Taking a round is worth 10 more, second 6, third 3.",
+                        style = snesText(12, androidx.compose.ui.graphics.Color(0xFF8A8AA8)))
+
+                    if (tbl == null || tbl.length() == 0) {
+                        Text("No round of this season has been scored yet.",
+                            style = snesText(12, androidx.compose.ui.graphics.Color(0xFF8A8AA8)))
+                    }
+                    for (i in 0 until (tbl?.length() ?: 0)) {
+                        val r = tbl!!.getJSONObject(i)
+                        val who = r.optString("handle")
+                        val mine = who == handle
+                        val kind = Entities.kindOf(r.optInt("is_bot"),
+                                                   r.optString("faction"))
+                        Row(Modifier.fillMaxWidth()
+                            .background(if (mine)
+                                androidx.compose.ui.graphics.Color(0x33FFE28C)
+                                else androidx.compose.ui.graphics.Color.Transparent)
+                            // ONLY ON THE SEASON IN PROGRESS. `field` holds
+                            // everyone's deck as it is NOW, so opening a row
+                            // on a finished ladder would present today's
+                            // hundred cards as the list that earned those
+                            // points -- which for anyone still iterating is
+                            // simply a different deck. The round snapshots
+                            // that would answer it honestly are pruned after
+                            // 96 rounds, so there is nothing to show and the
+                            // row should not pretend otherwise.
+                            .clickable(enabled = current) {
+                                openDeck = if (openDeck == who) null else who
+                                if (openDeck != null) scope.launch { ensureNames() }
+                            }
+                            .padding(vertical = 2.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(if (mine) "\u25b6" else " ", Modifier.width(14.dp),
+                                style = snesText(12, androidx.compose.ui.graphics.Color(0xFFFFE28C)))
+                            Text("${r.optInt("rank")}".padStart(2), Modifier.width(26.dp),
+                                style = snesText(13, if (mine)
+                                    androidx.compose.ui.graphics.Color(0xFFFFE28C)
+                                    else androidx.compose.ui.graphics.Color(0xFFF2EFE4)))
+                            Column(Modifier.weight(1f)) {
+                                // Titled by LADDER RANK here, not by last
+                                // round's placement: on this screen the
+                                // standing being described is the season's,
+                                // and a god styled Sovereign for one good
+                                // round while sitting ninth all season would
+                                // be the screen contradicting itself.
+                                Text(
+                                    if (kind == Entities.Kind.GOD)
+                                        Entities.titled(who, r.optInt("rank"))
+                                    else who,
+                                    style = snesText(13, when {
+                                        mine -> androidx.compose.ui.graphics.Color(0xFFFFE28C)
+                                        kind == Entities.Kind.GOD ->
+                                            androidx.compose.ui.graphics.Color(0xFFE89CB0)
+                                        kind == Entities.Kind.PARAGON ->
+                                            androidx.compose.ui.graphics.Color(0xFF9CD8E8)
+                                        else -> androidx.compose.ui.graphics.Color(0xFFF2EFE4)
+                                    }),
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(r.optString("deck_name"),
+                                    style = snesText(11, androidx.compose.ui.graphics.Color(0xFF8A8AA8)),
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text("${r.optInt("points")}",
+                                    style = snesText(13, if (mine)
+                                        androidx.compose.ui.graphics.Color(0xFFFFE28C)
+                                        else androidx.compose.ui.graphics.Color(0xFFD8D8E8)))
+                                // The best thing they did, in the space the
+                                // round record occupies on the Dojo's table.
+                                // Rounds won if they have any, because that
+                                // is what a ladder is about; otherwise the
+                                // best finish, so every row says something.
+                                val firsts = r.optInt("firsts")
+                                val best = r.optInt("best_place")
+                                Text(
+                                    if (firsts > 0) "won $firsts"
+                                    else if (best > 0) "best ${ordinal(best)}"
+                                    else "",
+                                    style = snesText(11, androidx.compose.ui.graphics.Color(0xFF8A8AA8)))
+                            }
+                        }
+                        // Said once, under the player's own row, and only
+                        // when it is true: a mid-season joiner is low on the
+                        // ladder for a reason that is not their deck, and
+                        // the screen should say so rather than let them
+                        // conclude the obvious wrong thing.
+                        if (mine) {
+                            // The round itself, by number, because the Dojo
+                            // can play it back and a point total cannot be
+                            // watched. A ladder that accumulates has to be
+                            // able to point at the night it accumulated from
+                            // or the number is just a number.
+                            val bp = r.optInt("best_place")
+                            val br = r.optInt("best_round")
+                            if (bp > 0 && br > 0) {
+                                Text(
+                                    if (bp == 1)
+                                        "    You took round $br, for " +
+                                        "${r.optInt("best_pts")} points."
+                                    else
+                                        "    Your best was round $br \u2014 " +
+                                        "${ordinal(bp)}, ${r.optInt("best_pts")} points.",
+                                    style = snesText(11,
+                                        androidx.compose.ui.graphics.Color(0xFFFFE28C)))
+                            }
+                            if (r.optInt("joined_late") == 1) {
+                                val n = r.optInt("rounds")
+                                Text("    You joined part-way through: $n of " +
+                                    "the season's $scored scored rounds are " +
+                                    "yours. Season ${num + 1} starts everyone level.",
+                                    style = snesText(11,
+                                        androidx.compose.ui.graphics.Color(0xFF8CE8A0)))
+                            }
+                        }
+                        // `current` again, and not just on the tap: openDeck
+                        // is shared with the Dojo's table, so a row left open
+                        // there would otherwise expand itself here.
+                        if (current && openDeck == who) {
+                            val cards = field[who]?.optJSONArray("cards")
+                            if (cards == null) {
+                                Text("    their deck is not on file",
+                                    style = snesText(12, androidx.compose.ui.graphics.Color(0xFF8A8AA8)))
+                            } else {
+                                Box(Modifier.padding(start = 14.dp, top = 4.dp, bottom = 8.dp)) {
+                                    Column {
+                                        RivalPockets(cards, cardsById) { showCard = it }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // Past seasons are readable because a season you won is the
+                // only lasting thing this game hands out, and a ladder that
+                // forgets it the moment the next one starts would be handing
+                // out nothing.
+                val num = meta?.optInt("number") ?: 0
+                val current = (meta?.optInt("current") ?: 0) == 1
+                Row(Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (num > 1) {
+                        GameLink("\u25c0 Season ${num - 1}", Modifier.weight(1f)) {
+                            seasonView = num - 1
+                        }
+                    }
+                    if (!current) {
+                        GameLink("Season ${num + 1} \u25b6", Modifier.weight(1f)) {
+                            // The season in PROGRESS is asked for as 0, not
+                            // by number: a ladder reached by arrow and one
+                            // reached by opening the screen must be the same
+                            // ladder, and only 0 is guaranteed to still be
+                            // the live one tomorrow.
+                            seasonView = if (num + 1 >= (seasonNow ?: (num + 1))) 0 else num + 1
+                        }
+                    }
+                }
+            }
+        }   // end Place.LEAGUE
     }
 }
 
+
+/**
+ * How long a number of rounds is, roughly, in words.
+ *
+ * Rounds are scored at :04 and :34, so one round is half an hour, and that
+ * ratio is the only thing this knows. Deliberately vague: the exact wall
+ * clock of a round 62 rounds away depends on the scorer keeping up for
+ * thirty-one hours, which it will not do to the minute, and a countdown that
+ * is precise and wrong is worse than one that is approximate and honest.
+ */
+private fun roughly(rounds: Int): String {
+    val h = rounds / 2
+    return when {
+        h < 1 -> "under an hour"
+        h == 1 -> "about an hour"
+        h < 36 -> "about $h hours"
+        else -> "about ${h / 24} days"
+    }
+}
+
+/**
+ * 1st, 2nd, 3rd, 4th -- and 11th, 12th, 13th, which the obvious version of
+ * this gets wrong.
+ */
+private fun ordinal(n: Int): String {
+    val suffix = if (n % 100 in 11..13) "th" else when (n % 10) {
+        1 -> "st"; 2 -> "nd"; 3 -> "rd"; else -> "th"
+    }
+    return "$n$suffix"
+}
 
 /**
  * "Next round in 4 min", from the server's UTC "Y-m-d H:i:s".

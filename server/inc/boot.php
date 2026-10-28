@@ -16,6 +16,51 @@ const CARD_FILE = __DIR__ . '/../var/cards.json';
 // results are kept forever, only the lists that played are pruned.
 const REPLAY_KEEP_ROUNDS = 96;
 
+// A SEASON is a fixed block of rounds, and nothing anywhere records where
+// one begins: season N IS rounds (N-1)*96+1 .. N*96. Derived rather than
+// stored, which means every round ever scored already belongs to a season,
+// a past season's ladder can be read without having saved anything at the
+// time, and there is no rollover job that can fail at midnight.
+//
+// 96 rounds is two days at the :04/:34 cadence. The length is chosen for the
+// player who joins late. An entered deck plays EVERY round automatically, so
+// the only thing a cumulative total can punish is having joined recently --
+// and the answer to that is not a cleverer formula, it is a season short
+// enough that the next level start is never more than two days away.
+const SEASON_LEN = 96;
+
+function season_of(int $round): int {
+    return intdiv(max(1, $round) - 1, SEASON_LEN) + 1;
+}
+function season_first(int $s): int { return ($s - 1) * SEASON_LEN + 1; }
+function season_last(int $s): int { return $s * SEASON_LEN; }
+
+/**
+ * What one round is worth on the season ladder.
+ *
+ * A point for every deck you beat, plus the podium. Wins are the unit
+ * because they are what the round actually measured, and because they do not
+ * drift as the league grows the way a placement-based table would: finishing
+ * 5th of 11 and 5th of 42 are not the same achievement.
+ *
+ * The podium bonus is here because summed wins alone cannot tell a round WIN
+ * from a third place -- 28 against 24, out of 41 -- and taking a round is the
+ * event the whole ladder exists to record.
+ *
+ * DEFINED ONCE, IN PHP, and the aggregation is done in PHP too. The obvious
+ * implementation is a CASE expression inside a GROUP BY, which is faster and
+ * puts a second copy of the rule in SQL for the two to disagree. A season is
+ * at most 96 rounds of a few dozen decks, so there is nothing to optimise.
+ */
+function round_points(int $wins, int $place): int {
+    return $wins + match (true) {
+        $place === 1 => 10,
+        $place === 2 => 6,
+        $place === 3 => 3,
+        default      => 0,
+    };
+}
+
 // How many decks a player may keep on the shelf.
 //
 // Defined HERE, not beside the routes that read it: POST /round calls

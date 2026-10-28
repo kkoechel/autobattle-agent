@@ -349,16 +349,24 @@ fun SnesChoice(
 /**
  * The places a player can be.
  *
- * THREE, NOT FIVE. The old AGENT tab did two unrelated jobs -- building a
- * deck and explaining the game -- and paid for it with a second row of
- * buttons under the tabs holding three controls with three different
- * purposes. Brew is everything that changes the deck; Talk is everything
- * that explains one, which is why the binder and the ban list live there
- * too: both are reference, which is what "how does this work" means when the
- * answer is a card rather than a rule.
+ * ONE JOB EACH, which is why there are four and not five. The old AGENT tab
+ * did two unrelated jobs -- building a deck and explaining the game -- and
+ * paid for it with a second row of buttons under the tabs holding three
+ * controls with three different purposes. Brew is everything that changes
+ * the deck; Talk is everything that explains one, which is why the binder
+ * and the ban list live there too: both are reference, which is what "how
+ * does this work" means when the answer is a card rather than a rule.
+ *
+ * LEAGUE was added for the same reason the AGENT tab was removed. The Dojo
+ * is where a player watches their own rounds back, and the season ladder is
+ * not that -- it is where everyone stands, which is a different question
+ * asked at a different time. Hanging it off the Dojo would have put it below
+ * two screens of replay history, which this app has already been bitten by
+ * once: a result rendered past the control that produced it reads as a
+ * control that does nothing, and was reported as exactly that.
  */
 enum class Place(val label: String) {
-    BREW("Brew"), TALK("Talk"), DOJO("Dojo"),
+    BREW("Brew"), TALK("Talk"), DOJO("Dojo"), LEAGUE("League"),
 }
 
 /**

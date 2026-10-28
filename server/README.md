@@ -35,6 +35,8 @@ main game and cannot write to it even by accident.
 | `PUT /api/deck` | bearer | submit a deck; validated server-side |
 | `GET /api/field` | bearer | everyone's current deck, so the phone can iterate against the real opposition |
 | `GET /api/standings` | — | the latest finished round |
+| `GET /api/leaderboard` | — | average place and wins over a rolling window of rounds |
+| `GET /api/season` | — | the season ladder: points accumulated over a 96-round block, `?season=N` for a past one |
 | `GET /api/cards` | — | the forked catalogue + ban list |
 | `POST /api/round` | admin | written by `bin/round.py` |
 | `GET /api/health` | — | card/player/deck counts |
@@ -56,6 +58,32 @@ rejected; a legal deck is accepted.
   the code the agents have used for weeks instead of a reimplementation.
 - `bin/sync_cards.sh` — pulls the catalogue; validates before replacing, since
   a truncated file would make every deck illegal.
+
+## Seasons
+
+A season is **derived, not stored**: season N *is* rounds `(N-1)*96+1 .. N*96`
+(`SEASON_LEN` in `inc/boot.php`). Nothing records a boundary, so every round
+ever scored already belongs to a season, a finished ladder can be read back
+without having saved anything at the time, and there is no rollover job that
+can fail at midnight.
+
+96 rounds is two days at the :04/:34 cadence, and the length is chosen for the
+player who joins late. An entered deck plays **every** round automatically, so
+the only thing a cumulative total can punish is having arrived recently — and
+the answer to that is not a cleverer formula, it is a season short enough that
+the next level start is never more than two days away.
+
+One round is worth `wins + 10/6/3 for the podium` (`round_points()`). Points
+are **not comparable across seasons**: wins are out of the field size, and the
+league has grown from 12 decks in season 1 to 42 in season 9.
+
+Deliberately **not** "your best N rounds of the season", which is the obvious
+way to make a peak count while capping what simply being here early is worth.
+It is selection on noise, and a round's win count has a standard deviation of
+about 6 — the best 24 of 96 rounds average roughly +1.3 SD, which hands some
+180 points of pure luck to whoever has the most rounds to choose from. That is
+the participation advantage it was meant to remove, rebuilt out of variance
+and harder to see.
 
 ## Timers
 

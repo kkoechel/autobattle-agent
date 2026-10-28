@@ -161,6 +161,20 @@ class GameClient(private val token: String?, private val base: String = BASE) {
     fun leaderboard(rounds: Int = 48): JSONArray =
         call("GET", "/leaderboard?rounds=$rounds").getJSONArray("table")
 
+    /**
+     * The season ladder: points accumulated over a fixed block of rounds.
+     *
+     * Returns the WHOLE envelope, not just the table, because the table is
+     * unreadable without it -- a total means nothing until you know how many
+     * of the season's rounds have been played, and a player sitting near the
+     * bottom needs to be told whether that is their deck or the fact that
+     * they joined yesterday.
+     *
+     * `season` is a season number; 0 asks for the one in progress.
+     */
+    fun season(season: Int = 0): JSONObject =
+        call("GET", if (season > 0) "/season?season=$season" else "/season")
+
     /** Throw the current deck away and take a fresh starter. */
     fun resetDeck(): JSONObject = call("POST", "/deck/reset", JSONObject())
 

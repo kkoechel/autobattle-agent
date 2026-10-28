@@ -113,5 +113,15 @@ object Rules {
             "deck that plays is whatever you last submitted \u2014 so a deck left " +
             "alone keeps playing, and keeps scoring."
         ),
+        RuleQA(
+            "What is a season?",
+            "Ninety-six rounds \u2014 two days \u2014 and then a fresh one. Every round " +
+            "of it earns you a point for every deck you beat, and ten more " +
+            "for taking the round outright, six for second, three for third. " +
+            "The ladder is the total. It is deliberately short: your deck " +
+            "plays every round whether or not you are watching, so the only " +
+            "thing being behind can mean is that you arrived later than the " +
+            "rest \u2014 and the next clean start is never more than two days off."
+        ),
     )
 }
