@@ -35,6 +35,48 @@ function season_of(int $round): int {
 function season_first(int $s): int { return ($s - 1) * SEASON_LEN + 1; }
 function season_last(int $s): int { return $s * SEASON_LEN; }
 
+// WHICH SEEDS A SEASON IS PLAYED ON.
+//
+// A round is 21 seeds, and until season 10 every round in the league's
+// history used the SAME 21: `AGENTGAME_SEED0` was never set in
+// /etc/agentgame-round.env, so bin/round.py took its default of 1000 for all
+// 803 rounds. That was a deliberate design -- the phone trains on disjoint
+// blocks (7k screen, 20k climb, 50k verify, 90k rehearsal, 60k/61k plan) and
+// game/Compete.kt says so in as many words, so the league was a held-out test
+// set the search could never flatter itself against.
+//
+// It cost determinism. PikeWarden, revision 2, scored 26-4-11 for fourteen
+// consecutive rounds; its placement moved exactly once, and only because
+// somebody else rebuilt. A deck's record changed only when a deck in the
+// field changed, so a round carried no new information and the half-hourly
+// cadence bought nothing. A held-out set reused forever also stops being held
+// out -- not through the phone's search, which avoids it by construction, but
+// through the player, who chooses what to try next by watching it.
+//
+// So the block now MOVES, once per season. Inside a season it is fixed, which
+// keeps the one property the game is built on: change the deck, and the
+// delta you see is the deck, not the draw. Across seasons nothing is reused
+// long enough to tune to, and a season gets a character of its own -- winning
+// two of them means beating two different draws.
+//
+// Rotation starts at season 10, not now: season 9 is already 37 rounds old,
+// and switching mid-season would split it across two blocks and destroy
+// exactly the comparability this exists to protect.
+//
+// The base is far from every block anything else uses -- 1000 (legacy), 7k,
+// 20k, 50k, 60k, 61k and 90k on the phone, 4.4M for starters, 5.2M for
+// shells -- and a stride of 1000 against a 21-seed block cannot overlap.
+const SEED_LEGACY      = 1000;
+const SEED_ROTATE_FROM = 10;
+const SEED_BASE        = 2000000;
+const SEED_STRIDE      = 1000;
+
+function season_seed0(int $season): int {
+    return $season < SEED_ROTATE_FROM
+        ? SEED_LEGACY
+        : SEED_BASE + ($season - SEED_ROTATE_FROM) * SEED_STRIDE;
+}
+
 /**
  * What one round is worth on the season ladder.
  *

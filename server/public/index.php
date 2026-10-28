@@ -282,6 +282,35 @@ if ($path === 'leaderboard' && $method === 'GET') {
            'table' => $rows]);
 }
 
+// ---- GET /next-round ----------------------------------------------------
+// Which round is about to be scored, and on which seeds.
+//
+// ADMIN ONLY, and that is the whole reason this is a route rather than a
+// field on /standings. The upcoming seed block must not be public: a player
+// who knows it can train on it, which is precisely the thing rotating the
+// block exists to prevent. bin/round.py already holds the admin token.
+//
+// The season arithmetic stays HERE rather than being reimplemented in Python.
+// round.py is a privileged client, not a second thing that knows the rules,
+// and a season boundary computed in two places is a season boundary that will
+// eventually disagree with itself.
+if ($path === 'next-round' && $method === 'GET') {
+    require_admin();
+    $latest = (int)db()->query(
+        'SELECT COALESCE(MAX(id),0) FROM rounds WHERE finished_at IS NOT NULL')
+        ->fetchColumn();
+    // The id the next INSERT will take is not knowable until it happens; this
+    // is the id it will take if nothing else writes first, which is true in
+    // practice because only this one service scores. If it were ever wrong
+    // the consequence is a round played on an adjacent season's block, which
+    // is recorded faithfully in rounds.seed0 and replays exactly.
+    $next = $latest + 1;
+    $season = season_of($next);
+    reply(['ok' => true, 'round_no' => $next, 'season' => $season,
+           'seed0' => season_seed0($season),
+           'rotates_at' => season_first($season + 1)]);
+}
+
 // ---- GET /season --------------------------------------------------------
 // The ladder: who is winning the league, as opposed to who won the last
 // round (/standings) or who has been steadiest lately (/leaderboard).

@@ -123,5 +123,18 @@ object Rules {
             "thing being behind can mean is that you arrived later than the " +
             "rest \u2014 and the next clean start is never more than two days off."
         ),
+        RuleQA(
+            "Does every season play the same?",
+            "No. Each season is drawn on its own set of battles, and they are " +
+            "the same for everyone in it and the same from the first round to " +
+            "the last \u2014 so if your standing moves inside a season, it moved " +
+            "because a deck changed, mine or somebody else's. Never because " +
+            "the dice felt different that afternoon. Come the new season the " +
+            "draw changes, and a deck that had the measure of the old one has " +
+            "to prove it again. I could not tell you which battles they are. " +
+            "That is deliberate, and it is the only way the result means " +
+            "anything: a deck tuned to the exact fights it is about to be " +
+            "graded on has learned the answer sheet, not the game."
+        ),
     )
 }

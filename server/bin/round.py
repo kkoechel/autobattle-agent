@@ -40,7 +40,10 @@ VALIDATOR = os.environ.get("AGENTGAME_VALIDATOR",
                            "/opt/abagent/bin/validate_linux_amd64")
 WORKDIR = os.environ.get("AGENTGAME_WORK", "/var/www/games/agentgame/var")
 SEEDS = int(os.environ.get("AGENTGAME_SEEDS", "21"))
-SEED0 = int(os.environ.get("AGENTGAME_SEED0", "1000"))
+# Set this ONLY to pin a block by hand. Left unset -- which is how it has
+# always been deployed -- the block comes from GET /next-round, which rotates
+# it once per season. See the SEED_* constants in inc/boot.php for why.
+SEED0_OVERRIDE = os.environ.get("AGENTGAME_SEED0")
 
 
 def call(path: str, payload=None, admin=False):
@@ -77,7 +80,29 @@ def main() -> int:
 
     cat_list = json.load(open(CARDS))
     h = harness.Harness(VALIDATOR, cat_list, workdir=WORKDIR)
-    block = [SEED0 + i for i in range(SEEDS)]
+    # WHICH SEEDS, asked rather than assumed. The season rule lives in
+    # inc/boot.php; reimplementing it here would be a second copy to drift.
+    #
+    # A failure here does not stop the round. Scoring on last season's block
+    # is a worse round than it could have been; scoring no round at all is
+    # strictly worse than that, and the league has just come off a five-hour
+    # outage. Whatever block is used is recorded in rounds.seed0, so the
+    # result is never a lie about itself -- only the journal line below says
+    # it was not the intended one.
+    if SEED0_OVERRIDE is not None:
+        seed0 = int(SEED0_OVERRIDE)
+        print(f"round: seed block pinned by AGENTGAME_SEED0 to {seed0}")
+    else:
+        try:
+            nxt = call("/next-round", admin=True)
+            seed0 = int(nxt["seed0"])
+            print(f"round: round {nxt['round_no']} is season {nxt['season']}, "
+                  f"seeds {seed0}-{seed0 + SEEDS - 1}")
+        except Exception as e:
+            seed0 = 1000
+            print(f"round: WARNING could not read /next-round ({e}); "
+                  f"falling back to the legacy block {seed0}", file=sys.stderr)
+    block = [seed0 + i for i in range(SEEDS)]
 
     # Every deck is scored against every OTHER deck. Harness.evaluate already
     # does candidate-vs-opponents in one validator invocation, so one call per
@@ -123,7 +148,7 @@ def main() -> int:
               "cards": d["cards"], "battle_plan": d.get("battle_plan") or {}}
              for d in decks]
 
-    out = call("/round", {"results": rows, "seeds": SEEDS, "seed0": SEED0,
+    out = call("/round", {"results": rows, "seeds": SEEDS, "seed0": seed0,
                           "decks": snaps,
                           "note": f"round-robin over {len(decks)} decks"},
                admin=True)

@@ -25,8 +25,8 @@ android {
         applicationId "online.autobattle.agent"
         minSdk 24
         targetSdk 36
-        versionCode 38
-        versionName "1.28"
+        versionCode 39
+        versionName "1.29"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         // Side-by-side test install: ./gradlew assembleRelease -PdevId
