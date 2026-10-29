@@ -161,9 +161,14 @@ object Archetype {
         // honour source and an honour cost dies with it), but chasing that
         // to a fixed point risks unravelling a list over a single slot, and
         // the freed capacity goes back to cards that already earned theirs.
+        // provenOnly: this CUTS the card, so it may only use the tests that
+        // are proofs. Without it the cost-floor test applies, and that test
+        // assumes a ceiling on reachable energy rather than proving one --
+        // the Python sibling learned that promoting the guess to a verdict
+        // removes cards that were fine.
         val picked = picks.flatMap { (id, q) -> List(q) { id } }
         val dead = picks.map { it.first }.filter {
-            Castable.deadReason(it, picked, cat) != null
+            Castable.deadReason(it, picked, cat, provenOnly = true) != null
         }.toSet()
         if (dead.isNotEmpty()) {
             // SAY SO. This guard had never been observed to fire on a phone:
@@ -173,7 +178,7 @@ object Archetype {
             // something, naming the card and the reason, is enough to tell
             // "never fires" apart from "never needed to".
             android.util.Log.i("ABAGENT_CASTABLE", dead.joinToString("; ") {
-                "${cat.name(it)}: ${Castable.deadReason(it, picked, cat)}"
+                "${cat.name(it)}: ${Castable.deadReason(it, picked, cat, provenOnly = true)}"
             })
             var freed = 0
             for (i in picks.indices.reversed()) {
