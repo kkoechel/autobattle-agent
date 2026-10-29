@@ -321,13 +321,26 @@ def dead_reason(cid: int, deck_ids, catalog: dict,
     chaos=False when the arena is known not to be Chaos and the stronger
     answer is wanted.
 
-    THE FLAG IS INERT TODAY, and knowing that is the point of saying so.
-    Measured against the tables above on 2026-10-29: every metric a Chaos
-    roll can drive also has an OPPONENT route, which already withholds the
-    verdict, so no value of chaos changes any answer. It is kept because
-    these tables are data read from the engine and either list can move --
-    drop an opponent route and the flag starts deciding -- but nobody should
-    reason as though passing chaos=False buys a stronger answer right now.
+    THE FLAG DECIDES EXACTLY ONE METRIC TODAY: cards_recycled. It is listed
+    in OPP_TALLY, under recycle_opponent -- and no card in the catalogue
+    carries that effect anywhere it could fire on your turn, so there is no
+    opponent route in practice and the Chaos recycle_tick roll is the only
+    thing that can open the gate. Dirt Kingdom (1157, self cards_recycled >=
+    3) is therefore dead in Pure and merely chaos-only in Chaos, which is the
+    reference's verdict too and is pinned in tools/check_castable.py.
+
+    So the default UNDER-REPORTS on purpose: a Pure deck holding Dirt Kingdom
+    and no recycler has a dead card this will not name unless the caller says
+    chaos=False. Neither call site in this repo knows its arena, so neither
+    can. That is a deliberate miss, not an oversight -- hiding a dead card is
+    the safe direction and cutting a live one is not.
+
+    Measure this rather than reasoning about it, and measure the COMPUTED set
+    (cat["opp_tally"]) and not the OPP_TALLY table: the table says what the
+    engine can express, the computed set says what the live catalogue can
+    actually do, and on 2026-10-29 they differed by exactly this metric. A
+    first pass at this comment claimed the flag was inert because it checked
+    the table.
     """
     cat = cat if cat is not None else catalogue(catalog)
     facts = cat["facts"]

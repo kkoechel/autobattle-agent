@@ -36,6 +36,9 @@ MUCK_CRAWLER = 1139      # needs self poison_cured
 VIROXX_AGENT = 1109      # needs self poison_gained >= 3 -- REACHABLE here, must stay
 APOTHECARY = 4           # removes 1 Poison from yourself at start of turn
 MAGEFLESH_BEETLE = 779   # poisons YOU, 2 per spell played
+DIRT_KINGDOM = 1157      # needs self cards_recycled >= 3
+TOWER_SCHOLAR = 11       # recycles, so it opens Dirt Kingdom's gate
+INERT_FILLER = 1         # Ancient Power Station: temp energy and nothing else
 
 # FlintVale's deck as the 2026-10-26 handover found it: ten dead Crawlers.
 # Ids pinned, not names, and kept here because the agent has since rewritten
@@ -121,12 +124,10 @@ def main(argv: list[str]) -> int:
         else:
             fails.append(f"{label}: {catalog[cid]['name']} WRONGLY flagged -- {d[cid]}")
 
-    # The known positive, under both arena settings. Two things keep the
-    # verdict steady: poison_cured has no Chaos roll behind it, and as
-    # measured on 2026-10-29 the chaos flag cannot change ANY verdict (see
-    # dead_reason's docstring). So these six lines are one claim about Muck
-    # Crawler and not two -- worth having when the tables move, not evidence
-    # that arena handling works.
+    # The known positive, under both arena settings. poison_cured has no
+    # Chaos roll behind it, so the verdict must not move with the arena --
+    # and the arena DOES move other verdicts (see Dirt Kingdom below), so
+    # this is a claim worth making rather than a tautology.
     for chaos in (True, False):
         tag = "chaos" if chaos else "pure "
         want_dead(f"Brazen Blight   [{tag}]", BRAZEN_BLIGHT, MUCK_CRAWLER, chaos)
@@ -145,6 +146,18 @@ def main(argv: list[str]) -> int:
     # is not a proof and must stay unjudged. The promise at the top of
     # castable.py, as a test.
     want_alive("51580 + cure    [opp]  ", plus(ROOK_51580, APOTHECARY), MUCK_CRAWLER, False)
+
+    # THE ARENA REALLY DOES DECIDE, for exactly one metric. cards_recycled is
+    # in OPP_TALLY under recycle_opponent, but no card in the catalogue can
+    # fire that on your turn, so the Chaos recycle_tick roll is the only
+    # route and Dirt Kingdom is dead in Pure and chaos-only in Chaos. Pinned
+    # because a first pass at this module's comments claimed the chaos flag
+    # could never change a verdict; this is the counter-example.
+    recycle_gate = {DIRT_KINGDOM: 1, INERT_FILLER: 99}
+    want_dead("Dirt Kingdom    [pure ]", recycle_gate, DIRT_KINGDOM, False)
+    want_alive("Dirt Kingdom    [chaos]", recycle_gate, DIRT_KINGDOM, True)
+    want_alive("Dirt Kingdom    [recyc]", {DIRT_KINGDOM: 1, TOWER_SCHOLAR: 15, INERT_FILLER: 84},
+               DIRT_KINGDOM, False)
 
     # Nothing else in these decks may be called dead: the main app's detector
     # reports exactly one finding on each, and a port that finds more is
