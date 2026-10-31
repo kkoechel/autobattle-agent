@@ -261,8 +261,26 @@ def cmd_fetch(args, api: Api) -> int:
         # the explorer re-tests a card whose rules moved instead of skipping
         # it forever on the strength of a measurement that no longer applies.
         st = _load_or("explore.json")
+        dirty = False
         if st.get("explored"):
             st["explored"] = sorted(set(st["explored"]) - changed)
+            dirty = True
+        # The same reasoning reaches the DECKS, not only the cards. A deck
+        # banked as "stopped improving" was climbed against a catalogue that
+        # no longer exists, and the card that would have improved it may be
+        # the one that just moved. So the banked verdicts go too, and the
+        # explorer may climb those decks again instead of holding them on a
+        # measurement that no longer applies.
+        reopened = 0
+        for _e in (st.get("tried") or {}).values():
+            if isinstance(_e, dict) and _e.pop("refined_to", None) is not None:
+                _e.pop("banked_at", None)
+                reopened += 1
+        if reopened:
+            print(f"cards: re-opened {reopened} banked deck(s); their climbs "
+                  f"were measured under the old rules")
+            dirty = True
+        if dirty:
             _save("explore.json", st)
         sp = _load_or("slowpath.json")
         sp["last"] = 0          # force the slow path on this cycle
@@ -1363,6 +1381,51 @@ def keep_over_rotate(cand_w: float, inc_w: float | None,
     return (None, "") if cand_w >= keep_w else (keep_w, which)
 
 
+def bank_is_live(entry: dict | None, rebank_after_h: float,
+                 now: float | None = None) -> tuple[bool, str]:
+    """Does a banked "this deck stopped improving" verdict still stand?
+
+    `refine_patience` banks a deck when its climb stops paying, and the hold
+    branch below used to read that as permanent: the deck stayed in the slot
+    and the agent did nothing afterwards but re-scan. Four agents reached that
+    state within a day of the rotation guard shipping -- quill, rook, sable and
+    wren all sat at focus=None holding a banked deck, sable with 15 of the 17
+    decks it had ever tried marked banked, wren 30 of 36 -- and between them
+    they climbed twice in sixteen hours. Holding the good deck was right;
+    never touching it again was not, and the scan they repeated instead is the
+    most expensive path there is (rook: 23 minutes for one rejected candidate).
+
+    A verdict expires because what it was measured against moves. Cards land
+    (two Khaos cards changed or arrived inside one 20-minute check), and the
+    field edits its own decks. Expiry is on AGE rather than on the cohort id,
+    which was the first idea and a bad one: the id changes every half hour and
+    the field behind it does not. Measured over the snapshots on the box, 0 of
+    102 distinct lists in the Standard field differed across 20 minutes, so a
+    cohort-id trigger would have fired every cycle on a field that had not
+    moved -- which is not an expiry rule, it is deleting the bank.
+
+    No `banked_at` means the verdict predates this rule, and a verdict of
+    unknown age is not evidence: it expires. That is deliberate rather than
+    incidental, because the agents this is meant to free are exactly the ones
+    whose banks were written before the timestamp existed.
+    """
+    import calendar
+    if not entry or entry.get("refined_to") is None:
+        return False, "not banked"
+    ts = entry.get("banked_at")
+    if not ts:
+        return False, "banked before this rule existed, so age unknown"
+    try:
+        then = calendar.timegm(time.strptime(str(ts), "%Y-%m-%d %H:%M:%S"))
+    except (ValueError, TypeError):
+        return False, f"unreadable banked_at {ts!r}"
+    age_h = ((time.time() if now is None else now) - then) / 3600.0
+    if age_h >= rebank_after_h:
+        return False, (f"banked {age_h:.1f}h ago, past the "
+                       f"{rebank_after_h:g}h cap")
+    return True, f"banked {age_h:.1f}h ago"
+
+
 def cmd_explore(args, api: Api) -> int:
     """Generate archetypes and rotate the best into the Double Entry slot.
 
@@ -2111,8 +2174,10 @@ def cmd_explore(args, api: Api) -> int:
                 state["current"] = _bd["name"]
                 state["installed_at"] = time.strftime("%Y-%m-%d %H:%M:%S",
                                                       time.gmtime())
-                tried.setdefault(focus["name"], {})["refined_to"] = \
-                    focus.get("screen")
+                _ab = tried.setdefault(focus["name"], {})
+                _ab["refined_to"] = focus.get("screen")
+                _ab["banked_at"] = time.strftime("%Y-%m-%d %H:%M:%S",
+                                                 time.gmtime())
                 state["focus"] = {
                     "name": _bd["name"], "cards": _bd["cards"],
                     "plan": _bd["plan"], "screen": round(_held.wins, 1),
@@ -2187,7 +2252,11 @@ def cmd_explore(args, api: Api) -> int:
             return 0
         print(f"explore: banking {focus['name']} at {focus.get('screen')}W "
               f"after {len(focus.get('history') or [])} refinements; scanning again")
-        tried.setdefault(focus["name"], {})["refined_to"] = focus.get("screen")
+        _ab = tried.setdefault(focus["name"], {})
+        _ab["refined_to"] = focus.get("screen")
+        # WHEN it was banked, not just that it was: bank_is_live() needs an
+        # age, and without one the verdict has to be treated as expired.
+        _ab["banked_at"] = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
         state["focus"] = None
 
     # --- SCAN -----------------------------------------------------------
@@ -2401,15 +2470,31 @@ def cmd_explore(args, api: Api) -> int:
             k_name = incumbent.get("name") or state.get("current") or "deck"
             k_cards, k_plan = inc_cards, inc_plan
         # Keeping a deck in the slot and DEVELOPING it are separate
-        # decisions. A deck already banked by refine_patience has finished
-        # its climb, and re-focusing it would walk straight back into a
-        # loop the agent deliberately left -- so it stays in the slot to
-        # play, and the scan carries on next cycle.
-        if (tried.get(k_name) or {}).get("refined_to"):
-            print(f"explore: '{k_name}' was banked after refinement; "
+        # decisions. A deck freshly banked by refine_patience has just
+        # finished its climb, and re-focusing it would walk straight back
+        # into a loop the agent deliberately left -- so it stays in the slot
+        # to play and the scan carries on next cycle.
+        #
+        # But that verdict is a MEASUREMENT, and it ages. Read as permanent it
+        # froze four agents inside a day: holding the right deck and doing
+        # nothing afterwards but a scan the guard above then rejected. So the
+        # bank expires, and an expired one is re-opened rather than obeyed.
+        _live, _why = bank_is_live(tried.get(k_name), args.rebank_after)
+        if _live:
+            print(f"explore: '{k_name}' was banked after refinement ({_why}); "
                   f"holding it to play and scanning again next cycle")
             state["focus"] = None
         else:
+            # An EXPIRED bank is re-opened, and says so. The deck is already
+            # in the slot and already the best thing this agent has; the only
+            # question is whether it is allowed to get better.
+            _reopened = (tried.get(k_name) or {}).get("refined_to")
+            if _reopened is not None:
+                print(f"explore: '{k_name}' was banked at {_reopened}W but "
+                      f"the verdict expired ({_why}); climbing it again")
+                tried[k_name].pop("refined_to", None)
+                tried[k_name].pop("banked_at", None)
+                state["tried"] = tried
             f = state.get("focus") or {}
             if not f.get("cards") or _ctr(f.get("cards") or []) != _ctr(k_cards):
                 f = {"name": k_name, "cards": k_cards, "plan": k_plan,
@@ -2421,6 +2506,13 @@ def cmd_explore(args, api: Api) -> int:
             f.update({"screen": round(keep_w, 1),
                       "screens": ((f.get("screens") or [])
                                   + [round(keep_w, 1)])[-12:]})
+            if _reopened is not None:
+                # A re-opened bank gets a fresh patience budget. It was banked
+                # AT the patience limit, so carrying `stale` over would re-bank
+                # it on the very next cycle and the expiry would buy exactly
+                # one climb. This is the one case where zeroing it is right --
+                # the comment above governs a focus being re-measured mid-life.
+                f["stale"] = 0
             f.setdefault("stale", 0)
             state["focus"] = f
         _save("explore.json", state)
@@ -2945,6 +3037,12 @@ def main(argv=None) -> int:
                    help="single-card mutations of the focus deck per cycle")
     e.add_argument("--refine-patience", type=int, default=4,
                    help="cycles without improvement before banking the focus")
+    # Twelve cycles at the half-hour cadence: enough that a re-opened deck
+    # spends its whole patience budget climbing and then rests about as long
+    # again before anyone asks it the same question.
+    e.add_argument("--rebank-after", type=float, default=6.0,
+                   help="hours after which a banked \"stopped improving\" "
+                        "verdict expires and the deck may be climbed again")
     e.add_argument("--refine-floor", type=float, default=15.0,
                    help="screen wins a deck needs to become the focus")
     e.add_argument("--floor-frac", type=float, default=0.6,
