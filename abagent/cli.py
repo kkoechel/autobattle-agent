@@ -2382,6 +2382,13 @@ def cmd_explore(args, api: Api) -> int:
         seen_ids.add(ident(archs[i]))
         state["tried_ids"] = sorted(seen_ids)
         state["tried"] = tried
+        # Record that this was a DECISION, not an idle cycle. The health check
+        # asks whether the agent is still choosing, and it had only
+        # installed_at to go on -- so holding a good deck, which is the whole
+        # purpose of this branch, read to it as a stall.
+        state["held_at"] = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+        state["held_reason"] = (f"{which} {keep_w:.1f}W beat the best "
+                                f"candidate at {w:.1f}W")
         if kd is not None:
             kd["cards"], kd["plan"] = install(slot_id, kd["name"],
                                               kd["cards"], kd["plan"])

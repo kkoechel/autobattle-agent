@@ -47,14 +47,47 @@ def check_explorer(var: str, max_idle_h: float = 3.0) -> list[tuple[bool, str]]:
     except (FileNotFoundError, ValueError):
         return [(False, f"{path} missing or unreadable — explorer has no state")]
 
-    # The deck in the slot should change. If installed_at stops moving, the
-    # agent is running and achieving nothing -- the exact failure that hid for
-    # a day behind healthy-looking timers.
-    age = _age_hours(st.get("installed_at"))
+    # Is the agent still CHOOSING? Not: is the slot still churning.
+    #
+    # The original check read installed_at alone, on the reasoning that a slot
+    # which stops changing means an agent running and achieving nothing -- the
+    # failure that hid for a day behind healthy-looking timers. That was right
+    # while every cycle either rotated or did nothing.
+    #
+    # It stopped being sufficient on 2026-10-31, when rotation gained a guard
+    # that refuses to install a candidate screening below what is already
+    # there. vane declined a 13.5W candidate over a 13.7W incumbent and so
+    # installed nothing -- the fix working -- and a run of those reads to the
+    # old check as an agent achieving nothing.
+    #
+    # Written BEFORE that reading was available, not after: the four failures
+    # standing when this was added were NOT caused by the guard, and the first
+    # version of this comment wrongly said they were. flint, pike, rook and
+    # sable had all last installed hours before the guard was deployed (19:58,
+    # 17:34, 21:24 and 15:46 against a 00:12:33 deploy) and none had a
+    # held_at at all. Two of them simply crossed the 3h threshold while the
+    # work was going on. Their decks are plateaued, which is a real condition
+    # this check is right to report.
+    #
+    # A deliberate hold is a decision, so held_at counts as movement. An agent
+    # that has neither installed nor decided anything is the real stall, and
+    # that is still caught. Keeping the two timestamps separate rather than
+    # having cli.py touch installed_at matters: installed_at means "the live
+    # deck changed", several other things read it, and overloading it to mean
+    # "something happened" would lose the distinction this check needs.
+    i_age = _age_hours(st.get("installed_at"))
+    h_age = _age_hours(st.get("held_at"))
+    ages = [a for a in (i_age, h_age) if a is not None]
+    age = min(ages) if ages else None
     moving = age is not None and age < max_idle_h
-    out.append((moving,
-                f"slot last changed {age:.1f}h ago" if age is not None
-                else "slot has never been changed"))
+    if age is None:
+        msg = "slot has never been changed"
+    elif h_age is not None and (i_age is None or h_age < i_age):
+        msg = (f"slot deliberately held {h_age:.1f}h ago"
+               + (f" ({st['held_reason']})" if st.get("held_reason") else ""))
+    else:
+        msg = f"slot last changed {i_age:.1f}h ago"
+    out.append((moving, msg))
 
     # An accumulation count, not a movement one, so it is only a failure when
     # the slot is ALSO stale. The history is legitimately empty right after a
