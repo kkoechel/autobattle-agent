@@ -2052,8 +2052,12 @@ def cmd_explore(args, api: Api) -> int:
             # the focus, but a deck that was already the focus when that guard
             # arrived -- or one that degraded under a changing meta -- keeps
             # the live slot for refine_patience cycles while it fails to
-            # improve. ember sat on a 3.5W focus for five of its six, holding a
-            # 21.1W deck, and finished 35th of 111.
+            # improve, which is three hours for an agent on patience 6.
+            #
+            # Both sides are screened here for the reason the first attempt at
+            # this got the sign wrong: rook's stored numbers said the held
+            # deck (17.2W) beat the focus (16.0W), and on one screen it was
+            # focus 14.9W against held 13.7W -- the focus ahead, not behind.
             if gen == 0 and _hold_cards and _ctr(_hold_cards) != _ctr(cur_c):
                 b.append(("__best__", _hold_cards, _hold_plan))
             elif gen == 0:
@@ -2329,12 +2333,22 @@ def cmd_explore(args, api: Api) -> int:
     # whatever is installed when it finalises plays all 110 games. Slack in
     # the search is healthy. Slack in what plays is just a worse deck.
     #
-    # Measured across all ten explorers on 2026-10-30: SEVEN were playing
-    # something other than their own best find. ember was on a 3.5W deck with
-    # a measured 21.1W one sitting in its own state file, and was 35th of 111
-    # live; vane had just installed 12.8W over a 13.5W incumbent because the
-    # copy rule zeroed the floor first. Nothing had thrown those decks away --
-    # they were banked in best_deck and then never reinstalled.
+    # Measured on vane, 2026-10-30 22:52: `rotating slot -> 'Rise of the Iron
+    # Yield' (12.8W screen, incumbent 13.5W)`. Both numbers came out of one
+    # evaluate() call, so that comparison is sound -- it installed a deck it
+    # had just measured as worse, because the copy rule zeroed the floor
+    # first. It happened again at 12.7 over 12.6.
+    #
+    # A WIDER CLAIM WAS MADE HERE AND WAS WRONG. The first version of this
+    # comment said seven of ten explorers were playing something other than
+    # their own best find, headlined by ember at 3.5W against a held 21.1W.
+    # That survey keyed on the deck NAME -- see ident() below, which exists
+    # precisely because names collide -- and on two screen numbers produced by
+    # different evaluate() calls. By card-list hash ember's focus and its
+    # best_deck were the SAME DECK under two names, and the two numbers were
+    # that one deck on a --contend top-24 screen and on a stratified screen.
+    # Hence __best__ in the batch: the only comparison worth acting on is one
+    # screen, measured now.
     #
     # The candidate is still screened, named and blacklisted, so the scan
     # explores exactly as before; it just does not get the slot until it earns

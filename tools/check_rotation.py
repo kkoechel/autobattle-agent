@@ -2,11 +2,16 @@
 """Does a rotation have to beat the deck we already hold?
 
 Before 2026-10-30 nothing asked. A candidate only had to clear
-floor_frac * best_ever -- exploration slack, spent out of the LIVE slot --
-so an agent could and did install a deck far worse than one it had already
-measured and banked. The two cases pinned below are the real ones, measured
-across all ten explorers that day: SEVEN of them were playing something other
-than their own best find.
+floor_frac * best_ever -- exploration slack, spent out of the LIVE slot -- so
+an agent could and did install a deck it had just measured as worse than the
+one already there.
+
+ONE case below is a real measurement and the rest are constructed. That
+distinction is the point: the first survey of this bug reported seven of ten
+explorers "playing something other than their own best find", and it was an
+artifact of keying on deck NAMES and of comparing two screen numbers from
+different evaluate() calls. By card-list hash, the headline example (ember)
+was playing exactly its own best deck under a second name.
 
 Run: python3 tools/check_rotation.py
 """
@@ -24,17 +29,24 @@ def case(label, got, want):
         fails.append(f"{label}: got {got!r}, wanted {want!r}")
 
 
-print("the two decks that were actually playing something worse:")
-# ember, 2026-10-30: installed 'Rise of the Thrifty Dynamo' at 3.5W while
-# holding 'Thrifty Bargain 85af' at 21.1W. Live rank 35/111, worst of the
-# pure-native agents.
-case("ember: 3.5W candidate vs 21.1W held best",
-     keep_over_rotate(3.5, 3.5, False, 21.1), (21.1, "held best"))
-# vane, 2026-10-30 22:52: installed 12.8W over a 13.5W incumbent, because the
-# copy rule had cleared best_screen to 0 and the floor with it. The incumbent
-# was NOT a copy at that moment -- it was simply worse-screening slack.
+print("MEASURED — vane installed a deck it had just screened as worse:")
+# vane, 2026-10-30 22:52: `rotating slot -> 'Rise of the Iron Yield' (12.8W
+# screen, incumbent 13.5W)`. Both numbers from one evaluate() call, which is
+# what makes this one evidence. Repeated at 12.7 over 12.6 on 10-31 01:01.
 case("vane: 12.8W candidate vs 13.5W incumbent",
      keep_over_rotate(12.8, 13.5, False, None), (13.5, "incumbent"))
+case("vane again, at the margin: 12.7 vs 12.6",
+     keep_over_rotate(12.7, 12.6, False, None), (None, ""))
+
+print("MEASURED — rook, where the stored numbers had the sign backwards:")
+# Stored: focus 16.0W, best_screen 17.2W, i.e. "the held deck is better".
+# On one screen: `focus 14.9W vs held 'Silence of the Hollow' 13.7W`.
+case("rook: focus 14.9W vs held 13.7W, same screen",
+     keep_over_rotate(14.9, None, False, 13.7), (None, ""))
+
+print("CONSTRUCTED — a candidate far below a held deck:")
+case("3.5W candidate vs 21.1W held best",
+     keep_over_rotate(3.5, 3.5, False, 21.1), (21.1, "held best"))
 
 print("rotation still happens when the candidate earns it:")
 case("clearly better candidate rotates",
@@ -61,7 +73,7 @@ case("held best above the incumbent -> restore it",
 # The refine path calls the same predicate with no incumbent: the focus IS
 # what is installed, so the only question is whether the held deck beats it.
 print("the refine path (focus vs held best, no incumbent in play):")
-case("ember's focus 3.5W against its held 21.1W",
+case("a focus far behind its held deck",
      keep_over_rotate(3.5, None, False, 21.1), (21.1, "held best"))
 case("a focus that is still ahead keeps refining",
      keep_over_rotate(18.0, None, False, 15.0), (None, ""))
