@@ -25,7 +25,11 @@ android {
         applicationId "online.autobattle.agent"
         minSdk 24
         targetSdk 36
-        versionCode 40
+        // 41, not 40: the 10-29 bundle is already 1.30-40 and carries engine
+        // v4.52. Rebuilding at the same versionCode would leave two different
+        // binaries sharing one identity, which is the bug that gets uploaded
+        // by mistake six weeks later. Play also rejects a duplicate code.
+        versionCode 41
         versionName "1.30"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 

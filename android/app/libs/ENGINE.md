@@ -6,9 +6,9 @@ built artefact against the live league before a release.
 
 | | |
 |---|---|
-| engine version | **4.52** |
-| built from | `autobattle.online` commit `11a562f`, `Engine v4.52: native Sagas, in all four engines` |
-| built on | 2026-10-29 |
+| engine version | **4.54** |
+| built from | `autobattle.online` commit `d8f46c0`, `Engine v4.54: supplements can act on "this card"; self on stat effects` |
+| built on | 2026-10-31 |
 | built by | `shell/engine/build_aar.sh`, extracted with `git archive` so the main repo is never touched |
 
 ## Build it from the engine source at the version the league scores with
