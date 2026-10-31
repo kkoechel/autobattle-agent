@@ -1332,6 +1332,37 @@ def cmd_bootstrap(args, api: Api) -> int:
     return 0
 
 
+def keep_over_rotate(cand_w: float, inc_w: float | None,
+                     inc_is_copy: bool,
+                     best_w: float | None) -> tuple[float | None, str]:
+    """Should the live slot keep a deck we already have, or take the candidate?
+
+    All three numbers must come from the SAME screen. Comparing a candidate
+    against a stored best_screen compares two measurements taken against
+    different meta snapshots and seed blocks, which is the winner's curse --
+    the caller screens the held deck alongside the candidates for exactly this
+    reason.
+
+    Returns (None, "") to rotate, or (wins, which) naming the deck to keep.
+    A tie rotates: equal screens mean the measurement cannot tell them apart,
+    and the new deck is the one that has not yet been played against the live
+    field.
+
+    An incumbent that is a copy gets no vote. It is a deck we are not allowed
+    to keep, so it is not a standard to measure against -- the same rule the
+    rotation floor already applies.
+    """
+    keepable: list[tuple[float, str]] = []
+    if inc_w is not None and not inc_is_copy:
+        keepable.append((float(inc_w), "incumbent"))
+    if best_w is not None:
+        keepable.append((float(best_w), "held best"))
+    if not keepable:
+        return None, ""
+    keep_w, which = max(keepable, key=lambda t: t[0])
+    return (None, "") if cand_w >= keep_w else (keep_w, which)
+
+
 def cmd_explore(args, api: Api) -> int:
     """Generate archetypes and rotate the best into the Double Entry slot.
 
@@ -1965,6 +1996,23 @@ def cmd_explore(args, api: Api) -> int:
         except Exception as e:
             print(f"plan: round failed ({e}); falling through to cards")
 
+    # What we are HOLDING, if anything, and whether we are allowed to install
+    # it. Computed once here because both paths below need it: the refine path
+    # to notice its focus has fallen behind, the scan path to stop a rotation
+    # that would make things worse.
+    #
+    # Placed after the eviction blocks, which can set best_deck to None -- a
+    # deck we had to evict for being a copy is not one to restore.
+    _ctr = lambda a: sorted(collections.Counter(a).items())
+    _bd = state.get("best_deck") or {}
+    _bd_cards = list(_bd.get("cards") or [])
+    _bd_is_copy = bool(
+        args.max_overlap > 0 and _bd_cards
+        and not novelty.is_novel(_bd_cards, meta["decks"], ours,
+                                 args.max_overlap))
+    _hold_cards = [] if (not _bd_cards or _bd_is_copy) else _bd_cards
+    _hold_plan = _bd.get("plan") or {}
+
     if focus:
         from .archetype import mutate
         rng = random.Random(int(time.time()))
@@ -1999,12 +2047,68 @@ def cmd_explore(args, api: Api) -> int:
                 stop = "no mutation available"
                 break
             b = [("__focus__", cur_c, cur_p)]
+            # Measure what we are holding against the focus, once, on the
+            # focus's own screen. The rotation guard stops a BAD deck becoming
+            # the focus, but a deck that was already the focus when that guard
+            # arrived -- or one that degraded under a changing meta -- keeps
+            # the live slot for refine_patience cycles while it fails to
+            # improve. ember sat on a 3.5W focus for five of its six, holding a
+            # 21.1W deck, and finished 35th of 111.
+            if gen == 0 and _hold_cards and _ctr(_hold_cards) != _ctr(cur_c):
+                b.append(("__best__", _hold_cards, _hold_plan))
+            elif gen == 0:
+                print("explore: nothing held to compare the focus against ("
+                      + ("no best_deck" if not _bd_cards else
+                         "best_deck is a copy" if _bd_is_copy else
+                         "best_deck IS the focus") + ")")
             b += [(f"k{i}", c, p) for i, (c, p, _) in enumerate(kids)]
             sc = h.evaluate(b, screen, block, drop_crashers=True, log=print)
             if "__focus__" not in sc:
                 raise SystemExit("explore: the INSTALLED deck crashes the "
                                  "engine; refusing to guess around that")
             base = sc.pop("__focus__")
+            _held = sc.pop("__best__", None)
+            # Same predicate as the rotation guard, with no incumbent in play:
+            # the focus IS what is installed, so the only question is whether
+            # the deck we are holding beats it on this screen.
+            _keep_w, _ = keep_over_rotate(
+                base.wins, None, False,
+                None if _held is None else _held.wins)
+            # LOG THE COMPARISON, not just the action it leads to.
+            #
+            # An `if` that is false leaves no trace, and a guard that declines
+            # silently is indistinguishable from a guard that never ran. On
+            # ember's tick 1126 this check fired, declined, and left nothing
+            # behind -- so whether __best__ had even reached the batch could
+            # not be told from the log. The numbers also matter on their own:
+            # a deck recorded at 21.1W on a stratified screen can score a
+            # handful on a --contend top-24 screen, and the whole point of
+            # measuring both here is that only the same-screen pair is
+            # comparable.
+            if gen == 0 and _held is not None:
+                print(f"explore: focus {base.wins:.1f}W vs held "
+                      f"'{_bd.get('name')}' {_held.wins:.1f}W on this screen"
+                      + ("" if _keep_w is not None else " — focus still ahead"))
+            if gen == 0 and _keep_w is not None:
+                print(f"explore: focus '{focus['name']}' screens "
+                      f"{base.wins:.1f}W against {_held.wins:.1f}W for the "
+                      f"held '{_bd.get('name')}' on the same screen — "
+                      f"abandoning it and refining the better deck instead")
+                _bd["cards"], _bd["plan"] = install(
+                    slot_id, _bd["name"], _bd["cards"], _bd["plan"])
+                state["current"] = _bd["name"]
+                state["installed_at"] = time.strftime("%Y-%m-%d %H:%M:%S",
+                                                      time.gmtime())
+                tried.setdefault(focus["name"], {})["refined_to"] = \
+                    focus.get("screen")
+                state["focus"] = {
+                    "name": _bd["name"], "cards": _bd["cards"],
+                    "plan": _bd["plan"], "screen": round(_held.wins, 1),
+                    "screens": [round(_held.wins, 1)], "stale": 0,
+                    "history": []}
+                state["tried"] = tried
+                _save("explore.json", state)
+                return 0
             if first_w is None:
                 first_w = base.wins
             pick_i, pick_w = None, base.wins
@@ -2076,6 +2180,23 @@ def cmd_explore(args, api: Api) -> int:
 
     # --- SCAN -----------------------------------------------------------
     batch = [("__inc__", inc_cards, inc_plan)]
+
+    # Screen the deck we are HOLDING alongside the candidates.
+    #
+    # state["best_screen"] is an all-time maximum over screens drawn against
+    # different meta snapshots and seed blocks, so comparing this cycle's
+    # candidate against it compares two different measurements -- the winner's
+    # curse, and the same reason the health check was moved onto a deck's own
+    # recent median. Re-screening best_deck here costs one more deck in a
+    # batch of 14-41 and turns "is this candidate better than what we already
+    # have?" into a question about one screen rather than two.
+    #
+    # Skipped when best_deck IS the incumbent, since __inc__ already measures
+    # it, and when it is a copy: the existing rule is that a deck we are not
+    # allowed to keep is not a deck to measure against.
+    if _hold_cards and _ctr(_hold_cards) != _ctr(inc_cards):
+        batch.append(("__best__", _hold_cards, _hold_plan))
+
     batch += [(f"a{i}", a.cards, a.plan) for i, a in enumerate(archs)]
     # drop_crashers: one generated deck that panics the engine used to take the
     # entire cycle with it, and the agent then did nothing until a human
@@ -2085,6 +2206,9 @@ def cmd_explore(args, api: Api) -> int:
         raise SystemExit("explore: the INSTALLED deck crashes the engine; "
                          "refusing to score anything against it")
     inc = sc.pop("__inc__")
+    # None when there is no separate held deck, and also when the held deck
+    # crashed the engine and drop_crashers took it out of the batch.
+    best_held = sc.pop("__best__", None)
 
     # The floor is anchored to the BEST deck ever screened, not to the
     # incumbent. Anchoring it to the incumbent made it a ratchet with no
@@ -2197,6 +2321,82 @@ def cmd_explore(args, api: Api) -> int:
         return 0
 
     w, i, nm = pick
+
+    # A ROTATION MUST BEAT WHAT WE COULD SIMPLY KEEP.
+    #
+    # floor_frac (0.5-0.8) is exploration slack, and the slot it is spent from
+    # is the LIVE entry: the cohort is a round-robin over the whole field, so
+    # whatever is installed when it finalises plays all 110 games. Slack in
+    # the search is healthy. Slack in what plays is just a worse deck.
+    #
+    # Measured across all ten explorers on 2026-10-30: SEVEN were playing
+    # something other than their own best find. ember was on a 3.5W deck with
+    # a measured 21.1W one sitting in its own state file, and was 35th of 111
+    # live; vane had just installed 12.8W over a 13.5W incumbent because the
+    # copy rule zeroed the floor first. Nothing had thrown those decks away --
+    # they were banked in best_deck and then never reinstalled.
+    #
+    # The candidate is still screened, named and blacklisted, so the scan
+    # explores exactly as before; it just does not get the slot until it earns
+    # it. A cold-built deck rarely beats a refined one -- 19.4W cold against
+    # 21.1W after sixteen generations, measured in Pauper -- so in practice an
+    # agent now develops its best deck instead of replacing it, which is what
+    # the one agent holding a top-5 rank has been doing all along.
+    keep_w, which = keep_over_rotate(
+        w, inc.wins, inc_is_copy,
+        None if best_held is None else best_held.wins)
+    # Same reason as the refine path: a permit and a guard that never ran look
+    # identical in the log otherwise, and the three numbers are the evidence
+    # for whichever way it went.
+    print(f"explore: rotation check — candidate {w:.1f}W, incumbent "
+          f"{inc.wins:.1f}W{' (a copy, no vote)' if inc_is_copy else ''}, held "
+          + (f"{best_held.wins:.1f}W" if best_held is not None else "none")
+          + (" — candidate takes the slot" if keep_w is None else ""))
+    if keep_w is not None:
+        kd = _bd if which == "held best" else None
+        print(f"explore: best candidate '{nm}' screens {w:.1f}W, under the "
+              f"{keep_w:.1f}W {which} on this same screen — not rotating")
+        tried.setdefault(nm, {})["screen_wins"] = round(w, 1)
+        seen_ids.add(ident(archs[i]))
+        state["tried_ids"] = sorted(seen_ids)
+        state["tried"] = tried
+        if kd is not None:
+            kd["cards"], kd["plan"] = install(slot_id, kd["name"],
+                                              kd["cards"], kd["plan"])
+            state["current"] = kd["name"]
+            state["installed_at"] = time.strftime("%Y-%m-%d %H:%M:%S",
+                                                  time.gmtime())
+            print(f"explore: restored held best '{kd['name']}' to the slot")
+            k_name, k_cards, k_plan = kd["name"], kd["cards"], kd["plan"]
+        else:
+            k_name = incumbent.get("name") or state.get("current") or "deck"
+            k_cards, k_plan = inc_cards, inc_plan
+        # Keeping a deck in the slot and DEVELOPING it are separate
+        # decisions. A deck already banked by refine_patience has finished
+        # its climb, and re-focusing it would walk straight back into a
+        # loop the agent deliberately left -- so it stays in the slot to
+        # play, and the scan carries on next cycle.
+        if (tried.get(k_name) or {}).get("refined_to"):
+            print(f"explore: '{k_name}' was banked after refinement; "
+                  f"holding it to play and scanning again next cycle")
+            state["focus"] = None
+        else:
+            f = state.get("focus") or {}
+            if not f.get("cards") or _ctr(f.get("cards") or []) != _ctr(k_cards):
+                f = {"name": k_name, "cards": k_cards, "plan": k_plan,
+                     "history": [], "screens": [], "stale": 0}
+            # stale is NOT reset for a focus we are only re-measuring:
+            # refine_patience is what eventually banks a deck that has
+            # stopped improving, and zeroing it here puts that out of
+            # reach.
+            f.update({"screen": round(keep_w, 1),
+                      "screens": ((f.get("screens") or [])
+                                  + [round(keep_w, 1)])[-12:]})
+            f.setdefault("stale", 0)
+            state["focus"] = f
+        _save("explore.json", state)
+        return 0
+
     best = archs[i]
     # Carry the agent's validated plan fields onto the new deck. Rotation used
     # to reinstate the generator's default and throw away every confirmed plan

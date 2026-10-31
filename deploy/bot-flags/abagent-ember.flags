@@ -1,2 +1,9 @@
 ABAGENT_ARENA=pure
-ABAGENT_FLAGS=--contend --seed-mod 4 --seed-rem 1 --theme-mod 5 --theme-rem 0 --refine-tries 12 --refine-patience 6 --floor-frac 0.80 --theme-tags poison,amplify-poison,dishonor,lose-honor,sacrifice,mill,exile,curse,demon,horror,undead,skeleton,zombie,vampire,reanimate,void,discard,drawback,piercing,destroy
+# Climb, do not just scan. --refine-gens defaults to 1, so this agent bought at
+# most one improvement per cycle and its logs showed zero `climb gen` lines in
+# 48 hours. Depth is the whole difference: measured in Pauper on 2026-10-14, a
+# dedicated climb went 17.1W -> 21.1W over sixteen generations against 19.4W
+# for the best deck built cold. Matched to flint/pike/sable/wren, which carry
+# this and hold the top 10%% of their own fields while the four without it sat
+# at 16-32%%.
+ABAGENT_FLAGS=--refine-gens 6 --refine-budget 240 --contend --seed-mod 4 --seed-rem 1 --theme-mod 5 --theme-rem 0 --refine-tries 12 --refine-patience 6 --floor-frac 0.80 --theme-tags poison,amplify-poison,dishonor,lose-honor,sacrifice,mill,exile,curse,demon,horror,undead,skeleton,zombie,vampire,reanimate,void,discard,drawback,piercing,destroy
