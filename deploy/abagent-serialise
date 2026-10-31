@@ -1,0 +1,45 @@
+#!/bin/sh
+# One agent at a time on a one-core box.
+#
+# subgames-nyc1 has a single vCPU and the agents were asking for 100.0% of it
+# (measured over 12h on 2026-10-31: 35,580 CPU-seconds of agent work plus
+# 7,631 of league scoring, against 43,200 available). Six validators were
+# timesharing one core, so every run stretched about sixfold and the slowest
+# crossed its TimeoutStartSec wall and was killed with nothing saved --
+# 18,448 CPU-seconds, 42.7% of the whole core, spent on runs that were
+# discarded. `abagent` was killed on 32 of 38 runs needing 112 CPU-seconds
+# against a 900s wall; it was getting 15% of a core.
+#
+# Nice and CPUWeight could not fix that. They divide a core proportionally,
+# and proportions are meaningless when the problem is that seven things are
+# dividing it at all: every share was too small to finish in time. This
+# serialises instead, so each run gets the whole core and finishes in roughly
+# the CPU time it actually needs.
+#
+# Usage: abagent-serialise <wait-seconds> <command...>
+#
+# wait-seconds 0 means skip this cycle if another agent is running. The
+# expendable agents skip; `abagent` waits, because it is timed to land between
+# cohorts and a skipped cycle means a missed entry window rather than merely
+# a later one.
+#
+# A skip exits 75 and SAYS SO. A guard that declines silently is
+# indistinguishable from one that never ran, and these units are oneshots
+# whose only record is the journal.
+LOCK=/opt/abagent/core.lock
+WAIT="$1"
+shift
+
+if [ "$WAIT" = 0 ]; then
+    set -- /usr/bin/flock -n -E 75 "$LOCK" "$@"
+else
+    set -- /usr/bin/flock -w "$WAIT" -E 75 "$LOCK" "$@"
+fi
+
+"$@"
+rc=$?
+if [ "$rc" = 75 ]; then
+    echo "serialise: skipped this cycle, another agent held the core" \
+         "(waited ${WAIT}s)"
+fi
+exit "$rc"

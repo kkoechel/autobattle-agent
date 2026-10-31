@@ -24,7 +24,7 @@ Environment=ABAGENT_VAR=/opt/abagent/var-explore
 # 87-93/100 copies -- the novelty gate working exactly as designed on
 # work that should never have been duplicated. The slot stopped
 # changing for four hours and only the health check noticed.
-ExecStart=/usr/bin/python3 -u -m abagent.cli --arena pure --deck-id ${ABAGENT_DECK_ID} explore --second-deck-id ${ABAGENT_SECOND_DECK_ID} --slice 40 --theme-mod 5 --theme-rem 3 --seed-mod 2 --seed-rem 1
+ExecStart=/usr/local/bin/abagent-serialise 0 /usr/bin/python3 -u -m abagent.cli --arena pure --deck-id ${ABAGENT_DECK_ID} explore --second-deck-id ${ABAGENT_SECOND_DECK_ID} --slice 40 --theme-mod 5 --theme-rem 3 --seed-mod 2 --seed-rem 1
 
 # Lower priority than the competing agent on both knobs. One core, shared with
 # four live games, and that agent was already measured at ~80% duty; this one
@@ -41,6 +41,19 @@ PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
 ReadWritePaths=/opt/abagent/var-explore /opt/abagent/bin
+# ONE AGENT AT A TIME. /usr/local/bin/abagent-serialise takes an exclusive
+# flock before exec'ing the agent, so one run gets the whole core instead of
+# seven runs each getting a seventh of it and being killed at the wall.
+# Measured 2026-10-31: 42.7% of the core went on runs that were killed with
+# nothing saved. Exit 75 means "another agent held the core, skipped this
+# cycle" and is a success, not a failure.
+SuccessExitStatus=75
+# The run's own wall, 300s under TimeoutStartSec, so an overrun stops and
+# keeps what it measured instead of being killed with nothing saved. Read as
+# the default for --deadline. Set here rather than in ExecStart so it sits
+# next to the TimeoutStartSec it has to stay under.
+Environment=ABAGENT_DEADLINE=1200
+
 TimeoutStartSec=1500
 
 [Install]

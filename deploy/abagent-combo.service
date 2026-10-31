@@ -16,7 +16,7 @@ Environment=ABAGENT_VAR=/opt/abagent/var-explore
 
 # Writes no deck and touches no slot. It only measures, so it can run
 # alongside everything else without coordination.
-ExecStart=/usr/bin/python3 -u -m abagent.cli --arena pure --deck-id ${ABAGENT_DECK_ID} combo
+ExecStart=/usr/local/bin/abagent-serialise 0 /usr/bin/python3 -u -m abagent.cli --arena pure --deck-id ${ABAGENT_DECK_ID} combo
 
 # Lowest priority of anything here. It is the least urgent work on the box and
 # the only job with no deadline at all.
@@ -38,6 +38,14 @@ ReadWritePaths=/opt/abagent/var-explore /opt/abagent/shared /opt/abagent/bin
 # 5min of CPU, i.e. purely for waiting its turn, which turns a transient
 # contention spike into a failed unit and a false alarm. A genuine hang still
 # trips this; losing a turn no longer does.
+# ONE AGENT AT A TIME. /usr/local/bin/abagent-serialise takes an exclusive
+# flock before exec'ing the agent, so one run gets the whole core instead of
+# seven runs each getting a seventh of it and being killed at the wall.
+# Measured 2026-10-31: 42.7% of the core went on runs that were killed with
+# nothing saved. Exit 75 means "another agent held the core, skipped this
+# cycle" and is a success, not a failure.
+SuccessExitStatus=75
+
 TimeoutStartSec=3600
 
 [Install]

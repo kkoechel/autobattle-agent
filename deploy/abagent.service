@@ -30,7 +30,7 @@ EnvironmentFile=/etc/abagent.env
 # at all: with the old 420 and --budget 260 the entry window shut at 220s
 # elapsed while the shortest cycle ever recorded was 260s, and counter_round
 # started zero times in 504 cycles over 7 days.
-ExecStart=/usr/bin/python3 -u -m abagent.cli --arena pure --deck-id ${ABAGENT_DECK_ID} cycle --budget 260 --second-deck-id ${ABAGENT_SECOND_DECK_ID}
+ExecStart=/usr/local/bin/abagent-serialise 120 /usr/bin/python3 -u -m abagent.cli --arena pure --deck-id ${ABAGENT_DECK_ID} cycle --budget 260 --second-deck-id ${ABAGENT_SECOND_DECK_ID}
 
 # subgames-nyc1 is a 1-vCPU box also serving live Reprisal, Ossuary, Mage Wars
 # and Blind Wizards. CPUWeight (proportional) rather than CPUQuota (a hard cap)
@@ -55,6 +55,14 @@ ProtectHome=yes
 # the server reports a newer engine. Omitting bin/ works until the day the
 # engine is upgraded, and then fails as a read-only filesystem error.
 ReadWritePaths=/opt/abagent/var /opt/abagent/bin
+# ONE AGENT AT A TIME. /usr/local/bin/abagent-serialise takes an exclusive
+# flock before exec'ing the agent, so one run gets the whole core instead of
+# seven runs each getting a seventh of it and being killed at the wall.
+# Measured 2026-10-31: 42.7% of the core went on runs that were killed with
+# nothing saved. Exit 75 means "another agent held the core, skipped this
+# cycle" and is a success, not a failure.
+SuccessExitStatus=75
+
 TimeoutStartSec=900
 
 [Install]

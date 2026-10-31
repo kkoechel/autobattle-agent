@@ -10,7 +10,10 @@ Description=AutoBattle archetype discovery, ShadowDrake second slot
 #
 # :20/:50 -- offset from both the competing cycle (:06/10) and the other
 # explorer (:05/30). Three services, one core, no overlap by construction.
-OnCalendar=*:20/30
+# Halved 2026-10-31. 25 runs in 12h, 0 of them completed: every one was
+# killed at the wall, 8.0% of the whole core spent on nothing. Serialising
+# lets a run finish; this is the headroom that keeps it finishing.
+OnCalendar=*:20
 AccuracySec=30s
 Persistent=false
 

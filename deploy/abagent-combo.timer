@@ -23,7 +23,10 @@ Description=AutoBattle card-interaction sweep, every 20 minutes
 # four hours. Re-measuring a theme is worth far less than the first pass, so
 # holding 20% of a saturated single core for it is not, and that 17% is what
 # pays for the four bot agents.
-OnCalendar=*:12
+# Halved 2026-10-31, for the same reason as discover: 12 runs, 0 completed,
+# 5.2% of the core discarded. combo is the most expendable work on the box
+# and its own unit file says it is meant to be starved.
+OnCalendar=0/2:12
 AccuracySec=30s
 Persistent=false
 

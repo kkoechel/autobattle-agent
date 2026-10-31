@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import random
+import signal
 import sys
 import time
 import urllib.request
@@ -53,6 +54,71 @@ def _load_or(name: str, default=None):
 def _load(name: str):
     with open(_p(name)) as fh:
         return json.load(fh)
+
+
+# When this process started, for --deadline. Module import is a few
+# milliseconds after exec, which is well inside the margin below.
+_T0 = time.time()
+
+# Callables that write the run's state to disk, run if we are killed. A run
+# that is terminated has still DECIDED things, and until 2026-10-31 it threw
+# all of them away: 42.7% of a one-core box went on runs killed at the wall
+# with nothing saved.
+_FLUSH: list = []
+
+
+def _on_term(signum, _frame):
+    for fn in list(_FLUSH):
+        try:
+            fn()
+        except Exception as e:                       # never die inside a kill
+            print(f"term: flush failed ({e})")
+    print(f"term: signal {signum} — flushed {len(_FLUSH)} state file(s) "
+          f"after {time.time() - _T0:.0f}s")
+    sys.stdout.flush()
+    os._exit(143)                                     # 128 + SIGTERM
+
+
+def deadline_left(deadline: float) -> float | None:
+    """Seconds of wall clock left before the unit's wall, or None if unset."""
+    if not deadline or deadline <= 0:
+        return None
+    return deadline - (time.time() - _T0)
+
+
+def screen_cap(remaining: float | None, per_deck: float | None, want: int,
+               floor: int = 6, margin: float = 0.2) -> tuple[int, str]:
+    """How many candidates can be screened in the time that is left?
+
+    The scan screens one batch in a single evaluate() call, so it cannot be
+    interrupted part-way -- the only lever is how many decks go into it. This
+    sizes the batch from the last batch's measured cost per deck instead of
+    starting one that cannot finish: rook spent 23 minutes on a scan, was
+    killed at 25, and saved nothing, thirteen times in twelve hours.
+
+    Two refusals to be clever, both deliberate:
+
+    An unknown cost does NOT cap. per_deck is None on an agent's first scan
+    and after a VAR wipe, and guessing a cost there would either throttle a
+    box that is coping or wave through one that is not.
+
+    The cap never goes below `floor`. A self-calibrating limit that can reach
+    zero locks the agent out of the only path that measures the cost it is
+    calibrating from, and would do it silently -- the scan would simply stop
+    happening. Below the floor the run screens a short batch and overruns,
+    which is visible, rather than screening nothing, which is not.
+    """
+    if remaining is None or per_deck is None or per_deck <= 0:
+        return want, ""
+    fits = int((remaining * (1.0 - margin)) / per_deck)
+    if fits >= want:
+        return want, ""
+    # min(want, ...) because the floor is a floor on the BATCH, not a demand
+    # for decks that do not exist: with 3 candidates and a floor of 6 this
+    # returned 6, and the caller would have logged "screening 6 of 3".
+    n = min(want, max(floor, fits))
+    return n, (f"{remaining:.0f}s left at {per_deck:.1f}s/deck fits {fits}"
+               + (f", holding the floor at {n}" if n > fits else ""))
 
 
 def _save(name: str, obj) -> None:
@@ -2066,6 +2132,9 @@ def cmd_explore(args, api: Api) -> int:
     #
     # Placed after the eviction blocks, which can set best_deck to None -- a
     # deck we had to evict for being a copy is not one to restore.
+    # From here on a kill saves the state rather than discarding it.
+    _FLUSH.append(lambda: _save("explore.json", state))
+
     _ctr = lambda a: sorted(collections.Counter(a).items())
     _bd = state.get("best_deck") or {}
     _bd_cards = list(_bd.get("cards") or [])
@@ -2205,6 +2274,12 @@ def cmd_explore(args, api: Api) -> int:
             if time.time() - t_climb > args.refine_budget:
                 stop = f"budget ({args.refine_budget}s)"
                 break
+            # The generation that has just finished is banked by the code
+            # below; one more might not be. Stopping here keeps the gain.
+            _left = deadline_left(args.deadline)
+            if _left is not None and _left < (time.time() - t_climb) / gen:
+                stop = f"deadline ({_left:.0f}s left)"
+                break
 
         if gen > 0:
             # A refined deck KEEPS its name: it is the same deck getting
@@ -2278,11 +2353,26 @@ def cmd_explore(args, api: Api) -> int:
     if _hold_cards and _ctr(_hold_cards) != _ctr(inc_cards):
         batch.append(("__best__", _hold_cards, _hold_plan))
 
+    # Size the batch to the time that is left, from what the last batch cost.
+    _cap, _why = screen_cap(deadline_left(args.deadline),
+                            state.get("screen_secs_per_deck"), len(archs))
+    if _cap < len(archs):
+        print(f"explore: screening {_cap} of {len(archs)} candidates — {_why}")
+        archs = archs[:_cap]
     batch += [(f"a{i}", a.cards, a.plan) for i, a in enumerate(archs)]
     # drop_crashers: one generated deck that panics the engine used to take the
     # entire cycle with it, and the agent then did nothing until a human
     # noticed. The offender is bisected out, named in the log and skipped.
+    _t_scan = time.time()
     sc = h.evaluate(batch, screen, block, drop_crashers=True, log=print)
+    # Measured, not assumed, and from THIS agent: the arenas differ in field
+    # size and the agents differ in seed block, so one global number would be
+    # wrong for all of them. Smoothed so a single contended run does not
+    # halve the next scan.
+    _per = (time.time() - _t_scan) / max(1, len(batch))
+    _prev = state.get("screen_secs_per_deck")
+    state["screen_secs_per_deck"] = round(
+        _per if _prev is None else 0.5 * _per + 0.5 * float(_prev), 2)
     if "__inc__" not in sc:
         raise SystemExit("explore: the INSTALLED deck crashes the engine; "
                          "refusing to score anything against it")
@@ -2833,6 +2923,11 @@ def cmd_results(args, api: Api) -> int:
 
 
 def main(argv=None) -> int:
+    # Registered before anything else: a kill that lands during setup should
+    # still flush whatever has been registered by then, which is nothing, and
+    # a kill during the run should flush the state.
+    signal.signal(signal.SIGTERM, _on_term)
+    signal.signal(signal.SIGINT, _on_term)
     ap = argparse.ArgumentParser(prog="abagent")
     ap.add_argument("--arena", default="pure")
     ap.add_argument("--deck-id", type=int, default=None)
@@ -3040,6 +3135,11 @@ def main(argv=None) -> int:
     # Twelve cycles at the half-hour cadence: enough that a re-opened deck
     # spends its whole patience budget climbing and then rests about as long
     # again before anyone asks it the same question.
+    # Default from the environment so the unit file sets it once, next to the
+    # TimeoutStartSec it has to stay under, instead of in every ExecStart.
+    e.add_argument("--deadline", type=float,
+                   default=float(os.environ.get("ABAGENT_DEADLINE") or 0),
+                   help="wall seconds this run must finish inside (0 = off)")
     e.add_argument("--rebank-after", type=float, default=6.0,
                    help="hours after which a banked \"stopped improving\" "
                         "verdict expires and the deck may be climbed again")

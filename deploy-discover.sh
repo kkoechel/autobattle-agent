@@ -15,6 +15,17 @@ rsync -az -e "ssh -i $KEY -o IdentitiesOnly=yes" \
   deploy/abagent-discover.service deploy/abagent-discover.timer \
   deploy/abagent-explore.service deploy/abagent-explore.timer \
   "root@$HOST:/etc/systemd/system/"
+
+# The serialise wrapper and its lock file. Every ExecStart above now runs
+# through /usr/local/bin/abagent-serialise, so installing a unit without it
+# leaves a unit that cannot start at all -- and the failure would be a bare
+# 203/EXEC with nothing to say why.
+rsync -az -e "ssh -i $KEY -o IdentitiesOnly=yes" \
+  deploy/abagent-serialise "root@$HOST:/usr/local/bin/abagent-serialise"
+"${SSH[@]}" 'chmod 755 /usr/local/bin/abagent-serialise \
+  && touch /opt/abagent/core.lock \
+  && chown abagent:abagent /opt/abagent/core.lock \
+  && chmod 644 /opt/abagent/core.lock'
 printf 'AB_API_KEY=%s\nABAGENT_DECK_ID=%s\nABAGENT_SECOND_DECK_ID=%s\n' \
   "$AB_API_KEY" "$ABAGENT_DECK_ID" "$ABAGENT_SECOND_DECK_ID" | "${SSH[@]}" \
   'umask 077 && cat > /etc/abagent-discover.env \
