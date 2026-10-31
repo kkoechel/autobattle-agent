@@ -2090,9 +2090,17 @@ def cmd_explore(args, api: Api) -> int:
             # measuring both here is that only the same-screen pair is
             # comparable.
             if gen == 0 and _held is not None:
+                # "ahead" and "level" are different facts, and the tie is
+                # the common case -- two decks screened together land on the
+                # same number often. Saying "still ahead" when they are equal
+                # is the same sloppiness that produced a wrong survey of these
+                # agents in the first place; the log is the instrument now, so
+                # it says which of the two actually happened.
                 print(f"explore: focus {base.wins:.1f}W vs held "
                       f"'{_bd.get('name')}' {_held.wins:.1f}W on this screen"
-                      + ("" if _keep_w is not None else " — focus still ahead"))
+                      + ("" if _keep_w is not None
+                         else " — level, keeping the focus"
+                         if base.wins == _held.wins else " — focus ahead"))
             if gen == 0 and _keep_w is not None:
                 print(f"explore: focus '{focus['name']}' screens "
                       f"{base.wins:.1f}W against {_held.wins:.1f}W for the "
