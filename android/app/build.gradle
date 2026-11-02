@@ -29,6 +29,12 @@ android {
         // v4.52. Rebuilding at the same versionCode would leave two different
         // binaries sharing one identity, which is the bug that gets uploaded
         // by mistake six weeks later. Play also rejects a duplicate code.
+        //
+        // Still 41 on 2026-11-02, rebuilt onto engine v4.55. That is the same
+        // reasoning, not an exception to it: 41 was built on 10-31 and never
+        // uploaded, so it never had an identity to collide with. Bumping to 42
+        // would imply a 41 had shipped. The rule is about binaries in
+        // circulation; this one only ever existed in ~/Downloads.
         versionCode 41
         versionName "1.30"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
