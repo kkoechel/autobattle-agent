@@ -1,5 +1,5 @@
 #!/bin/sh
-# One agent at a time on a one-core box.
+# Two agents at a time on a one-core box -- not seven, and not one.
 #
 # subgames-nyc1 has a single vCPU and the agents were asking for 100.0% of it
 # (measured over 12h on 2026-10-31: 35,580 CPU-seconds of agent work plus
@@ -7,39 +7,90 @@
 # timesharing one core, so every run stretched about sixfold and the slowest
 # crossed its TimeoutStartSec wall and was killed with nothing saved --
 # 18,448 CPU-seconds, 42.7% of the whole core, spent on runs that were
-# discarded. `abagent` was killed on 32 of 38 runs needing 112 CPU-seconds
-# against a 900s wall; it was getting 15% of a core.
+# discarded.
 #
 # Nice and CPUWeight could not fix that. They divide a core proportionally,
 # and proportions are meaningless when the problem is that seven things are
-# dividing it at all: every share was too small to finish in time. This
-# serialises instead, so each run gets the whole core and finishes in roughly
-# the CPU time it actually needs.
+# dividing it at all: every share was too small to finish in time.
+#
+# Serialising on ONE lock fixed that and then caused the opposite fault.
+# Measured over the following 26h: zero timeouts outside `abagent`, load
+# average 9.52 -> 1.10 -- and 218 skipped cycles while agents plus league
+# used only 57.5% of the core (53,841 CPU-seconds of 93,600). One lock
+# admits exactly one job however idle the box is, and every unit fires on a
+# fixed minute, so the same pairs collided every single hour rather than now
+# and then: `abagent-bot@flint` fired at :48 inside abagent's :46 run on 26
+# of 26 attempts and consumed 0 CPU seconds in a day. Starvation by phase,
+# not by load.
+#
+# So: two slots. Two concurrent validators is what a clean window measured as
+# safe, and 57.5% leaves room for a second. Not three -- the original finding
+# stands that this box cannot run seven, and the slot count is the only thing
+# standing between here and there.
 #
 # Usage: abagent-serialise <wait-seconds> <command...>
 #
-# wait-seconds 0 means skip this cycle if another agent is running. The
-# expendable agents skip; `abagent` waits, because it is timed to land between
-# cohorts and a skipped cycle means a missed entry window rather than merely
-# a later one.
+# wait-seconds 0 means skip this cycle if both slots are busy. The expendable
+# agents skip; `abagent` waits, because it is timed to land between cohorts
+# and a skipped cycle means a missed entry window rather than a later one.
 #
 # A skip exits 75 and SAYS SO. A guard that declines silently is
 # indistinguishable from one that never ran, and these units are oneshots
 # whose only record is the journal.
-LOCK=/opt/abagent/core.lock
+# Overridable only so tools/check_serialise.sh can exercise the real script
+# against temporary locks. `sh -n` is a parser and proves nothing about fd
+# inheritance, exit codes or whether two slots actually admit two jobs.
+LOCK1=${ABAGENT_LOCK1:-/opt/abagent/core.lock}
+LOCK2=${ABAGENT_LOCK2:-/opt/abagent/core2.lock}
 WAIT="$1"
 shift
 
-if [ "$WAIT" = 0 ]; then
-    set -- /usr/bin/flock -n -E 75 "$LOCK" "$@"
-else
-    set -- /usr/bin/flock -w "$WAIT" -E 75 "$LOCK" "$@"
+# Read-only opens, deliberately. /opt/abagent is read-only inside the unit
+# sandbox (ProtectSystem=strict, and the lock files are outside
+# ReadWritePaths), and flock needs no write access -- a read-only fd is the
+# only thing that works there. Checked before opening because a failed
+# redirection on `exec` kills a non-interactive shell outright, which would
+# turn a missing lock file into a silent 1/FAILURE with no agent run.
+for f in "$LOCK1" "$LOCK2"; do
+    if [ ! -r "$f" ]; then
+        echo "serialise: $f is missing or unreadable — running unserialised"
+        exec "$@"
+    fi
+done
+exec 8<"$LOCK1"
+exec 9<"$LOCK2"
+
+# flock(2) belongs to the open file description, not to the process that
+# called flock(1), so a lock taken on an inherited fd outlives the flock
+# process and survives the exec below. That also drops a process from the
+# tree: the old form (`flock ... python3 ...`) left three processes carrying
+# identical argv -- serialise, flock, python3 -- which tripled the apparent
+# concurrency the first time I tried to count running validators.
+slot=
+end=$(( $(/usr/bin/date +%s) + WAIT ))
+while : ; do
+    if /usr/bin/flock -n 8; then slot=1; break; fi
+    if /usr/bin/flock -n 9; then slot=2; break; fi
+    # Poll rather than block. `flock -w` can only wait on one fd, and waiting
+    # on slot 1 while slot 2 frees first is how a wait turns into a skip.
+    [ "$WAIT" = 0 ] && break
+    [ "$(/usr/bin/date +%s)" -ge "$end" ] && break
+    /usr/bin/sleep 5
+done
+
+if [ -z "$slot" ]; then
+    echo "serialise: skipped this cycle, both slots were busy" \
+         "(waited ${WAIT}s)"
+    exit 75
 fi
 
-"$@"
-rc=$?
-if [ "$rc" = 75 ]; then
-    echo "serialise: skipped this cycle, another agent held the core" \
-         "(waited ${WAIT}s)"
+# Close the slot we did not take, so the agent does not inherit a spare fd on
+# a lock file it has no business holding open.
+if [ "$slot" = 1 ]; then
+    exec 9<&-
+else
+    exec 8<&-
 fi
-exit "$rc"
+
+echo "serialise: slot $slot of 2"
+exec "$@"

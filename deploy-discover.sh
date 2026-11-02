@@ -23,9 +23,9 @@ rsync -az -e "ssh -i $KEY -o IdentitiesOnly=yes" \
 rsync -az -e "ssh -i $KEY -o IdentitiesOnly=yes" \
   deploy/abagent-serialise "root@$HOST:/usr/local/bin/abagent-serialise"
 "${SSH[@]}" 'chmod 755 /usr/local/bin/abagent-serialise \
-  && touch /opt/abagent/core.lock \
-  && chown abagent:abagent /opt/abagent/core.lock \
-  && chmod 644 /opt/abagent/core.lock'
+  && touch /opt/abagent/core.lock /opt/abagent/core2.lock \
+  && chown abagent:abagent /opt/abagent/core.lock /opt/abagent/core2.lock \
+  && chmod 644 /opt/abagent/core.lock /opt/abagent/core2.lock'
 printf 'AB_API_KEY=%s\nABAGENT_DECK_ID=%s\nABAGENT_SECOND_DECK_ID=%s\n' \
   "$AB_API_KEY" "$ABAGENT_DECK_ID" "$ABAGENT_SECOND_DECK_ID" | "${SSH[@]}" \
   'umask 077 && cat > /etc/abagent-discover.env \

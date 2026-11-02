@@ -43,9 +43,9 @@ rsync -az -e "ssh -i $KEY -o IdentitiesOnly=yes" \
 rsync -az -e "ssh -i $KEY -o IdentitiesOnly=yes" \
   deploy/abagent-serialise "root@$HOST:/usr/local/bin/abagent-serialise"
 "${SSH[@]}" 'chmod 755 /usr/local/bin/abagent-serialise \
-  && touch /opt/abagent/core.lock \
-  && chown abagent:abagent /opt/abagent/core.lock \
-  && chmod 644 /opt/abagent/core.lock'
+  && touch /opt/abagent/core.lock /opt/abagent/core2.lock \
+  && chown abagent:abagent /opt/abagent/core.lock /opt/abagent/core2.lock \
+  && chmod 644 /opt/abagent/core.lock /opt/abagent/core2.lock'
 
 # The key goes over stdin, never on a command line -- an argv is visible to
 # every user on the box via ps for as long as the command runs.

@@ -68,13 +68,38 @@ _FLUSH: list = []
 
 
 def _on_term(signum, _frame):
+    """Save what a killed run measured, and say so honestly when there is none.
+
+    The first version printed "flushed 0 state file(s)" whenever nothing had
+    registered, which in the journal reads exactly like a successful save of
+    an empty set. Measured over 26h on the box: all 12 kills landed on
+    `cycle`, all 12 printed that line, and not one of them saved anything --
+    the count was the length of an empty list.
+
+    `cycle` has nothing to register, which is a fact about `cycle` and not an
+    oversight to correct: Harness keeps no evaluation cache, and the state it
+    does own (slowpath, history, plan, second) is written the moment each
+    piece is computed. A truncated cycle loses only in-flight measurements,
+    which were never anywhere to be saved from. So distinguish the two cases
+    instead of inventing a store: a line that cannot tell "nothing to do"
+    from "did nothing" is worse than no line, because it reads as the latter.
+    """
+    done = failed = 0
     for fn in list(_FLUSH):
         try:
             fn()
+            done += 1
         except Exception as e:                       # never die inside a kill
+            failed += 1
             print(f"term: flush failed ({e})")
-    print(f"term: signal {signum} — flushed {len(_FLUSH)} state file(s) "
-          f"after {time.time() - _T0:.0f}s")
+    if not _FLUSH:
+        what = ("nothing registered to flush — this command keeps no "
+                "incremental state, so only in-flight measurements are lost")
+    else:
+        what = f"flushed {done} of {len(_FLUSH)} state file(s)"
+        if failed:
+            what += f" ({failed} failed)"
+    print(f"term: signal {signum} after {time.time() - _T0:.0f}s — {what}")
     sys.stdout.flush()
     os._exit(143)                                     # 128 + SIGTERM
 

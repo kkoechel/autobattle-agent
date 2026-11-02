@@ -15,7 +15,23 @@ Description=AutoBattle deck agent cycle, between Standard cohorts
 # Participation is unaffected: registration is standing, so the deck enters
 # every future cohort regardless of when this runs. All that changes is that
 # an edit lands in every other cohort rather than every one.
-OnCalendar=*:06/20
+# HALVED AGAIN 2026-11-02, from every 20 minutes to once an hour. Measured
+# over the 26h after the core was serialised: this unit was the largest
+# single consumer on the box -- 18,022 CPU-seconds, 19.3% of the core, more
+# than the league's own scoring at 14.1% -- and it changed deck 40806 zero
+# times. 23 cycles completed, 30 of them reported "climb: no budget left,
+# skipping", so the budget was gone before climb was reached. It was also the
+# worst BLOCKER: it caused 102 of the 218 skipped cycles on the box, starving
+# quill on 27 of 28 attempts and pike on 17 of 17, because it fires three
+# times an hour and is the only unit that waits for the lock.
+#
+# The minute is NOT free to change. :06 is phase-locked to the Standard close
+# at :04:58 plus ~43s of finalizing, per the note above, so dropping to one
+# fire an hour means keeping :06 and discarding :26 and :46 -- not picking a
+# quieter-looking minute. Its 7-15 minute run then overlaps ember (:10),
+# combo (:12), vane (:15) and discover (:20), of which only discover is
+# hourly, and discover currently skips 0 cycles so it has the slack.
+OnCalendar=*:06
 AccuracySec=15s
 Persistent=false
 
