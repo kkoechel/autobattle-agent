@@ -41,12 +41,17 @@ PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
 ReadWritePaths=/opt/abagent/var-explore /opt/abagent/bin
-# ONE AGENT AT A TIME. /usr/local/bin/abagent-serialise takes an exclusive
-# flock before exec'ing the agent, so one run gets the whole core instead of
-# seven runs each getting a seventh of it and being killed at the wall.
-# Measured 2026-10-31: 42.7% of the core went on runs that were killed with
-# nothing saved. Exit 75 means "another agent held the core, skipped this
-# cycle" and is a success, not a failure.
+# TWO AGENTS AT A TIME. /usr/local/bin/abagent-serialise takes one of two
+# exclusive flocks before exec'ing the agent, so a run gets at least half the
+# core instead of seven runs each getting a seventh and being killed at the
+# wall. Measured 2026-10-31: 42.7% of the core went on runs killed with
+# nothing saved.
+# Was ONE lock until 2026-11-02, which overcorrected: 218 cycles were skipped
+# in 26h while the box sat 43% idle, because one lock admits one job however
+# much capacity is free and every timer fires on a fixed minute, so the same
+# pairs collided every hour rather than occasionally.
+# Exit 75 means "both slots were busy, skipped this cycle" and is a success,
+# not a failure.
 SuccessExitStatus=75
 # The run's own wall, 300s under TimeoutStartSec, so an overrun stops and
 # keeps what it measured instead of being killed with nothing saved. Read as
