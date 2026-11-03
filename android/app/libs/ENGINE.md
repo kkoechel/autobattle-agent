@@ -6,9 +6,9 @@ built artefact against the live league before a release.
 
 | | |
 |---|---|
-| engine version | **4.55** |
-| built from | `autobattle.online` commit `9d2980e`, `Engine v4.55: On Melee Damage Dealt passive, scalable by the damage` |
-| built on | 2026-11-02 |
+| engine version | **4.56** |
+| built from | `autobattle.online` commit `cf16f98`, `Engine v4.56: a card's own on_discard trigger runs any effect` (engine subtree `aaccb03`) |
+| built on | 2026-11-03 |
 | built by | `shell/engine/build_aar.sh`, extracted with `git archive` so the main repo is never touched |
 
 ## Build it from the engine source at the version the league scores with
@@ -35,3 +35,16 @@ the two commits named at the time, and v4.55 (`9d2980e`) shipped the next
 day, so the bundle built on 10-31 was already one version behind before it
 was uploaded. The engine's own commit is what to record — not HEAD, which
 by 11-02 was two unrelated commits further on with the same engine tree.
+
+**And again on 2026-11-03 — three builds, three staleness events, in four
+days.** 4.54 built 10-31, stale 11-01. 4.55 built 11-02, stale 11-03 at
+15:33 when v4.56 (`cf16f98`) shipped. 4.56 built 11-03. Not one of the three
+was ever uploaded, so the gap has never actually reached a player — but that
+is the parity check doing its job, not luck, and the lesson is now
+quantified: **the expected shelf life of a build here is about one day.**
+Treat `check_engine_parity.sh` as a pre-upload step, not a post-build one.
+
+The practical consequence for `versionCode`: it has stayed 41 across all
+three builds, because the rule against reuse is about binaries *in
+circulation* and none of these entered it. The moment one is uploaded, the
+next build bumps.

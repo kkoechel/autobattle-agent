@@ -35,6 +35,14 @@ android {
         // uploaded, so it never had an identity to collide with. Bumping to 42
         // would imply a 41 had shipped. The rule is about binaries in
         // circulation; this one only ever existed in ~/Downloads.
+        //
+        // Still 41 on 2026-11-03, rebuilt onto engine v4.56 (cf16f98). Third
+        // binary to carry this code and the third never to leave the laptop --
+        // the engine moved to 4.55 the day after the 4.54 build and to 4.56
+        // the day after the 4.55 build. If one of these ever IS uploaded, the
+        // next build bumps to 42; until then the code is unspent. Check
+        // tools/check_engine_parity.sh immediately before uploading, not when
+        // starting the build, because the answer changes daily.
         versionCode 41
         versionName "1.30"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
