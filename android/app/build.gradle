@@ -30,21 +30,30 @@ android {
         // binaries sharing one identity, which is the bug that gets uploaded
         // by mistake six weeks later. Play also rejects a duplicate code.
         //
-        // Still 41 on 2026-11-02, rebuilt onto engine v4.55. That is the same
-        // reasoning, not an exception to it: 41 was built on 10-31 and never
-        // uploaded, so it never had an identity to collide with. Bumping to 42
-        // would imply a 41 had shipped. The rule is about binaries in
-        // circulation; this one only ever existed in ~/Downloads.
+        // 42 on 2026-11-06, onto engine v4.59 (a99ddd3). versionCode 41
+        // SHIPPED: the 11-03 bundle went to Play carrying engine v4.56. The
+        // three notes that used to sit here argued the opposite -- that 41
+        // could be reused because it "never left the laptop" -- and that was
+        // true when written and false by the time it mattered. A comment
+        // asserting a binary is unreleased ages into a comment asserting the
+        // wrong thing, and the next build reasons from it. So: assume a built
+        // code is spent unless the Play console says otherwise.
         //
-        // Still 41 on 2026-11-03, rebuilt onto engine v4.56 (cf16f98). Third
-        // binary to carry this code and the third never to leave the laptop --
-        // the engine moved to 4.55 the day after the 4.54 build and to 4.56
-        // the day after the 4.55 build. If one of these ever IS uploaded, the
-        // next build bumps to 42; until then the code is unspent. Check
-        // tools/check_engine_parity.sh immediately before uploading, not when
-        // starting the build, because the answer changes daily.
-        versionCode 41
-        versionName "1.30"
+        // versionName moves with it, as it has for every shipped code (39->40
+        // came with 1.29->1.30, 38->39 with 1.28->1.29). 1.30 is public now,
+        // so this is 1.31.
+        //
+        // This bump is not cosmetic. Engines 4.56 through 4.58 carry a Go
+        // panic on discard, fixed in 4.59: a hand card arrived in the discard
+        // pile before leaving the hand, so an on_discard trigger that discards
+        // again indexed past the end. engine.go has no recover() and Kotlin
+        // calls Mobile.run() unwrapped, so that panic aborts the process
+        // instead of raising an exception. Players on 41 can crash.
+        //
+        // Check tools/check_engine_parity.sh immediately before uploading, not
+        // when starting the build, because the answer changes daily.
+        versionCode 42
+        versionName "1.31"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         // Side-by-side test install: ./gradlew assembleRelease -PdevId
