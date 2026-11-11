@@ -26,11 +26,31 @@ EnvironmentFile=/etc/abagent.env
 # which screens the LOSING matchups alone and is the right tool for a deck
 # whose remaining upside is concentrated in a handful of opponents.
 #
-# cycle_max is left at its new 900 default so the escalations are reachable
-# at all: with the old 420 and --budget 260 the entry window shut at 220s
-# elapsed while the shortest cycle ever recorded was 260s, and counter_round
-# started zero times in 504 cycles over 7 days.
-ExecStart=/usr/local/bin/abagent-serialise 120 /usr/bin/python3 -u -m abagent.cli --arena pure --deck-id ${ABAGENT_DECK_ID} cycle --budget 260 --second-deck-id ${ABAGENT_SECOND_DECK_ID}
+# cycle_max was left at its 900 default so the escalations were reachable at
+# all: with the old 420 and --budget 260 the entry window shut at 220s elapsed
+# while the shortest cycle ever recorded was 260s, and counter_round started
+# zero times in 504 cycles over 7 days.
+#
+# Raised to 1100 on 2026-11-11, and TimeoutStartSec with it, because 900 did
+# not sit UNDER the systemd wall -- it WAS the systemd wall. The process
+# measures its ceiling from its own start and systemd from the unit's, so a
+# run that reached cycle_max was already being killed: all 19 timeouts over
+# 2026-11-06..11 logged "term: signal 15 after 892s" against TimeoutStartSec
+# 900. A process ceiling must be strictly below its supervisor's kill, by at
+# least the slot wait the serialise wrapper can add.
+#
+# stage-reserve 500 (the default is 200) is sized from what a stage costs
+# rather than from what sounds safe. Over the same window rebase was ENTERED
+# 73 times and FINISHED 16: repeatedly admitted with too little time left and
+# then abandoned, which spends the core and saves nothing. Measured completion
+# is 279s min / 320s median / 496s max, so 500 admits it only when it can
+# actually finish.
+#
+# Together these make room for --climb-budget (180s, the cli.py default added
+# the same day). climb had logged "no budget left, skipping" on 127 of 127
+# cycles because it shared one deadline object with the joint search, which
+# runs first and spent all of it.
+ExecStart=/usr/local/bin/abagent-serialise 120 /usr/bin/python3 -u -m abagent.cli --arena pure --deck-id ${ABAGENT_DECK_ID} cycle --budget 260 --second-deck-id ${ABAGENT_SECOND_DECK_ID} --cycle-max 1100 --stage-reserve 500
 
 # subgames-nyc1 is a 1-vCPU box also serving live Reprisal, Ossuary, Mage Wars
 # and Blind Wizards. CPUWeight (proportional) rather than CPUQuota (a hard cap)
@@ -68,7 +88,7 @@ ReadWritePaths=/opt/abagent/var /opt/abagent/bin
 # not a failure.
 SuccessExitStatus=75
 
-TimeoutStartSec=900
+TimeoutStartSec=1200
 
 [Install]
 WantedBy=multi-user.target
