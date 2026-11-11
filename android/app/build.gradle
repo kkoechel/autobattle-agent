@@ -50,10 +50,28 @@ android {
         // calls Mobile.run() unwrapped, so that panic aborts the process
         // instead of raising an exception. Players on 41 can crash.
         //
+        // 43 on 2026-11-11, onto engine v4.60 (6c7a6c2): "except" restricted
+        // energy (exclude_supertypes) and a new spend order -- narrowest
+        // first, ephemeral before persistent, then gain order.
+        //
+        // 42 was built 11-06 with engine 4.59 and, as far as this repo can
+        // tell, never uploaded: cardbattle-agent-1.31-42.aab still sits in
+        // ~/Downloads. It is still treated as spent, per the rule above. Note
+        // what happened to it, because it is the fourth instance of the same
+        // thing: the league moved to v4.60 on 11-11 while that bundle sat
+        // unuploaded, so uploading 42 now would ship an engine one version
+        // behind the one scoring players. A build's shelf life here is about a
+        // day; a bundle that waits five is not a bundle any more.
+        //
+        // No live card uses exclude_supertypes yet, so 4.60 changes no current
+        // result by that route. The spend-order change does: 27 of 16,660
+        // matches in the main repo's whole-catalogue sweep, 8 of them changing
+        // the winner or how the match ends.
+        //
         // Check tools/check_engine_parity.sh immediately before uploading, not
         // when starting the build, because the answer changes daily.
-        versionCode 42
-        versionName "1.31"
+        versionCode 43
+        versionName "1.32"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         // Side-by-side test install: ./gradlew assembleRelease -PdevId

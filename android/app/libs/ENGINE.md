@@ -6,9 +6,9 @@ built artefact against the live league before a release.
 
 | | |
 |---|---|
-| engine version | **4.59** |
-| built from | `autobattle.online` commit `a99ddd3`, `Engine v4.59: a discarded card leaves the hand before it arrives` (engine subtree `f3b1485`) |
-| built on | 2026-11-06 |
+| engine version | **4.60** |
+| built from | `autobattle.online` commit `6c7a6c2`, `Engine v4.60: "except" restricted energy; narrowest, then ephemeral, spent first` (engine subtree `6dae313`) |
+| built on | 2026-11-11 |
 | built by | `shell/engine/build_aar.sh`, extracted with `git archive` so the main repo is never touched |
 
 ## Build it from the engine source at the version the league scores with
@@ -78,3 +78,48 @@ binaries *in circulation* — correct reasoning, but the note asserting "not in
 circulation" aged into a false one while the next build was still reading it.
 From here: assume a built code is spent unless the Play console says
 otherwise. 42 is engine 4.59, versionName 1.31.
+
+## 2026-11-11: v4.60, and a bundle that went stale without being uploaded
+
+Built from `6c7a6c2` (engine subtree `6dae313`) on the day it landed, on the
+main session's request in `~/Documents/agent-handoff/to-agent.md`. versionCode
+**43**, versionName **1.32**.
+
+What 4.60 changes: `gain_restricted_energy` takes `exclude_supertypes`, so
+energy can pay for anything that is *none* of the listed supertypes; and
+matching restricted entries are now spent narrowest first, ephemeral before
+persistent, then in gain order. No live card uses `exclude_supertypes` yet, so
+that half changes no current result. The spend order does: 27 of 16,660 matches
+in the main repo's whole-catalogue sweep, 8 of them changing the winner.
+
+**versionCode 42 was never uploaded, and is now unuploadable.** It was built
+11-06 with engine 4.59 and `cardbattle-agent-1.31-42.aab` is still in
+`~/Downloads`; on 11-11 the league moved to 4.60, so sending 42 to Play would
+put players one version behind again — the exact fault this file exists to
+prevent, arriving this time through a bundle that simply *waited*. That is the
+fourth staleness event in eleven days and the first caused by delay rather than
+by building from the wrong commit. The shelf life noted above (about a day) is
+not a rule of thumb about building; it is a rule about *uploading*.
+
+### How this build was verified without a phone
+
+`adb devices` was empty, so the on-device step did not run. What did run proves
+the engine rather than the packaging: `cmd/mobilecheck` calls `mobile.Run`, the
+same bind surface the AAR exposes, so comparing its results array against
+`validate --local-payload` tests the library the app will actually call.
+
+| fixture | v4.60 CLI | engine lib 4.60 | bind surface 4.60 | bind surface 4.59 |
+|---|---|---|---|---|
+| `build_v460_payload.py` | `8116798d…` | `8116798d…` | `8116798d…` | `02cfcfb1…` |
+| `androidTest/assets/payload.json` | `e6ebcfa4…` | `e6ebcfa4…` | `e6ebcfa4…` | `e6ebcfa4…` |
+
+Read both rows. The first says the v4.60 behaviour is in this binary *and* that
+the fixture can tell 4.59 from 4.60 — a fixture that cannot is not evidence.
+The second says nothing changed that should not have, and is identical under
+both engines, so on its own it would have accepted a 4.59 AAR as a 4.60 one.
+The main repo's `check_v460.js` passes all eight behaviour assertions on the
+same payload.
+
+Still unproven here, and only a phone can prove it: that the arm64 `.so` inside
+the bundle is the one just built (checked by byte-comparison against the AAR,
+below), and that the app runs a rehearsal end to end on the device.
