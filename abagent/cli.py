@@ -443,8 +443,9 @@ def cmd_climb(args, api: Api) -> int:
     return 0
 
 
-def best_rebase(h, api, mine, plan, store, opps, seeds, top_n=12, window=24, log=print):
-    """The strongest recent deck that also beats ours, measured head to head.
+def best_rebase(h, api, mine, plan, store, opps, seeds, catalog=None,
+                meta_decks=None, own_ids=None, top_n=12, window=24, log=print):
+    """A new list built on the strongest recent deck's core, measured head to head.
 
     Candidates come from a WINDOWED record, not one cohort's rank and not
     all-time. One cohort is a coin flip -- we adopted a deck on a single #1
@@ -462,7 +463,20 @@ def best_rebase(h, api, mine, plan, store, opps, seeds, top_n=12, window=24, log
     Every candidate is scored in ONE batch against a common field with all
     candidates and ourselves removed, so nobody is credited for beating a copy
     of itself and every comparison sees identical opposition.
+
+    What is scored is NOT the candidate's own list. Adopting that verbatim is
+    copying, which `novelty` already forbids everywhere else in this package,
+    and doing it here is how deck 40806 came to field another account's exact
+    100 cards for four days. Each candidate is reduced to its core by
+    `derive_from` and the rest of the deck is ours, so what gets measured is
+    the list we would actually field -- the measurement and the write are the
+    same deck, which is the only way the +3W gate means anything.
     """
+    from .archetype import derive_from
+    from . import novelty
+
+    catalog = catalog or {}
+    meta_decks = meta_decks or []
     recs = history.deck_records(store, min_appearances=3, window=window)[:top_n]
     cands = []
     for rec in recs:
@@ -474,32 +488,47 @@ def best_rebase(h, api, mine, plan, store, opps, seeds, top_n=12, window=24, log
         if not ids:
             for c in pub.get("cards") or []:
                 ids.extend([int(c["card_id"])] * int(c["quantity"]))
-        if len(ids) >= 90:
-            cands.append((rec, ids, pub.get("battle_plan") or {}))
+        if len(ids) < 90:
+            continue
+        got = derive_from(ids, mine, catalog, meta_decks, own_ids, log=log)
+        if not got:
+            log(f"rebase: '{rec.name[:22]}' cannot be built on without "
+                f"becoming a copy of it — skipped")
+            continue
+        dcards, dorder = got
+        bp = dict(pub.get("battle_plan") or {})
+        if bp.get("card_order"):
+            # Their order names their cards, and half of them are no longer in
+            # the deck. Re-order on what we actually field: their core first,
+            # in their own quantity order, then ours.
+            bp["card_order"] = dorder
+        cands.append((rec, dcards, bp, ids))
     if not cands:
         return None
 
-    drop = {r.deck_id for r, _, _ in cands}
+    drop = {c[0].deck_id for c in cands}
     field = [o for o in opps if o.deck_id not in drop]
     log(f"rebase: {len(cands)} candidates from the last {window} cohorts, "
         f"{len(field)} common opponents")
 
     batch = [("ours", mine, plan)]
-    batch += [(f"c{i}", ids, bp) for i, (_, ids, bp) in enumerate(cands)]
+    batch += [(f"c{i}", dcards, bp) for i, (_, dcards, bp, _) in enumerate(cands)]
     res = h.evaluate(batch, field, seeds)
     ours = res["ours"]
 
     best = None
-    for i, (rec, ids, bp) in enumerate(cands):
+    for i, (rec, dcards, bp, src) in enumerate(cands):
         sc = res[f"c{i}"]
         gain = sc.wins - ours.wins
         if sc.key > ours.key and (best is None or gain > best[1]):
             best = ({"deck_id": rec.deck_id, "deck_name": rec.name,
-                     "rank": round(rec.mean_rank), "cards": ids,
-                     "battle_plan": bp}, gain)
+                     "rank": round(rec.mean_rank), "cards": dcards,
+                     "battle_plan": bp,
+                     "shared": novelty.overlap(dcards, src)}, gain)
     if best:
-        log(f"rebase: best is {best[0]['deck_name'][:24]} "
-            f"(mean rank {best[0]['rank']}) at {best[1]:+.1f}W")
+        log(f"rebase: best is a list built on {best[0]['deck_name'][:24]} "
+            f"(mean rank {best[0]['rank']}, sharing {best[0]['shared']}/100) "
+            f"at {best[1]:+.1f}W")
     return best
 
 
@@ -1184,11 +1213,27 @@ def cmd_cycle(args, api: Api) -> int:
             except Exception as e:
                 print(f"cycle: history unavailable ({e.__class__.__name__})")
                 store = {}
+            own_ids = {int(i) for i in (args.deck_id, args.second_deck_id) if i}
             cand = best_rebase(h, api, cards, plan, store, opps,
                                [t0_seed + i for i in range(args.rebase_seeds)],
+                               catalog=catalog, meta_decks=meta_decks,
+                               own_ids=own_ids,
                                top_n=args.rebase_top) if store else None
             if cand and cand[1] >= args.rebase_min:
+                from . import novelty
                 d, gain = cand
+                # The guard belongs at the WRITE, not only at the proposal.
+                # derive_from already holds the list under MAX_OVERLAP, and
+                # this check is still worth its two lines: the defect it exists
+                # for was a write that nothing checked at all, and the next
+                # person to add a path into update_deck will find the rule
+                # enforced here rather than documented elsewhere.
+                if (not novelty.is_novel(d["cards"], meta_decks, own_ids)
+                        or d["shared"] > novelty.MAX_OVERLAP):
+                    print(f"cycle: refusing to write a list sharing "
+                          f"{d['shared']}/100 with '{d['deck_name'][:22]}' "
+                          f"and {novelty.describe(d['cards'], meta_decks, own_ids)}")
+                    return 0
                 checkpoint(api, cards, plan,
                            f"{time.strftime('%m-%d %H:%M')} pre-rebase")
                 counts: dict[int, int] = {}
@@ -1198,13 +1243,14 @@ def cmd_cycle(args, api: Api) -> int:
                                 cards=[{"card_id": c, "quantity": q}
                                        for c, q in sorted(counts.items())],
                                 battle_plan=d.get("battle_plan") or {})
-                print(f"cycle: search stalled — re-based onto rank {d['rank']} "
-                      f"'{d['deck_name'][:28]}' ({gain:+.1f}W)")
+                print(f"cycle: search stalled — built a new list on rank "
+                      f"{d['rank']} '{d['deck_name'][:28]}'s core, sharing "
+                      f"{d['shared']}/100 with it ({gain:+.1f}W)")
                 register_when_targetable(api, args.arena, args.deck_id,
                                          wait_limit=args.register_wait)
                 return 0
-            print(f"cycle: search stalled and no field deck beats ours by "
-                  f"{args.rebase_min}W — holding")
+            print(f"cycle: search stalled and no list built on a field deck "
+                  f"beats ours by {args.rebase_min}W — holding")
             return 0
         print(f"cycle: no confirmed improvement in {time.time() - t0:.0f}s, "
               f"leaving deck {args.deck_id} as-is")

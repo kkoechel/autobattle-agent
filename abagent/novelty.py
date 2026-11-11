@@ -30,6 +30,13 @@ import collections
 # Above the 90th percentile of real pairwise overlap, below the duplicates.
 MAX_OVERLAP = 50
 
+# What to AIM for when deriving a deck from someone else's, as opposed to the
+# line at which a list is rejected. 42 is the p90 of genuine pairs in the
+# cohort measured above, so a derived deck sits no closer to its source than
+# two independently built decks routinely sit to each other -- it is
+# indistinguishable from coincidence, where 50 is merely inside the law.
+CORE_TARGET = 42
+
 
 def overlap(a: list[int], b: list[int]) -> int:
     """Cards in common, counting copies -- 5x of a card shared 3 times is 3."""

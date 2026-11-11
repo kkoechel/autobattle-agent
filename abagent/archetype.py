@@ -191,6 +191,139 @@ def build(seed: int, catalog: dict[int, dict], meta_decks: list[dict],
                      members=sorted(picks, key=lambda kv: -kv[1]))
 
 
+def derive_from(src_cards: list[int], our_cards: list[int],
+                catalog: dict[int, dict], meta_decks: list[dict],
+                own_deck_ids: set[int] | None = None,
+                max_overlap: int | None = None, size: int = 100,
+                max_filler: int = 15,
+                log=print) -> tuple[list[int], list[int]] | None:
+    """A deck built on another deck's core that is not a copy of that deck.
+
+    Adopting a field list wholesale is the thing `novelty` exists to forbid,
+    and the re-base was doing it anyway: deck 40806 fielded a list sharing
+    100 of 100 cards with another account's deck for four days, twice the
+    MAX_OVERLAP this package calls copying. The explorers already refuse that
+    -- `keep_over_rotate` gives a copied incumbent no vote -- so this brings
+    the re-base under the existing rule instead of inventing a second one.
+
+    An archetype's identity is the cards it runs most, so the core is taken in
+    quantity order up to the overlap ceiling and the remaining slots are our
+    own cards. Source cards are never used as filler, which is what makes the
+    arithmetic exact: overlap with the source then EQUALS the core size, so
+    the repair loop only has to chase a third deck the core happens to
+    resemble. That case is real rather than theoretical -- the deck 40806
+    cloned itself shares 88/100 with another list in the same cohort.
+
+    Returns (cards, distinct ids in adoption order) so the caller can rebuild
+    card_order, or None when no legal 100 can be reached without taking more
+    of the source. None is the honest answer, not a failure: when our own deck
+    IS the source there is nothing left to blend with, and the cycle should
+    keep what it has rather than re-copy.
+    """
+    import collections
+
+    from . import novelty
+
+    cap = novelty.MAX_OVERLAP if max_overlap is None else max_overlap
+    budget = min(novelty.CORE_TARGET, cap)
+    limit = lambda c: int(catalog.get(c, {}).get("deck_limit") or 0)
+    src = collections.Counter(int(c) for c in src_cards)
+    ours = collections.Counter(int(c) for c in our_cards)
+    if not src:
+        return None
+
+    # A card missing from the catalogue would silently become a dropped slot,
+    # and the catalogue is refetched per cycle while a deck list is not. Refuse
+    # rather than quietly field a 97-card approximation of someone's deck.
+    unknown = [c for c in src if c not in catalog]
+    if unknown:
+        log(f"derive: {len(unknown)} source card(s) absent from the catalogue "
+            f"({unknown[:4]}) — refusing to guess at the list")
+        return None
+
+    core_order = sorted(src, key=lambda c: (-src[c], c))
+    fill_order = sorted((c for c in ours if c not in src),
+                        key=lambda c: (-ours[c], c))
+
+    # The source is checked EXPLICITLY, not left to the meta snapshot.
+    # Candidates come from a 24-cohort history window while meta_decks is the
+    # current cohort, so a deck that has since dropped out is a candidate that
+    # `nearest` cannot see -- and it is the one deck we are guaranteed to
+    # resemble. Adding it as a pseudo-deck makes the ceiling unconditional
+    # instead of true-while-the-source-is-still-entered.
+    check_decks = list(meta_decks) + [{"deck_id": None,
+                                       "deck_name": "the source deck",
+                                       "cards": list(src_cards)}]
+
+    for _ in range(8):
+        if budget <= 0:
+            return None
+        picks: dict[int, int] = {}
+        order: list[int] = []
+        used = 0
+        for c in core_order:
+            if used >= budget:
+                break
+            q = min(src[c], limit(c), budget - used)
+            if q > 0:
+                picks[c] = q
+                order.append(c)
+                used += q
+        core_slots = used
+        for c in fill_order:
+            if used >= size:
+                break
+            q = min(ours[c], limit(c), size - used)
+            if q > 0:
+                picks[c] = q
+                order.append(c)
+                used += q
+        # Top up cards the deck already wants before reaching for a blank --
+        # the same ladder build() climbs, and for the same reason: in a format
+        # that plays itself, a card with no rules text is a wasted turn.
+        if used < size:
+            for c in fill_order:
+                if used >= size:
+                    break
+                head = min(limit(c) - picks.get(c, 0), size - used)
+                if head > 0:
+                    picks[c] = picks.get(c, 0) + head
+                    used += head
+        # A blank is a wasted turn in a format that plays itself, so it tops
+        # the deck up and never builds it: the first generator padded 15% of
+        # every deck with a rules-text-free card and that was treated as the
+        # defect it was. Needing more than that many blanks means our own list
+        # had nothing to contribute -- which is exactly the state a deck that
+        # is ALREADY a copy of the source is in, and re-deriving from it would
+        # hand back the same copy with the difference made up in filler.
+        short = size - used
+        if 0 < short <= max_filler and is_playable(catalog.get(INFINITE_FILLER)):
+            head = min(limit(INFINITE_FILLER) - picks.get(INFINITE_FILLER, 0), short)
+            if head > 0:
+                if INFINITE_FILLER not in picks:
+                    order.append(INFINITE_FILLER)
+                picks[INFINITE_FILLER] = picks.get(INFINITE_FILLER, 0) + head
+                used += head
+        if used != size:
+            log(f"derive: {size - used} of {size} slots could only be filled "
+                f"with blanks or with more of the source — our own list has "
+                f"nothing to add, so there is nothing here but a copy")
+            return None
+
+        cards = [c for c in sorted(picks) for _ in range(picks[c])]
+        worst, who = novelty.nearest(cards, check_decks, own_deck_ids)
+        if worst <= cap:
+            return cards, order
+        # Shrinking the core only helps when the resemblance came FROM the
+        # core. When it came from our own filler the loop walks the budget to
+        # zero and returns None, which is the right answer: that candidate
+        # cannot be adopted without becoming somebody's copy.
+        log(f"derive: a {core_slots}-slot core still shares {worst}/{size} "
+            f"with '{str((who or {}).get('deck_name'))[:22]}' — shrinking it")
+        budget -= max(1, worst - cap)
+    return None
+
+
 def recent_seeds(catalog: dict[int, dict], days: int = 7,
                  now: str | None = None) -> list[int]:
     """Cards added in the last `days`, newest first.

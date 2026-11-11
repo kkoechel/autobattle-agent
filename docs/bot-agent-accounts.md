@@ -90,6 +90,27 @@ sharing 97 of 100 cards — which is now prevented by a novelty constraint
 capping overlap with any deck we do not own at 50/100. Each agent's exemption
 set is only its own decks, so agent A cannot clone agent B.
 
+**Correction, 2026-11-11: "prevented" was true of one code path, not of the
+agent.** The novelty constraint was enforced in `explore`, and `cycle`'s
+re-base walked straight past it — it adopted a candidate's own 100 cards and
+never called `novelty` at all. abagent's deck 40806 therefore fielded deck
+144280's exact list, another account's, from 11-07 05:20 until this was
+found: 100/100, twice the cap this paragraph describes, for four days at rank
+2. It had done the same thing three times before (11-01, 11-03, 11-07), twice
+onto decks belonging to the same player, and in the fortnight between it
+changed its cards exactly zero times — all ten `cycle: applied` events were
+battle-plan tweaks.
+
+Two lessons worth more than the fix. A constraint is enforced per write path,
+not per package, and this document asserting otherwise is how it stayed
+invisible for five weeks: the claim read as coverage. And the agent's own
+measurement was being taken on a deck it would not field, because `best_rebase`
+scored the candidate's list and then wrote it verbatim — so the +3W gate and
+the written deck only agreed by accident. `cycle` now derives a list from the
+candidate's core, scores THAT, and refuses at the `update_deck` call if the
+result is not novel. `tools/check_novelty.py` holds the real 2026-11-11 lists
+as its fixture.
+
 For calibration, the live field is already fairly convergent on its own: 29 of
 75 decks (39%) have a >50/100 twin, and 17 are beginner-deck lookalikes. So
 "the agents converged" only means something measured against a 39% baseline.
