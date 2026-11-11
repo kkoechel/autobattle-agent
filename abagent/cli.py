@@ -1512,10 +1512,12 @@ def cmd_bootstrap(args, api: Api) -> int:
     # of 982 measurements whose standard error is ~3.7 wins -- the winner's
     # curse, picking noise as often as merit.
     screen = opps
+    final_field, final_seeds = len(opps), args.seeds
     if args.screen_field and args.screen_field < len(opps):
         # By rank, not at random: meta arrives rank-ordered, and a deck that
         # cannot handle the top of the field is not the one we would install.
         screen = opps[:args.screen_field]
+        final_field = len(screen)
         print(f"bootstrap: stage one, {len(cands)} decks x {args.seeds} seeds "
               f"x the top {len(screen)} of the field")
     scores = h.evaluate(cands, screen, block)
@@ -1528,6 +1530,7 @@ def cmd_bootstrap(args, api: Api) -> int:
         block2 = [args.seed0 + 1000 + i for i in range(args.confirm_seeds)]
         by_lab = {lab: (lab, cs, pl) for lab, cs, pl in cands}
         scores = h.evaluate([by_lab[lab] for lab in short], opps, block2)
+        final_field, final_seeds = len(opps), args.confirm_seeds
         # The pick comes from THIS batch alone. Carrying a stage-one number
         # into the comparison would rank two measurements taken against
         # different fields and seed blocks, which is the mistake
@@ -1558,8 +1561,13 @@ def cmd_bootstrap(args, api: Api) -> int:
         raise SystemExit(f"bootstrap: refusing, the repaired list "
                          f"{novelty.describe(cards, meta['decks'], own_ids)}")
 
-    print(f"bootstrap: '{name}' — {sc.wins:.1f}W of {len(opps)} "
-          f"over {args.seeds} seeds")
+    # Name the screen this number came from. The first version printed
+    # args.seeds and len(opps) unconditionally, so a two-stage run reported
+    # its 21-seed full-field result as "82.3W of 108 over 3 seeds" -- the
+    # stage-one flags attached to the stage-two measurement. A number
+    # labelled with the wrong evidence is worse than an unlabelled one.
+    print(f"bootstrap: '{name}' — {sc.wins:.1f}W of {final_field} "
+          f"over {final_seeds} seeds")
     print(f"           {best.summary(catalog)}")
     if not args.apply:
         print("bootstrap: DRY RUN, nothing written (pass --apply)")
