@@ -62,7 +62,20 @@ push() {      # push <local dir> <remote dir> <owner> <files...>
     ssh -n "$HOST" "[ -f '$rdir/$f' ] && cp -a '$rdir/$f' '/root/deploy-bak-$STAMP$rdir/$f' || true"
     scp -q "$ldir/$f" "$HOST:$rdir/$f"
   done
-  ssh -n "$HOST" "chown $owner $(printf "'%s/%s' " "$rdir" "$@")"
+  # printf REUSES its format until the arguments run out, so the one-shot
+  # form -- printf "'%s/%s' " "$rdir" "$@" -- spends $rdir on the first file
+  # and then pairs the remaining filenames with each other: three files
+  # chowned '/opt/abagent/abagent/archetype.py' and then 'cli.py/novelty.py',
+  # which does not exist. Under `set -e` that aborted the deploy AFTER the
+  # scp and BEFORE the per-file verification below, so a multi-file deploy
+  # skipped the only check that proves the right bytes arrived. It had
+  # therefore never worked for more than one file. One printf per file: the
+  # format cannot cycle if it is only ever given one pair.
+  local chownargs=""
+  for f in "$@"; do
+    chownargs="$chownargs$(printf "'%s/%s' " "$rdir" "$f")"
+  done
+  ssh -n "$HOST" "chown $owner $chownargs"
   # VERIFY ON THE HOST, per file. The copy reporting success is not evidence
   # that the right bytes are there.
   local bad=0
