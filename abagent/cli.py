@@ -1481,11 +1481,59 @@ def cmd_bootstrap(args, api: Api) -> int:
     if not cands:
         raise SystemExit("bootstrap: no legal 100-card shell could be built")
 
+    # Never install a generated deck that happens to be somebody else's.
+    # The generator mines the field for staples, so convergence is a live
+    # possibility rather than a remote one, and a fresh start that lands on a
+    # copy is not a fresh start. Done before any simulation: it is pure
+    # arithmetic and it removes candidates we would otherwise pay to score.
+    from . import novelty
+    own_ids = {int(i) for i in (args.deck_id,
+                                getattr(args, "second_deck_id", None)) if i}
+    kept = []
+    for lab, cs, pl in cands:
+        n, who = novelty.nearest(cs, meta["decks"], own_ids)
+        if n <= novelty.MAX_OVERLAP:
+            kept.append((lab, cs, pl))
+    if len(kept) != len(cands):
+        print(f"bootstrap: dropped {len(cands) - len(kept)} candidate(s) that "
+              f"were copies of a field deck")
+    cands = kept
+    if not cands:
+        raise SystemExit("bootstrap: every candidate was a copy of a field deck")
+
     h = Harness(VALIDATOR, cat_list, workdir=VAR)
     opps = opponents_from_meta(meta, exclude_deck_ids={args.deck_id})
     block = [args.seed0 + i for i in range(args.seeds)]
-    scores = h.evaluate(cands, opps, block)
+
+    # Measured 2026-11-11 on subgames-nyc1: 14.69s per deck at 7 seeds against
+    # 108 opponents, so screening all 982 buildable seeds in one pass costs
+    # 241 minutes of a vCPU the league also needs. Two stages cost about a
+    # quarter of that AND pick better, because a single pass takes the maximum
+    # of 982 measurements whose standard error is ~3.7 wins -- the winner's
+    # curse, picking noise as often as merit.
+    screen = opps
+    if args.screen_field and args.screen_field < len(opps):
+        # By rank, not at random: meta arrives rank-ordered, and a deck that
+        # cannot handle the top of the field is not the one we would install.
+        screen = opps[:args.screen_field]
+        print(f"bootstrap: stage one, {len(cands)} decks x {args.seeds} seeds "
+              f"x the top {len(screen)} of the field")
+    scores = h.evaluate(cands, screen, block)
     ranked = sorted(scores.items(), key=lambda kv: -kv[1].wins)
+
+    if args.shortlist and (len(ranked) > args.shortlist or screen is not opps):
+        short = [lab for lab, _ in ranked[:args.shortlist]]
+        print(f"bootstrap: stage two, the best {len(short)} against all "
+              f"{len(opps)} opponents at {args.confirm_seeds} seeds")
+        block2 = [args.seed0 + 1000 + i for i in range(args.confirm_seeds)]
+        by_lab = {lab: (lab, cs, pl) for lab, cs, pl in cands}
+        scores = h.evaluate([by_lab[lab] for lab in short], opps, block2)
+        # The pick comes from THIS batch alone. Carrying a stage-one number
+        # into the comparison would rank two measurements taken against
+        # different fields and seed blocks, which is the mistake
+        # keep_over_rotate's docstring exists to record.
+        ranked = sorted(scores.items(), key=lambda kv: -kv[1].wins)
+
     for lab, sc in ranked[:5]:
         a = archs[lab]
         print(f"  {sc.wins:5.1f}W {sc.losses:5.1f}L {sc.draws:5.1f}D  "
@@ -1501,6 +1549,14 @@ def cmd_bootstrap(args, api: Api) -> int:
         raise SystemExit(f"bootstrap: refusing, {len(illegal)} illegal card(s)")
     if len(cards) != 100:
         raise SystemExit(f"bootstrap: refusing, {len(cards)} cards after repair")
+    # Re-checked AFTER the repairs, not only before the screen.
+    # prune_dead_clauses and ensure_tutor_targets both change the card list,
+    # so the list that was cleared for novelty is not the list about to be
+    # written -- the same gap that let the re-base measure one deck and field
+    # another.
+    if not novelty.is_novel(cards, meta["decks"], own_ids):
+        raise SystemExit(f"bootstrap: refusing, the repaired list "
+                         f"{novelty.describe(cards, meta['decks'], own_ids)}")
 
     print(f"bootstrap: '{name}' — {sc.wins:.1f}W of {len(opps)} "
           f"over {args.seeds} seeds")
@@ -1508,6 +1564,24 @@ def cmd_bootstrap(args, api: Api) -> int:
     if not args.apply:
         print("bootstrap: DRY RUN, nothing written (pass --apply)")
         return 0
+    # Snapshot first. This overwrites a live slot in place -- PUT /decks/{id}
+    # keeps no history -- and "one shot, then the agent takes over" is also
+    # one shot with nothing to go back to if the generated deck plays worse
+    # than the measurement promised. The agent's own stall stages checkpoint
+    # before they change a thing; the command that replaces the WHOLE deck
+    # was the one path that did not.
+    try:
+        existing = api.deck(args.deck_id)
+        prior = [int(c["card_id"]) for c in (existing.get("cards") or [])
+                 for _ in range(int(c["quantity"]))]
+        if prior:
+            checkpoint(api, prior, existing.get("battle_plan") or {},
+                       f"{time.strftime('%m-%d %H:%M')} pre-bootstrap")
+    except ApiError as e:
+        print(f"bootstrap: could not snapshot the current deck ({e}) — "
+              f"refusing to overwrite it blind")
+        return 1
+
     counts = collections.Counter(cards)
     api.update_deck(args.deck_id, name=name[:80],
                     cards=[{"card_id": k, "quantity": v}
@@ -3044,6 +3118,18 @@ def main(argv=None) -> int:
     bs = sub.add_parser("bootstrap")
     bs.add_argument("--apply", action="store_true", default=False)
     bs.add_argument("--seeds", type=int, default=7)
+    bs.add_argument("--screen-field", type=int, default=0,
+                    help="screen stage one against the top N of the field "
+                         "only (0 = all of it); stage one has to ORDER the "
+                         "candidates, not price them")
+    bs.add_argument("--shortlist", type=int, default=0,
+                    help="re-screen the best N against the FULL field before "
+                         "picking (0 = pick straight off stage one)")
+    bs.add_argument("--confirm-seeds", type=int, default=21,
+                    help="seeds for that second screen")
+    bs.add_argument("--second-deck-id", type=int, default=None,
+                    help="our other live slot, so the novelty gate does not "
+                         "reject a deck for resembling a deck we own")
     bs.add_argument("--seed0", type=int, default=90001)
     bs.add_argument("--seed-mod", type=int, default=1)
     bs.add_argument("--seed-rem", type=int, default=0)
