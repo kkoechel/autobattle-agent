@@ -1031,16 +1031,43 @@ def cmd_cycle(args, api: Api) -> int:
 
     confirmed = list(swaps)
 
-    # Then the standing instructions, with whatever budget is left -- they
-    # can shift once the card list moves under them.
-    plan, score, hist = climb(h, cards, opps, plan, card_info=info,
-                              sweep_seeds=args.sweep_seeds,
-                              confirm_seeds=args.confirm_seeds,
-                              max_sweeps=args.sweeps, min_t=args.min_t,
-                              confirm_top=args.confirm_top,
-                              validate_seeds=args.validate_seeds,
-                              min_gain=args.min_gain,
-                              rng=rng, deadline=deadline)
+    # Then the standing instructions -- they can shift once the card list
+    # moves under them.
+    #
+    # This used to pass `deadline`, the SAME object optimise() was given, and
+    # optimise() runs first. That is not a share of the budget, it is the
+    # leftovers, and measured over 25h on subgames-nyc1 there were never any:
+    # optimise stopped at 342-630s against a 260s budget (it checks the clock
+    # between rounds, and one unbiased validation costs ~125s, so overshoot is
+    # structural, not a bug), and climb logged "no budget left, skipping" on
+    # **24 of 24 cycles**. The plan went untouched for the entire window while
+    # the unit spent 10.9% of the box's single core.
+    #
+    # So give climb an allowance measured from when it actually starts, which
+    # is how deepen() below is already bounded. optimise()'s overshoot can
+    # then delay climb but not cancel it.
+    climb_deadline = min(hard, time.time() + args.climb_budget)
+    climb_room = climb_deadline - time.time()
+    if climb_room < args.climb_min:
+        # A bare entry check is not enough. climb()'s own comment records that
+        # "a 4-second budget still bought 86 seconds of scoring before the
+        # first deadline check inside the sweep loop" -- the baseline is a full
+        # evaluation and is paid before any clock is consulted. Handing it 30s
+        # does not buy 30s of work, it buys a 90s baseline whose result is then
+        # thrown away. Refuse out loud instead.
+        print(f"climb: {climb_room:.0f}s to the cycle ceiling is under the "
+              f"{args.climb_min}s floor — skipping rather than paying for a "
+              f"baseline it has no time to act on")
+        score, hist = None, []
+    else:
+        plan, score, hist = climb(h, cards, opps, plan, card_info=info,
+                                  sweep_seeds=args.sweep_seeds,
+                                  confirm_seeds=args.confirm_seeds,
+                                  max_sweeps=args.sweeps, min_t=args.min_t,
+                                  confirm_top=args.confirm_top,
+                                  validate_seeds=args.validate_seeds,
+                                  min_gain=args.min_gain,
+                                  rng=rng, deadline=climb_deadline)
     confirmed += [f"{s.field}={s.after!r} {s.gain:+.1f}W" for s in hist if s.confirmed]
 
     # Entering a stage is not the same as finishing it: the counter round ends
@@ -1193,8 +1220,12 @@ def cmd_cycle(args, api: Api) -> int:
     _save(f"plan_{args.deck_id}.json", plan)
     print(f"cycle: applied {len(confirmed)} change(s) to deck {args.deck_id} "
           f"— {describe(plan)}")
-    # climb returns no score when it skipped for lack of budget, which is a
-    # normal outcome now that the joint search runs first and can use it all.
+    # climb returns no score when it skipped. That used to be the NORMAL
+    # outcome -- it shared one deadline with the joint search, which ran first
+    # and spent all of it, 24 cycles out of 24 -- and this comment used to say
+    # so, which is how a defect gets read as a design. climb now has its own
+    # --climb-budget, so no score here means the cycle ceiling was genuinely
+    # close, and that is worth noticing rather than expecting.
     if score is not None:
         print(f"cycle: projected {score}")
 
@@ -3073,6 +3104,13 @@ def main(argv=None) -> int:
                    help="hard wall-clock ceiling for the entire cycle")
     y.add_argument("--slow-every", type=int, default=3600,
                    help="seconds between re-base / complement re-pick attempts")
+    y.add_argument("--climb-budget", type=int, default=180,
+                   help="seconds reserved for the plan climb, measured from "
+                        "when it starts rather than shared with the card "
+                        "search, which always spent the lot first")
+    y.add_argument("--climb-min", type=int, default=120,
+                   help="below this much room, skip the climb instead of "
+                        "paying for a baseline evaluation it cannot act on")
     y.add_argument("--min-budget", type=int, default=150,
                    help="skip the cycle entirely below this many seconds")
     y.add_argument("--margin", type=int, default=45,
