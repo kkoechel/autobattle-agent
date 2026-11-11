@@ -31,6 +31,34 @@ EnvironmentFile=/etc/abagent.env
 # while the shortest cycle ever recorded was 260s, and counter_round started
 # zero times in 504 cycles over 7 days.
 #
+# Raised AGAIN to 2400 on 2026-11-11 19:40, after the fresh start replaced
+# deck 40806's cloned list with a deck of its own. MEASURED cause, not a
+# guess: one evaluation of 1 deck x 21 seeds x 108 opponents costs 54.4s for
+# 'Multitude Eternal' against 21.2s for the clone it replaced -- 2.6x, and the
+# draws say why (23.4D vs 10.1D, so the games run far longer).
+#
+# That matters because `sweep_and_confirm` is ONE uninterruptible unit and the
+# deadline is only checked at the top of a round and after the order sweep.
+# For this deck that unit costs, by the measured rate of 0.024 s per
+# deck-seed-opponent:
+#
+#     screen       7 decks x  21 seeds x 108 opponents =  308s
+#     confirm      4 decks x  21 seeds x 108 opponents =  176s
+#     validation   2 decks x 161 seeds x 108 opponents =  674s   <- 58%
+#                                                        -----
+#                                                        1158s
+#
+# The 19:06 cycle was killed at 1193s, which is that sum plus setup. The same
+# unit cost ~297s on the clone, which is exactly where it used to print
+# "round1: deadline reached after order". Nothing was wrong with the 1100/1200
+# pair; the smallest interruptible block simply grew past it.
+#
+# KNOWN REMAINING FAULT, not fixed here: one stage_reserve cannot be right for
+# stages that cost 335s (counter) and ~1000s (rebase) on the same deck. 500
+# keeps counter reachable and lets rebase in slightly early, which is why the
+# wall above carries the slack instead. The real fix is a per-stage reserve
+# taken from each stage's measured cost.
+#
 # Raised to 1100 on 2026-11-11, and TimeoutStartSec with it, because 900 did
 # not sit UNDER the systemd wall -- it WAS the systemd wall. The process
 # measures its ceiling from its own start and systemd from the unit's, so a
@@ -50,7 +78,7 @@ EnvironmentFile=/etc/abagent.env
 # the same day). climb had logged "no budget left, skipping" on 127 of 127
 # cycles because it shared one deadline object with the joint search, which
 # runs first and spent all of it.
-ExecStart=/usr/local/bin/abagent-serialise 120 /usr/bin/python3 -u -m abagent.cli --arena pure --deck-id ${ABAGENT_DECK_ID} cycle --budget 260 --second-deck-id ${ABAGENT_SECOND_DECK_ID} --cycle-max 1100 --stage-reserve 500
+ExecStart=/usr/local/bin/abagent-serialise 120 /usr/bin/python3 -u -m abagent.cli --arena pure --deck-id ${ABAGENT_DECK_ID} cycle --budget 260 --second-deck-id ${ABAGENT_SECOND_DECK_ID} --cycle-max 2400 --stage-reserve 500
 
 # subgames-nyc1 is a 1-vCPU box also serving live Reprisal, Ossuary, Mage Wars
 # and Blind Wizards. CPUWeight (proportional) rather than CPUQuota (a hard cap)
@@ -88,7 +116,12 @@ ReadWritePaths=/opt/abagent/var /opt/abagent/bin
 # not a failure.
 SuccessExitStatus=75
 
-TimeoutStartSec=1200
+# 3000, not 2700. The wall must clear cycle_max - stage_reserve + the
+# largest stage the agent will admit, because a stage admitted at the last
+# legal moment runs its full length past cycle_max: 2400 - 500 + 1000 = 2900.
+# A wall at 2700 would kill a legally-admitted rebase, which is the 900-vs-900
+# mistake again with bigger numbers.
+TimeoutStartSec=3000
 
 [Install]
 WantedBy=multi-user.target
