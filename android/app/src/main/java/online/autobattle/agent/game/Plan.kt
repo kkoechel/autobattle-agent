@@ -120,10 +120,20 @@ data class PlanPrefs(
      * untouched plan byte-identical to what the app has always submitted.
      * Writing "on" would be the same behaviour and a different payload.
      *
-     * SPARE_ONLY uses the reserve, which the engine defines as the energy
-     * that must SURVIVE the payment -- it declines when
-     * (energy + ephemeral) - cost < reserve. That is the setting for a deck
+     * SPARE_ONLY uses the reserve, which the engine defines as the ORDINARY
+     * energy that must SURVIVE the payment. That is the setting for a deck
      * that wants the bonus only when it is not giving up its turn for it.
+     *
+     * Since engine v4.61 restricted energy can pay a supplement too, and it
+     * is spent first, so only the part it does not cover comes out of
+     * ordinary energy. The engine declines when
+     * (energy + ephemeral) - max(0, cost - matching) < reserve, where
+     * matching is the restricted energy usable on the card being played.
+     * Nothing here computes that -- this enum only emits plan fields, so the
+     * formula is QUOTED from can_pay_supplement, not reimplemented. It is
+     * still worth keeping true: the v4.60 version of this comment was the
+     * one line in this repo that looked like a second implementation, and
+     * checking it against the engine is what turned up the v4.61 bug.
      */
     enum class Extras(val off: Boolean, val reserve: Int) {
         /** Pay whenever the cost can be met. Today's behaviour. */
@@ -132,7 +142,7 @@ data class PlanPrefs(
         /** Never pay. The card still gets played, just plainly. */
         NEVER(true, 0),
 
-        /** Pay only when three energy would still be left afterwards. */
+        /** Pay only when three ORDINARY energy would still be left afterwards. */
         SPARE_ONLY(false, 3),
     }
 

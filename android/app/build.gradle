@@ -68,10 +68,21 @@ android {
         // matches in the main repo's whole-catalogue sweep, 8 of them changing
         // the winner or how the match ends.
         //
+        // 44 on 2026-11-11, onto engine v4.61 (05e7256): a supplement can be
+        // paid with restricted energy, and supplement_reserve is ORDINARY
+        // energy left. That bug was found from this side -- Plan.kt quoted the
+        // old reserve formula, checking the quotation against the engine
+        // turned up the fault, and the main session fixed it the same evening.
+        //
+        // 43 (engine 4.60) was built three hours earlier and is already stale;
+        // like 42 it was never uploaded. Three bundles now sit in ~/Downloads
+        // and only 1.33-44 is uploadable. The daily-shelf-life note above is
+        // not pessimism.
+        //
         // Check tools/check_engine_parity.sh immediately before uploading, not
         // when starting the build, because the answer changes daily.
-        versionCode 43
-        versionName "1.32"
+        versionCode 44
+        versionName "1.33"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         // Side-by-side test install: ./gradlew assembleRelease -PdevId
@@ -118,6 +129,44 @@ android {
         release {
             signingConfig keystorePropertiesFile.exists() ? signingConfigs.release : null
             minifyEnabled false
+        }
+
+        debug {
+            // DEBUG BUILDS INSTALL AS .dev BY DEFAULT. Pass -PprodId to aim a
+            // debug build at the production applicationId on purpose.
+            //
+            // Measured on Ryan's S22, 2026-11-11: the app installed there as
+            // `online.autobattle.agent` -- the one holding his league account
+            // -- is signed with the ANDROID DEBUG key (SHA-256 6757cd35,
+            // CN=Android Debug), versionCode 40, installerPackageName=null.
+            // It is a local sideload, not a Play install.
+            //
+            // That makes the collision real rather than theoretical. A debug
+            // build carries the same signature, so `installDebug` without a
+            // flag would replace that app -- and `connectedAndroidTest` runs
+            // with uninstall_after_test: true, so it would then UNINSTALL it.
+            // The league token goes with it and the handle cannot be
+            // re-registered. One forgotten argument, account gone.
+            //
+            // So the safe id is the default and the dangerous one is opt-in.
+            //
+            // The suffix is ".debug", NOT ".dev", and the difference matters.
+            // Three installs coexist on that phone and each has its own key:
+            //
+            //   online.autobattle.agent         debug key   Ryan's main agent
+            //   online.autobattle.agent.dev     UPLOAD key  assembleRelease -PdevId
+            //   online.autobattle.agent.debug   debug key   this, disposable
+            //
+            // Sending debug builds to .dev would put two different signatures
+            // on one id, and whichever installed first would lock the other
+            // out -- so the standing rule to keep .dev current with a RELEASE
+            // build would start failing. -PdevId applies its own suffix in
+            // defaultConfig, hence the second guard: both would give .dev.debug.
+            if (!project.hasProperty('prodId') && !project.hasProperty('devId')) {
+                applicationIdSuffix ".debug"
+                versionNameSuffix "-debug"
+                manifestPlaceholders = [appLabel: "Cardbattle (debug)"]
+            }
         }
     }
 

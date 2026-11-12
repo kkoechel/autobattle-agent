@@ -1,9 +1,9 @@
 {
-  "version": "4.60",
-  "source_commit": "6c7a6c2",
-  "source_tree": "6dae313e30f32617e9c64b055815e21e8edb659a",
+  "version": "4.61",
+  "source_commit": "05e7256",
+  "source_tree": "857be5f83072bd1abfb58a38cddd9e5205a58522",
   "source_repo": "autobattle.online",
   "built": "2026-11-11",
-  "sha256": "7da5a1cbdb8e08cf87243813352c8428b8296585db64e5154f58e3be8b68d724",
+  "sha256": "47a21b778fc75d17516dcf967515d3f11a36b7d9ae51364fdd46e7f5ad29409a",
   "note": "The AAR itself is gitignored (2MB binary). This file is tracked so a stale or unexpected engine is detectable; tools/check_engine_parity.sh verifies both the checksum and the version against the live league. source_tree is the engine subtree, not HEAD -- HEAD moves for unrelated commits."
 }

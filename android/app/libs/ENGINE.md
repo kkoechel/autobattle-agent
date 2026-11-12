@@ -6,8 +6,8 @@ built artefact against the live league before a release.
 
 | | |
 |---|---|
-| engine version | **4.60** |
-| built from | `autobattle.online` commit `6c7a6c2`, `Engine v4.60: "except" restricted energy; narrowest, then ephemeral, spent first` (engine subtree `6dae313`) |
+| engine version | **4.61** |
+| built from | `autobattle.online` commit `05e7256`, `Engine v4.61: a supplement can be paid with restricted energy` (engine subtree `857be5f`) |
 | built on | 2026-11-11 |
 | built by | `shell/engine/build_aar.sh`, extracted with `git archive` so the main repo is never touched |
 
@@ -123,3 +123,49 @@ same payload.
 Still unproven here, and only a phone can prove it: that the arm64 `.so` inside
 the bundle is the one just built (checked by byte-comparison against the AAR,
 below), and that the app runs a rehearsal end to end on the device.
+
+## 2026-11-11, later the same evening: v4.61, versionCode 44
+
+Built from `05e7256` (engine subtree `857be5f`). versionCode **44**,
+versionName **1.33**. `PARITY OK` against a league already on v4.61 — the
+droplet's validator was replaced at 00:56 UTC, about three hours after the
+4.60 AAR was built. **versionCode 43 was therefore stale before it was
+uploaded, exactly as 42 was.** Three bundles now sit in `~/Downloads` and only
+`cardbattle-agent-1.33-44.aab` is uploadable.
+
+v4.61 came from this side of the handoff: `Plan.kt` quoted the old supplement
+reserve formula, checking the quotation against `can_pay_supplement` showed the
+engine counted only ordinary energy where `can_afford` counts restricted energy
+too, and the main session fixed it the same evening. The comment in `Plan.kt` is
+still a quotation and not a second implementation — it is worth keeping true
+for exactly this reason.
+
+### What the parity fixtures can witness
+
+`androidTest/assets/` now holds `payload_v460.json` and `payload_v461.json`
+beside the 2026-09-24 `payload.json`, and `EngineParityTest` asserts a
+CLI-derived digest for each. Measured across 4.59, 4.60 and 4.61:
+
+| fixture | 4.59 | 4.60 | 4.61 |
+|---|---|---|---|
+| `payload.json` (1491) | `1b5e48ac…` | `1b5e48ac…` | `1b5e48ac…` |
+| `payload_v460.json` (120) | `02cfcfb1…` | `b303ea88…` | `b303ea88…` |
+| `payload_v461.json` (80) | `7a547e44…` | `7a547e44…` | `7a547e44…` |
+
+Only the middle row separates anything, and only 4.59 from 4.60. **No digest
+here can catch a 4.60 AAR**, because v4.61 changes which pool pays a supplement
+and only changes *whether* it is paid when ordinary energy is short — in that
+fixture ordinary energy accrues +1 a turn across 138 turns, so the payment
+happens under both engines and only the per-play log differs. `check_v461.js`
+reads that log and fails 2 of its 6 checks on a 4.60 engine; a result digest
+cannot. Verified three independent ways: `cmd/mobilecheck` built from all three
+trees, `cmd/parity` arrays compared with `cmp`, and the committed v4.60
+validator binary (`git show 6c7a6c2:shell/validate_linux_amd64`) against the
+v4.61 one. `run_sweep.py` reports Go, Python and JS agreeing 80/80 at 4.61, so
+this is a fixture limitation and not a parity break.
+
+The assertion that actually catches a stale AAR is therefore
+`Mobile.version()`. It read **"3.94"** until today — seven weeks and nine
+releases out of date, so the test had been failing for anyone who ran it and
+witnessing nothing for anyone who did not. Both it and the digests must be
+re-derived whenever the engine moves.
