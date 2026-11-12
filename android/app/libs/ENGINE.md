@@ -42,7 +42,7 @@ days.** 4.54 built 10-31, stale 11-01. 4.55 built 11-02, stale 11-03 at
 quantified: **the expected shelf life of a build here is about one day.**
 Treat `check_engine_parity.sh` as a pre-upload step, not a post-build one.
 
-## 2026-11-06: the gap reached players, and it carried a crash
+## 2026-11-06: the gap reached testers — CORRECTED 2026-11-11, see below
 
 The paragraph above used to end "not one of the three was ever uploaded, so
 the gap has never actually reached a player". That is no longer true. The
@@ -169,3 +169,28 @@ The assertion that actually catches a stale AAR is therefore
 releases out of date, so the test had been failing for anyone who ran it and
 witnessing nothing for anyone who did not. Both it and the digests must be
 re-derived whenever the engine moves.
+
+## 2026-11-11, from the Play Console: most of the section above is wrong
+
+Ryan checked. One release exists: **41 (1.30), available to internal testers,
+released Oct 31 3:27 PM, not reviewed**, and the release history is empty.
+
+| the record said | the console says |
+|---|---|
+| uploaded 11-03 | released 10-31 |
+| carries engine 4.56 | `engine.aar.json` was at **4.54** that day (`5ad94f8`, 15:24 — three minutes before the release) |
+| "players" | internal testers; **no production release has ever existed** |
+
+The consequence worth stating loudly: **no uploaded build has ever carried the
+discard panic.** It was first reachable in 4.56 (`engine.go:1108`), and every
+4.56 bundle stayed on this laptop. "Players on 41 can crash" was true of the
+binary that note was written about and false of the binary that was actually
+distributed — a conclusion drawn from the local build log rather than from the
+console, which is the one source that knows.
+
+What remains true, and is the reason to keep bumping: internal testers on 41
+run **4.54** against a league scoring **4.61**, seven versions apart. And 41 was
+consumed on 10-31, so the 11-02 and 11-03 rebuilds that reused that code were
+never uploadable at all — Play rejects a duplicate version code. Four dead
+bundles sit in `~/Downloads` (1.30-40, 1.30-41, 1.31-42, 1.32-43); only
+`cardbattle-agent-1.33-44.aab` can be uploaded.

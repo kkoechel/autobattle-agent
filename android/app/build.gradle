@@ -33,13 +33,26 @@ android {
         // 42 on 2026-11-06, onto engine v4.59 (a99ddd3). versionCode 41
         // SHIPPED: the 11-03 bundle went to Play carrying engine v4.56.
         //
-        // UNVERIFIED as of 2026-11-11, and flagged rather than repeated as
-        // fact. The S22 cannot confirm it: the app installed there under the
-        // production id is a DEBUG-signed sideload at versionCode 40 with
-        // installerPackageName=null, so it is not a Play delivery and says
-        // nothing about what Play holds. Only the Play Console can settle it;
-        // Ryan is checking. Nothing below depends on the answer -- "assume a
-        // built code is spent" is the conservative reading either way. The
+        // VERIFIED 2026-11-11 from the Play Console, and the record above is
+        // wrong in three ways. The console shows ONE release: "41 (1.30),
+        // available to internal testers, released on Oct 31 3:27 PM, not
+        // reviewed", with an EMPTY release history.
+        //
+        //   - Not 11-03 but 10-31, and engine.aar.json was committed at 4.54
+        //     that day at 15:24 (5ad94f8), three minutes before the release
+        //     timestamp. So 41 carries engine 4.54, not 4.56.
+        //   - Not production but INTERNAL TESTING. No production release has
+        //     ever existed.
+        //   - Therefore NO UPLOADED BUILD HAS EVER CARRIED THE DISCARD PANIC.
+        //     It was first reachable in 4.56 (engine.go:1108), and 4.56 lives
+        //     only in bundles that stayed on this laptop. The note below
+        //     saying "players on 41 can crash" was reasoning from the wrong
+        //     engine version; it is kept so the error is visible, not hidden.
+        //
+        // What IS true: internal testers on 41 run 4.54 against a league
+        // scoring 4.61, seven versions apart. And 41 was consumed on 10-31, so
+        // the 11-02 and 11-03 rebuilds that reused it were never uploadable --
+        // Play rejects a duplicate code. The rule stands unchanged. The
         // three notes that used to sit here argued the opposite -- that 41
         // could be reused because it "never left the laptop" -- and that was
         // true when written and false by the time it mattered. A comment
