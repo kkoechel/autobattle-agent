@@ -31,7 +31,15 @@ android {
         // by mistake six weeks later. Play also rejects a duplicate code.
         //
         // 42 on 2026-11-06, onto engine v4.59 (a99ddd3). versionCode 41
-        // SHIPPED: the 11-03 bundle went to Play carrying engine v4.56. The
+        // SHIPPED: the 11-03 bundle went to Play carrying engine v4.56.
+        //
+        // UNVERIFIED as of 2026-11-11, and flagged rather than repeated as
+        // fact. The S22 cannot confirm it: the app installed there under the
+        // production id is a DEBUG-signed sideload at versionCode 40 with
+        // installerPackageName=null, so it is not a Play delivery and says
+        // nothing about what Play holds. Only the Play Console can settle it;
+        // Ryan is checking. Nothing below depends on the answer -- "assume a
+        // built code is spent" is the conservative reading either way. The
         // three notes that used to sit here argued the opposite -- that 41
         // could be reused because it "never left the laptop" -- and that was
         // true when written and false by the time it mattered. A comment
