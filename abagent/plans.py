@@ -36,6 +36,22 @@ SCALAR_FIELDS: list[tuple[str, list]] = [
     # SCALAR_FIELDS did not.
     ("gravecast_policy", ["interleaved", "hand_first", "discard_first", "never"]),
     ("discard_gravecast_first", [True, False]),
+    # v4.69, added 2026-11-16 with Ryan's go-ahead. Two optional booleans the
+    # engine defaults to off.
+    #
+    # hold_removal_without_target: skip a card whose on_enter removal would
+    # find nothing to destroy, and discard non-removal cards first at the hand
+    # limit. Deck-gated below, like the gravecast pair -- a deck with no
+    # on_enter removal cannot answer the question.
+    #
+    # They are listed at all because of what the gravecast comment above
+    # records: the engine's surface grew and SCALAR_FIELDS did not, so the
+    # search did not know the field existed while four of the field's decks,
+    # including rank 1, were setting it. The cost is real -- two more fields
+    # lengthen a sweep that is already the binding constraint on cycle time --
+    # which is why they sit after everything with a measured effect.
+    ("hold_removal_without_target", [True, False]),
+    ("prefer_new_names", [True, False]),
     # Dead for these agents today -- every deck is built with champion_id
     # NULL -- but listed so the sweep covers them the moment one has a
     # champion, rather than silently never testing them again.
@@ -78,6 +94,51 @@ def _deck_has_gravecast(cards, catalog) -> bool:
     return False
 
 
+# v4.69's hold_removal_without_target only does anything when the deck holds a
+# card whose on_enter trigger can destroy an enemy permanent. This walks the
+# whole trigger, nested wrappers included, where the engine only counts
+# TOP-LEVEL on_enter effects -- deliberately over-inclusive, because the cost
+# of over-including is testing a field that turns out to be dead, while the
+# cost of under-including is never testing a live one.
+_ON_ENTER_REMOVAL = frozenset({
+    "destroy_target", "kill_target", "destroy_random_tagged",
+    "destroy_tagged", "destroy_all", "destroy_permanents_by_cost",
+})
+
+
+def _deck_has_on_enter_removal(cards, catalog) -> bool:
+    import json as _json
+
+    def types_in(node, acc):
+        if isinstance(node, dict):
+            t = node.get("type")
+            if isinstance(t, str):
+                acc.add(t)
+            for v in node.values():
+                types_in(v, acc)
+        elif isinstance(node, list):
+            for v in node:
+                types_in(v, acc)
+
+    for cid in set(cards or []):
+        ej = (catalog or {}).get(cid, {}).get("effects_json")
+        if isinstance(ej, str):
+            try:
+                ej = _json.loads(ej)
+            except ValueError:
+                continue
+        if not isinstance(ej, dict):
+            continue
+        for tr in ej.get("triggers") or []:
+            if tr.get("event") != "on_enter":
+                continue
+            found: set = set()
+            types_in(tr.get("effect"), found)
+            if found & _ON_ENTER_REMOVAL:
+                return True
+    return False
+
+
 def is_live_field(plan: dict, field: str, cards=None, catalog=None) -> bool:
     """False when a field cannot affect play given the rest of the plan --
     e.g. energy_hold_scope with energy_hold 0, or card_order without
@@ -91,6 +152,9 @@ def is_live_field(plan: dict, field: str, cards=None, catalog=None) -> bool:
         return False
     if field in ("gravecast_policy", "discard_gravecast_first"):
         if cards is not None and not _deck_has_gravecast(cards, catalog):
+            return False
+    if field == "hold_removal_without_target":
+        if cards is not None and not _deck_has_on_enter_removal(cards, catalog):
             return False
     if field in ("champion_timing", "champion_energy_threshold"):
         return False          # every deck these agents build has no champion
@@ -190,7 +254,8 @@ def describe(plan: dict) -> str:
     parts = []
     for k in ("play_priority", "energy_hold", "energy_hold_scope",
               "target_preference", "self_target_preference", "cost_preference",
-              "discard_priority", "card_order_hold"):
+              "discard_priority", "card_order_hold",
+              "hold_removal_without_target", "prefer_new_names"):
         if k in plan and is_live_field(plan, k):
             parts.append(f"{k}={plan[k]}")
     if plan.get("card_order") and is_live_field(plan, "card_order"):
@@ -241,6 +306,11 @@ PORTABLE_FIELDS = (
     "play_priority", "energy_hold", "energy_hold_scope", "target_preference",
     "self_target_preference", "cost_preference", "discard_priority",
     "card_order_hold",
+    # Carries: it is about duplicate NAMES in hand, which any deck can have.
+    # hold_removal_without_target deliberately does NOT carry, for the same
+    # reason the gravecast pair does not -- it is a fact about the deck's
+    # cards, and a rotated deck may hold no removal at all.
+    "prefer_new_names",
 )
 
 
