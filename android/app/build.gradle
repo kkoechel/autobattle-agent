@@ -100,10 +100,25 @@ android {
         // and only 1.33-44 is uploadable. The daily-shelf-life note above is
         // not pessimism.
         //
+        // 45 on 2026-11-16, onto engine v4.69 (7ceb6e6). Seven engine
+        // releases landed between 11-13 and 11-16 -- 4.62 Flying/Piercing,
+        // 4.63 renaming Piercing to Shieldbreaker, 4.64 Patient, 4.65 the
+        // per-card self-sacrifice cap, 4.66 Reach, 4.67 tagged anthems
+        // narrowing by supertype, 4.68 granted keywords matching keyword tags,
+        // 4.69 two optional plan flags -- and the handoff filed each as its own
+        // build ask, each superseding the last. Only the last one is built:
+        // 4.63 renames a keyword 4.62 introduced, so a 4.62 AAR would read
+        // card 1431 as a plain creature, and every version in between was
+        // obsolete before a bundle could be made.
+        //
+        // That is the pattern now, not an accident: 42, 43 and 44 all went
+        // stale before upload, and only 1.34-45 is uploadable today. The rule
+        // stays "assume a built code is spent".
+        //
         // Check tools/check_engine_parity.sh immediately before uploading, not
         // when starting the build, because the answer changes daily.
-        versionCode 44
-        versionName "1.33"
+        versionCode 45
+        versionName "1.34"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         // Side-by-side test install: ./gradlew assembleRelease -PdevId

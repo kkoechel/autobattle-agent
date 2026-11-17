@@ -29,33 +29,34 @@ import org.junit.runner.RunWith
  * `mobile.Run` this test calls — emit the same digest over them. Re-derive from
  * the CLI when the engine moves; never from whatever the app now returns.
  *
- * ## What each fixture can and cannot witness
+ * ## What each fixture actually witnesses
  *
- * Measured on 2026-11-11 across engines 4.59, 4.60 and 4.61:
+ * Measured 2026-11-16 by running every fixture through engine 4.69 and engine
+ * 4.61 — the version this AAR replaced — and comparing digests:
  *
- *  - `payload.json` (2026-09-24, 1491 matches) is **identical under all
- *    three**. It proves no collateral drift across a wide spread of real
- *    cards, and nothing at all about any change since September. On its own it
- *    would accept a 4.59 AAR as a 4.61 one — which is how a September engine
- *    once ran against a v4.42 league for three weeks.
- *  - `payload_v460.json` (120 matches) **separates 4.59 from 4.60**: the
- *    "except" restricted-energy spend order changes its results.
- *  - `payload_v461.json` (80 matches) is **identical under all three**, and is
- *    kept anyway. v4.61 changes which pool pays a supplement, and only changes
- *    *whether* it is paid when ordinary energy is short; here ordinary energy
- *    accrues +1 a turn over 138 turns, so the payment happens either way and
- *    only the per-play log differs. `check_v461.js` reads that log and fails 2
- *    of 6 checks on a 4.60 engine; a result digest cannot see it. The fixture
- *    guards against a future regression that *does* reach the results.
+ *  - **Catch a 4.61 AAR:** `payload_v462` (Flying/Shieldbreaker combat),
+ *    `payload_v464` (Patient), `payload_v465` (per-card self-sacrifice cap),
+ *    `payload_v466` (Reach), `payload_v467` (tagged anthems narrow by
+ *    supertype), `payload_v468` (granted keywords match keyword tags).
+ *  - **Blind to it:** `payload.json` (2026-09-24, unchanged since 4.59),
+ *    `payload_v460`, `payload_v461`, and `payload_v469`.
  *
- * So no digest here can catch a 4.60 AAR. [engineVersion] is what catches a
- * stale AAR outright, and it must be bumped with `engine.aar.json`.
+ * The blind ones are kept deliberately, and the reason differs. `payload.json`
+ * is the only broad one: 1491 matches over real cards, so it is the collateral
+ * check. `v460`, `v461` and `v469` each target a change that moves the per-play
+ * LOG without moving the match RESULT — v4.61 changes which pool pays a
+ * supplement, v4.69's two plan flags change play order — and a result digest
+ * cannot see that. `check_v461.js` and `check_v469.js` can, and do.
+ *
+ * That asymmetry is the thing to remember: a fixture built for a change is not
+ * automatically a fixture that can witness it. Six of these ten can; four
+ * cannot, and the version assertion below is what covers the gap.
  */
 @RunWith(AndroidJUnit4::class)
 class EngineParityTest {
 
     /** Keep in step with android/app/libs/engine.aar.json and ENGINE.md. */
-    private val engineVersion = "4.61"
+    private val engineVersion = "4.69"
 
     private data class Fixture(val asset: String, val matches: Int, val digest: String)
 
@@ -66,6 +67,20 @@ class EngineParityTest {
             "b303ea8872bf6807ff218f1a7b20c54b574f0d66505632a3da7b4128ae0a9055"),
         Fixture("payload_v461.json", 80,
             "7a547e445bd7cc55bb7c9cbd65f0873c254131bcf1e7e2bcf8ce605e2affa950"),
+        Fixture("payload_v462.json", 240,
+            "2b0a61d7d626ef5ce39776fb93e6117fa55a875eeeaa3154f5a6facfdbaddb39"),
+        Fixture("payload_v464.json", 60,
+            "302f4d7a119f4c4832d4dffafcf15f884264f351b8421ca84e52869ba3809258"),
+        Fixture("payload_v465.json", 40,
+            "6f507a4ae65326ce2cc3e79f20ff0dff7ee59f40620eb9194543657efe2c79b8"),
+        Fixture("payload_v466.json", 120,
+            "2df8068f9d66315f7a01da9da8c3f886f3e8aee435358fd80051148ec1b3e7f1"),
+        Fixture("payload_v467.json", 30,
+            "f33f45bee51eae97dc6fb10245a13be29679d643c2fdd143def190918d74e307"),
+        Fixture("payload_v468.json", 30,
+            "509e52f703d5a0b3965bc6df899bae3b99afa5cda6fb6c938a54dee7fc5a18a7"),
+        Fixture("payload_v469.json", 30,
+            "4cd174174e7406da82f8a90ae1aa768abcf2f25ea2659530edf05d757e75fa6a"),
     )
 
     private fun read(asset: String): String =
@@ -112,10 +127,11 @@ class EngineParityTest {
 
     @Test
     fun engineVersionIsReported() {
-        // The only assertion here that catches a stale AAR on its own. It read
-        // "3.94" until 2026-11-11 -- seven weeks and nine engine releases out
-        // of date, so this test had been failing for whoever ran it and
-        // witnessing nothing for whoever did not.
+        // It read "3.94" until 2026-11-11 -- seven weeks and nine engine
+        // releases out of date, so this test had been failing for whoever ran
+        // it and witnessing nothing for whoever did not. It is also the only
+        // assertion here that catches a stale AAR on its own, which matters:
+        // four of the ten fixtures above cannot tell 4.61 from 4.69.
         assertEquals(engineVersion, Mobile.version())
     }
 }

@@ -6,9 +6,9 @@ built artefact against the live league before a release.
 
 | | |
 |---|---|
-| engine version | **4.61** |
-| built from | `autobattle.online` commit `05e7256`, `Engine v4.61: a supplement can be paid with restricted energy` (engine subtree `857be5f`) |
-| built on | 2026-11-11 |
+| engine version | **4.69** |
+| built from | `autobattle.online` commit `7ceb6e6`, `Engine v4.69: hold_removal_without_target + prefer_new_names` (engine subtree `d34bf0d`) |
+| built on | 2026-11-16 |
 | built by | `shell/engine/build_aar.sh`, extracted with `git archive` so the main repo is never touched |
 
 ## Build it from the engine source at the version the league scores with
@@ -194,3 +194,46 @@ consumed on 10-31, so the 11-02 and 11-03 rebuilds that reused that code were
 never uploadable at all — Play rejects a duplicate version code. Four dead
 bundles sit in `~/Downloads` (1.30-40, 1.30-41, 1.31-42, 1.32-43); only
 `cardbattle-agent-1.33-44.aab` can be uploaded.
+
+## 2026-11-16: seven releases in four days, one build
+
+4.62 → 4.69 landed between 11-13 and 11-16 and the handoff filed each as its
+own build ask, each superseding the last. Built from `7ceb6e6` (subtree
+`d34bf0d`) only, versionCode **45** / **1.34**, `PARITY OK` against a league
+whose validator was replaced at 23:00 UTC the same evening.
+
+Building any intermediate version would have been wrong, not merely wasteful:
+**4.63 renames the keyword 4.62 introduced** (`piercing` → `shieldbreaker`,
+because "Piercing" already meant Piercing damage), so a 4.62 AAR reads card
+1431 Glass Air Nautoid as a plain creature. Versions 4.62 through 4.68 were
+each obsolete before a bundle could be made.
+
+### Six of ten fixtures can now witness a stale engine
+
+`androidTest/assets/` holds ten payloads. Measured by running each through
+engine 4.69 and engine 4.61 — the version this AAR replaced:
+
+| fixture | matches | catches a 4.61 AAR? |
+|---|---|---|
+| `payload.json` (2026-09-24) | 1491 | no — unchanged since 4.59 |
+| `payload_v460.json` | 120 | no |
+| `payload_v461.json` | 80 | no |
+| `payload_v462.json` Flying/Shieldbreaker | 240 | **yes** |
+| `payload_v464.json` Patient | 60 | **yes** |
+| `payload_v465.json` self-sac cap | 40 | **yes** |
+| `payload_v466.json` Reach | 120 | **yes** |
+| `payload_v467.json` anthem supertype | 30 | **yes** |
+| `payload_v468.json` granted keywords | 30 | **yes** |
+| `payload_v469.json` plan flags | 30 | no |
+
+That is a real improvement on 11-11, when exactly one fixture separated
+anything. The four that cannot are kept on purpose and for two different
+reasons: `payload.json` is the only broad one (1491 matches over real cards,
+the collateral check), while `v460`, `v461` and `v469` each target a change
+that moves the per-play LOG without moving the match RESULT — which pool pays a
+supplement, what order cards are played in — and a result digest cannot see
+that. Their `check_v*.js` scripts can, and all nine pass against the live JS
+engine.
+
+Every fixture was confirmed `CLI == cmd/parity == mobile.Run` byte for byte
+before its digest was recorded.
