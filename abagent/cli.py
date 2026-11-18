@@ -3336,7 +3336,14 @@ def main(argv=None) -> int:
     bs.add_argument("--apply", action="store_true", default=False)
     bs.add_argument("--field-file", default=None, metavar="PATH",
                     help="screen against this meta-shaped field instead of "
-                         "the arena's -- for a league, its own entrants")
+                         "the arena's -- for a league, its own entrants. "
+                         "REBUILD IT BETWEEN SEQUENTIAL RUNS: two accounts "
+                         "searching the same seeds against the same static "
+                         "field pick the same winner, and the novelty gate "
+                         "cannot stop them because neither deck is in the "
+                         "file yet (measured 2026-11-18: flint and quill both "
+                         "installed 'The Scorching Revival'). --seed-mod is "
+                         "the other way to keep them apart.")
     bs.add_argument("--league", default=None, metavar="SLUG",
                     help="build for a LEAGUE's pool (its rarities and "
                          "expansions) and install into that league's own "
