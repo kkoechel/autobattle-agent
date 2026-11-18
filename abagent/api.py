@@ -170,6 +170,34 @@ class Api:
     def delete_deck(self, deck_id: int) -> dict:
         return self._call("DELETE", f"/decks/{deck_id}")
 
+    # --- leagues -------------------------------------------------------
+    # THESE TWO ROUTES DO NOT EXIST YET. api/v1/index.php mentions "league"
+    # zero times (against 372 for "cohort" in the same file), so league entry
+    # is web-only today; both were requested from the main session on
+    # 2026-11-17 (agent-handoff/from-agent.md) in exactly this shape. They are
+    # written now so the decision logic above them can be built and tested
+    # against something, and kept here -- rather than inline -- so that a
+    # different final shape is a two-method edit and not a hunt.
+    #
+    # Expect 404 until the route lands; league.fetch() treats that as "no
+    # leagues" rather than an error, so nothing downstream has to know.
+
+    def leagues(self) -> list[dict]:
+        """Open and running leagues, with our own entry if we have one."""
+        out = self._call("GET", "/leagues")
+        return out.get("leagues", []) if isinstance(out, dict) else (out or [])
+
+    def set_league_deck(self, slug: str, deck_id: int) -> dict:
+        """Enter, or spend today's one deck change.
+
+        The server owns the once-a-day rule (league_deck_change_block_reason)
+        and answers a refusal as a player-facing reason string, so the agent
+        keeps NO local state about what it has already changed today -- see
+        league.decide().
+        """
+        return self._call("PUT", f"/leagues/{slug}/deck",
+                          body={"deck_id": deck_id})
+
     def register(self, deck_id: int, arena: str | None = None) -> dict:
         """Register a deck, optionally naming the arena.
 

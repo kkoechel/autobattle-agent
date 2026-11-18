@@ -12,7 +12,7 @@ import time
 import urllib.request
 
 from .api import Api, ApiError
-from . import history, second
+from . import history, league, second
 from .harness import Harness, Opponent, opponents_from_meta
 from .plans import card_order_from_deck, describe
 from .search import climb, counter_round, deepen, optimise
@@ -872,6 +872,53 @@ def register_when_targetable(api: Api, arena: str, deck_id: int,
             print(f"register: waiting for {arena}; {nxt['arena_slug']} closes "
                   f"first in {nxt['seconds_remaining']}s", flush=True)
         time.sleep(poll)
+
+
+def cmd_league(args, api: Api) -> int:
+    """Report -- or with --apply, act on -- every league we could be in.
+
+    Read-only by default, because the two routes it needs do not exist yet
+    (see api.leagues()). Against a deployed route this prints one line per
+    league saying what it would do and why; --apply carries it out.
+
+    The working deck is the SOURCE, never the entry: league.execute() writes
+    the league's own scratch deck and then spends the day's one change to
+    point the entry at it. See the module docstring in league.py for why one
+    deck would quietly cheat.
+    """
+    leagues = league.fetch(api)
+    if not leagues:
+        return 0
+    cat_list = api.cards()
+    catalog = {int(c["id"]): c for c in cat_list}
+    src = api.deck(args.deck_id)
+    cards = expand(src)
+    plan = src.get("battle_plan") or {}
+    decks = api.decks()
+    live = {lg.slug for lg in leagues}
+    moved = 0
+    for lg in leagues:
+        pair = None
+        names = league.deck_names_for(lg)
+        have = {str(d.get("name") or ""): int(d["id"]) for d in decks}
+        if all(n in have for n in names):
+            pair = (have[names[0]], have[names[1]])
+        elif args.apply:
+            pair = league.ensure_pair(api, lg, decks, live)
+            if pair:
+                decks = api.decks()
+        d = league.decide(lg, cards, catalog,
+                          pair[0] if pair else None,
+                          entered_cards=None)
+        print(f"{lg.slug}: day {lg.day}/{lg.days_total} "
+              f"{'[' + ','.join(sorted(lg.expansions)) + '] ' if lg.expansions else ''}"
+              f"-> {d.act.upper()}: {d.reason}"
+              + (f" (cards {d.illegal[:5]})" if d.illegal else ""))
+        if args.apply and d.act != "hold" and pair:
+            moved += 1 if league.execute(api, lg, d, pair, cards, plan) else 0
+    if not args.apply:
+        print("league: read-only (pass --apply to act)")
+    return 0 if (moved or not args.apply) else 0
 
 
 def cmd_clone(args, api: Api) -> int:
@@ -3205,6 +3252,11 @@ def main(argv=None) -> int:
     a.add_argument("--seeds", type=int, default=61)
     a.add_argument("--apply", action="store_true")
     a.set_defaults(fn=cmd_adopt)
+
+    lgp = sub.add_parser("league")
+    lgp.add_argument("--apply", action="store_true",
+                     help="actually enter / spend the day's one deck change")
+    lgp.set_defaults(fn=cmd_league)
 
     n = sub.add_parser("clone")
     n.add_argument("--source", type=int, required=True)
