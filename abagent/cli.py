@@ -12,7 +12,7 @@ import time
 import urllib.request
 
 from .api import Api, ApiError
-from . import history, league, second
+from . import arenas, history, league, second
 from .harness import Harness, Opponent, opponents_from_meta
 from .plans import card_order_from_deck, describe
 from .search import climb, counter_round, deepen, optimise
@@ -886,14 +886,28 @@ def cmd_league(args, api: Api) -> int:
     point the entry at it. See the module docstring in league.py for why one
     deck would quietly cheat.
     """
-    leagues = league.fetch(api)
+    src = api.deck(args.deck_id)
+    catalog = {int(c["id"]): c for c in api.cards()}
+    return 0 if _league_pass(api, catalog, expand(src),
+                             src.get("battle_plan") or {},
+                             apply=args.apply) is not None else 1
+
+
+def _league_pass(api: Api, catalog: dict[int, dict], cards: list[int],
+                 plan: dict, apply: bool, log=print) -> int | None:
+    """Decide and (with apply) act on every league. Shared by `league` and
+    `cycle`, so the unattended path and the one a human runs cannot drift."""
+    leagues = league.fetch(api, log=log)
     if not leagues:
         return 0
-    cat_list = api.cards()
-    catalog = {int(c["id"]): c for c in cat_list}
-    src = api.deck(args.deck_id)
-    cards = expand(src)
-    plan = src.get("battle_plan") or {}
+    # The declare-and-check half of arenas.EXPANSIONS: a playable card filed
+    # under no known expansion means a new expansion exists and every
+    # restricted pool we build is missing it.
+    unfiled = arenas.unfiled_playable(catalog)
+    if unfiled:
+        log(f"league: WARNING {len(unfiled)} playable card(s) carry no known "
+            f"expansion tag (e.g. {unfiled[:5]}) — arenas.EXPANSIONS is "
+            f"probably missing an expansion, so restricted pools are short")
     decks = api.decks()
     live = {lg.slug for lg in leagues}
     moved = 0
@@ -901,21 +915,37 @@ def cmd_league(args, api: Api) -> int:
         want = league.deck_name_for(lg)
         have = {str(d.get("name") or ""): int(d["id"]) for d in decks}
         deck_id = have.get(want)
-        if deck_id is None and args.apply:
+        # The league deck's OWN contents, which is the comparison gate 9
+        # trusts instead of the server's deck_edited_since_entry.
+        cur = None
+        if deck_id:
+            try:
+                row = api.deck(deck_id)
+                cur = (expand(row), row.get("battle_plan") or {})
+            except ApiError as e:
+                log(f"league: could not read deck {deck_id} ({e})")
+        d = league.decide(lg, cards, catalog, deck_id,
+                          league_deck=cur, working_plan=plan)
+        # Only provision a deck for a league we can actually enter. Deciding
+        # first costs nothing and saves a slot per league we hold on -- 2 of
+        # 17 went this way on the first live run.
+        if apply and d.need == "deck":
             deck_id = league.ensure_deck(api, lg, decks, live)
             if deck_id:
                 decks = api.decks()
-        d = league.decide(lg, cards, catalog, deck_id)
-        print(f"{lg.slug}: day {lg.day}/{lg.days_total}"
+                d = league.decide(lg, cards, catalog, deck_id,
+                                  working_plan=plan)
+        log(f"{lg.slug}: day {lg.day}/{lg.days_total}"
               f"{' [' + ','.join(sorted(lg.expansions)) + ']' if lg.expansions else ''}"
               f"{' rarities=' + ','.join(sorted(lg.rarities)) if lg.rarities else ''}"
               f" -> {d.act.upper()}: {d.reason}"
               + (f" (cards {d.illegal[:5]})" if d.illegal else ""))
-        if args.apply and d.act != "hold" and deck_id:
-            moved += 1 if league.execute(api, lg, d, deck_id, cards, plan) else 0
-    if not args.apply:
-        print("league: read-only (pass --apply to act)")
-    return 0 if (moved or not args.apply) else 0
+        if apply and d.act != "hold" and deck_id:
+            moved += 1 if league.execute(api, lg, d, deck_id, cards, plan,
+                                         log=log) else 0
+    if not apply:
+        log("league: read-only (pass --apply to act)")
+    return moved
 
 
 def cmd_clone(args, api: Api) -> int:
@@ -1035,6 +1065,21 @@ def cmd_cycle(args, api: Api) -> int:
     # a window and the log looks entirely normal.
     catalog = {int(c["id"]): c for c in _load("cards.json")}
     meta_decks = _load(f"meta_{args.arena}.json")["decks"]
+
+    # LEAGUES FIRST, and outside the search budget. It is a handful of API
+    # calls and no simulation, so it costs nothing worth measuring -- and it
+    # must not be starved by a search that overshoots its deadline, which is
+    # the normal case and the whole reason --first exists. The list it submits
+    # is the deck as earlier cycles left it, which is the best MEASURED list
+    # there is; today's search has not run yet and may confirm nothing.
+    #
+    # Wrapped, because a league is a side quest: a 500 from that route must
+    # not cost the cycle its search.
+    if not args.no_leagues:
+        try:
+            _league_pass(api, catalog, mine, start, apply=True)
+        except Exception as e:
+            print(f"league: step failed, continuing with the cycle ({e})")
 
     # Registration is now standing (POST /cohort/register with an arena writes
     # user_arena_decks), so missing a close no longer costs an entry -- the
@@ -3263,6 +3308,8 @@ def main(argv=None) -> int:
     y = sub.add_parser("cycle")
     y.add_argument("--budget", type=int, default=420,
                    help="seconds of search before it must stop (default 420)")
+    y.add_argument("--no-leagues", action="store_true",
+                   help="skip the league entry/promotion step")
     y.add_argument("--first", choices=["order", "swap", "alternate"],
                    default="alternate",
                    help="which optimise() pass gets the round: play ORDER, "

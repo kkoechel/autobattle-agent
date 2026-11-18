@@ -49,8 +49,12 @@ check("unmapped -> hold", d.act == "hold" and "Outworld" in d.reason, d)
 print("3. getting in")
 d = decide(lg(entered_deck_id=None, last_change_day=None, day=0), WORK, CAT, DECK)
 check("not entered -> enter", d.act == "enter" and d.deck_id == DECK, d)
-check("no deck yet -> hold",
-      decide(lg(entered_deck_id=None, day=0), WORK, CAT, None).act == "hold")
+d = decide(lg(entered_deck_id=None, day=0), WORK, CAT, None)
+check("no deck yet -> hold, flagged as needing one",
+      d.act == "hold" and d.need == "deck", d)
+check("an ILLEGAL deck does NOT ask for a league deck",
+      decide(lg(entered_deck_id=None, day=0), [STARTER, STARTER], CAT, None).need is None,
+      decide(lg(entered_deck_id=None, day=0), [STARTER, STARTER], CAT, None))
 check("closed and not in it -> hold",
       decide(lg(entered_deck_id=None, entries_closed=True), WORK, CAT, DECK).act == "hold")
 d = decide(lg(entered_deck_id=None, day=0, can_change_now=False,
@@ -89,13 +93,33 @@ d = decide(lg(day=4, entered_deck_legal=False, can_change_now=False,
               change_block_reason="already changed today"), WORK, CAT, DECK)
 check("but not when the change is spent", d.act == "hold", d)
 
-print("7. do not spend a call on nothing")
+print("7. do not spend the day's one change on nothing")
+PLAN = {"card_order": [KHAOS]}
 d = decide(lg(deck_edited_since_entry=False), WORK, CAT, DECK)
-check("no drift -> hold", d.act == "hold" and "already this list" in d.reason, d)
+check("no league deck given, server says no drift -> hold",
+      d.act == "hold" and "already this list" in d.reason, d)
 d = decide(lg(deck_edited_since_entry=False, entered_deck_id=999), WORK, CAT, DECK)
 check("entry on the WRONG deck -> submit ours", d.act == "submit" and d.deck_id == DECK, d)
 d = decide(lg(deck_edited_since_entry=True), WORK, CAT, DECK)
-check("drift -> submit", d.act == "submit", d)
+check("no league deck given, server says drift -> submit", d.act == "submit", d)
+
+# The measured false positive: the server says edited the instant after a
+# successful submit whenever the deck carries a battle plan.
+d = decide(lg(deck_edited_since_entry=True), WORK, CAT, DECK,
+           league_deck=(list(WORK), dict(PLAN)), working_plan=dict(PLAN))
+check("identical league deck -> HOLD even though the server says edited",
+      d.act == "hold" and "server says edited" in d.reason, d)
+d = decide(lg(deck_edited_since_entry=False), WORK, CAT, DECK,
+           league_deck=([KHAOS], dict(PLAN)), working_plan=dict(PLAN))
+check("different CARDS -> submit, naming cards",
+      d.act == "submit" and "cards" in d.reason, d)
+d = decide(lg(deck_edited_since_entry=False), WORK, CAT, DECK,
+           league_deck=(list(WORK), {"card_order": [BASIC]}), working_plan=dict(PLAN))
+check("same cards, different PLAN -> submit, naming the plan",
+      d.act == "submit" and "battle plan" in d.reason, d)
+d = decide(lg(), WORK, CAT, DECK,
+           league_deck=(list(reversed(WORK)), dict(PLAN)), working_plan=dict(PLAN))
+check("the same multiset in another order is not a change", d.act == "hold", d)
 
 print("8. parse() falls to safe values")
 p = parse({"slug": "s", "name": "S", "current_day": 3, "days_total": 5,
@@ -112,9 +136,16 @@ check("expansion NAME mapped to a tag", p.expansions == frozenset({"skeletron-in
 check("nothing left unmapped", p.unmapped_expansions == (), p.unmapped_expansions)
 check("entry read", (p.entered_deck_id, p.change_count, p.deck_edited_since_entry,
                      p.entered_deck_legal) == (7, 4, True, False), p)
-u = parse({"slug": "s", "allowed_expansion_names": ["Outworld"]})
+u = parse({"slug": "s", "allowed_expansion_names": ["Æther Vault"]})
 check("an unknown name is KEPT as unmapped, not dropped",
-      u.unmapped_expansions == ("Outworld",) and u.expansions == frozenset(), u)
+      u.unmapped_expansions == ("\u00c6ther Vault",) and u.expansions == frozenset(), u)
+check("every rotation name maps to a tag arenas.py declares",
+      all(v in __import__("abagent.arenas", fromlist=["x"]).EXPANSIONS
+          for v in EXPANSION_NAME_TO_SLUG.values()),
+      sorted(EXPANSION_NAME_TO_SLUG.values()))
+for nm in ("Starter Set", "Khaos", "Outworld"):
+    check(f"rotation week '{nm}' is mapped",
+          parse({"slug": "s", "allowed_expansion_names": [nm]}).unmapped_expansions == ())
 bare = parse({"slug": "s"})
 check("missing legality is None, not True", bare.entered_deck_legal is None)
 check("missing entry means not entered", not bare.entered)

@@ -53,10 +53,22 @@ from . import arenas
 # payload -- the agent would look entered and play nothing all week. Unmapped
 # means hold, loudly.
 #
+# WHAT STOPS A WRONG MAPPING REACHING A LIVE LEAGUE: the server validates the
+# deck on PUT and answers 409 naming the illegal cards, so the worst case of a
+# bad entry here is a refused submission that gets logged -- not a silent
+# illegal entry that plays nothing for a week. That is why mapping the
+# rotation's remaining names from the main session's own statement of the
+# order (to-agent.md, 2026-11-17: "Skeletron's Invasion -> Starter Set ->
+# Khaos -> Outworld") is acceptable where guessing would not be.
+#
 # TO RETIRE THIS: ask the main session for `allowed_expansion_slugs` in the
 # league view, one line beside allowed_expansion_names.
 EXPANSION_NAME_TO_SLUG: dict[str, str] = {
-    "Skeletron's Invasion": "skeletron-inv",
+    "Skeletron's Invasion": "skeletron-inv",   # confirmed live, league 10
+    "Starter Set": "starter",                  # from the stated rotation order
+    "Khaos": "khaos",
+    "Outworld": "outworld",
+    "Underworld": "underworld",                # not in the rotation; declared
 }
 
 
@@ -93,6 +105,12 @@ class Decision:
     reason: str
     deck_id: int | None = None
     illegal: list[int] = field(default_factory=list)
+    # "deck": held ONLY for want of a league deck, so a caller that can make
+    # one should make it and ask again. Any other hold means making a deck
+    # would be waste -- which it was, the first time this ran live: three
+    # decks created for three leagues and two of them immediately held as
+    # illegal.
+    need: str | None = None
 
 
 def legal_pool(catalog: dict[int, dict], lg: League) -> dict[int, dict]:
@@ -110,7 +128,9 @@ def deck_blockers(cards: list[int], catalog: dict[int, dict],
 
 
 def decide(lg: League, working_cards: list[int], catalog: dict[int, dict],
-           league_deck_id: int | None) -> Decision:
+           league_deck_id: int | None,
+           league_deck: tuple[list[int], dict] | None = None,
+           working_plan: dict | None = None) -> Decision:
     """Enter, submit, or hold -- for ONE league. Pure, so every gate is
     testable without touching the API.
 
@@ -149,7 +169,8 @@ def decide(lg: League, working_cards: list[int], catalog: dict[int, dict],
     #    this is free and unlimited anyway (day 0).
     if not lg.entered:
         if league_deck_id is None:
-            return Decision("hold", "no league deck yet (one must be created)")
+            return Decision("hold", "no league deck yet (one must be created)",
+                            need="deck")
         if not lg.can_change_now:
             return Decision("hold", f"cannot enter: {lg.change_block_reason}")
         return Decision("enter", f"entering {lg.name}", deck_id=league_deck_id)
@@ -172,13 +193,39 @@ def decide(lg: League, working_cards: list[int], catalog: dict[int, dict],
         return Decision("submit", "entered deck is ILLEGAL for this league",
                         deck_id=lg.entered_deck_id)
 
-    # 9. Submit only something new. Since phase 96 what plays is the snapshot,
-    #    so "new" means the live deck has drifted from it -- which is exactly
-    #    what the server reports. An unchanged resubmit is a server-side
-    #    no-op, so this gate only saves a pointless call.
+    # 9. Submit only something new -- and judge that OURSELVES.
+    #
+    #    `deck_edited_since_entry` is the natural signal and it cannot be
+    #    trusted yet. MEASURED 2026-11-18, bisected from outside the DB: it
+    #    reads true the instant after a successful submit whenever the deck
+    #    carries a non-empty battle plan. Submit with battle_plan {} -> false;
+    #    restore the real plan and submit again -> true; nothing else touched,
+    #    consecutive change_counts. league_entry_is_stale() compares the two
+    #    battle_plan_json values as re-encoded STRINGS, and the cards side is
+    #    an array (order-preserving) while a plan is an object, so only the
+    #    plan trips it -- the two columns do not serialise their keys in the
+    #    same order. Reported to the main session; one line fixes it (compare
+    #    the decoded arrays with PHP's ==, which ignores key order).
+    #
+    #    Acting on it meanwhile would spend the day's ONE change every day on
+    #    a list already playing, and then have nothing left when the search
+    #    actually found something. So compare the league deck against the
+    #    working deck, which is a fact we can check, and treat a difference in
+    #    either the cards or the plan as the thing to submit.
     if lg.entered_deck_id != (league_deck_id or lg.entered_deck_id):
         return Decision("submit", "entry points at a different deck",
                         deck_id=league_deck_id)
+    if league_deck is not None:
+        have_cards, have_plan = league_deck
+        if sorted(have_cards) == sorted(working_cards) and \
+                have_plan == (working_plan or {}):
+            return Decision("hold", "the league deck already holds this list"
+                            + (" (server says edited; see decide() gate 9)"
+                               if lg.deck_edited_since_entry else ""))
+        what = ("cards" if sorted(have_cards) != sorted(working_cards)
+                else "battle plan")
+        return Decision("submit", f"the working {what} has moved on",
+                        deck_id=lg.entered_deck_id)
     if not lg.deck_edited_since_entry:
         return Decision("hold", "what plays is already this list")
 
