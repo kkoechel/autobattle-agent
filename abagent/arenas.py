@@ -127,7 +127,21 @@ def legal_catalog(catalog: dict[int, dict], slug: str,
     card map would make their decks silently inert and every measurement a
     fiction.
     """
-    allow = allowed_rarities(slug)
+    return legal_catalog_rules(catalog, allowed_rarities(slug), expansions)
+
+
+def legal_catalog_rules(catalog: dict[int, dict],
+                        rarities: set[str] | frozenset[str] | None = None,
+                        expansions: set[str] | frozenset[str] | None = None,
+                        ) -> dict[int, dict]:
+    """legal_catalog() by explicit rules rather than by arena slug.
+
+    A LEAGUE reports its own rules (format_rules.allowed_rarities, straight
+    from the arena row it copied), so asking the server beats looking the
+    arena up in ARENA_RARITIES and hoping the two agree. The slug-based
+    wrapper above stays for the arena paths, which have no such report.
+    """
+    allow = rarities
     out = catalog if allow is None else {
         cid: c for cid, c in catalog.items()
         if (c.get("rarity") in allow) or not is_playable(c)}
@@ -249,7 +263,16 @@ def illegal_cards(cards: list[int], catalog: dict[int, dict], slug: str,
     deck_fits(): the site's own deck_meets_rules() is the authority and
     rejects it cleanly, whereas guessing "illegal" here fails silently.
     """
-    allow = allowed_rarities(slug)
+    return illegal_by_rules(cards, catalog, allowed_rarities(slug), expansions)
+
+
+def illegal_by_rules(cards: list[int], catalog: dict[int, dict],
+                     rarities: set[str] | frozenset[str] | None = None,
+                     expansions: set[str] | frozenset[str] | None = None,
+                     ) -> list[int]:
+    """illegal_cards() by explicit rules. Same leniency: an unknown card, and
+    a card filed under no expansion, are not provably illegal."""
+    allow = rarities
     want = frozenset(expansions or ())
     if allow is None and not want:
         return []

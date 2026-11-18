@@ -898,24 +898,21 @@ def cmd_league(args, api: Api) -> int:
     live = {lg.slug for lg in leagues}
     moved = 0
     for lg in leagues:
-        pair = None
-        names = league.deck_names_for(lg)
+        want = league.deck_name_for(lg)
         have = {str(d.get("name") or ""): int(d["id"]) for d in decks}
-        if all(n in have for n in names):
-            pair = (have[names[0]], have[names[1]])
-        elif args.apply:
-            pair = league.ensure_pair(api, lg, decks, live)
-            if pair:
+        deck_id = have.get(want)
+        if deck_id is None and args.apply:
+            deck_id = league.ensure_deck(api, lg, decks, live)
+            if deck_id:
                 decks = api.decks()
-        d = league.decide(lg, cards, catalog,
-                          pair[0] if pair else None,
-                          entered_cards=None)
-        print(f"{lg.slug}: day {lg.day}/{lg.days_total} "
-              f"{'[' + ','.join(sorted(lg.expansions)) + '] ' if lg.expansions else ''}"
-              f"-> {d.act.upper()}: {d.reason}"
+        d = league.decide(lg, cards, catalog, deck_id)
+        print(f"{lg.slug}: day {lg.day}/{lg.days_total}"
+              f"{' [' + ','.join(sorted(lg.expansions)) + ']' if lg.expansions else ''}"
+              f"{' rarities=' + ','.join(sorted(lg.rarities)) if lg.rarities else ''}"
+              f" -> {d.act.upper()}: {d.reason}"
               + (f" (cards {d.illegal[:5]})" if d.illegal else ""))
-        if args.apply and d.act != "hold" and pair:
-            moved += 1 if league.execute(api, lg, d, pair, cards, plan) else 0
+        if args.apply and d.act != "hold" and deck_id:
+            moved += 1 if league.execute(api, lg, d, deck_id, cards, plan) else 0
     if not args.apply:
         print("league: read-only (pass --apply to act)")
     return 0 if (moved or not args.apply) else 0
