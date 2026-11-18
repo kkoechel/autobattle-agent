@@ -1591,7 +1591,19 @@ def cmd_bootstrap(args, api: Api) -> int:
     elif args.arena in arenas.NOT_BUILDABLE:
         raise SystemExit(f"bootstrap: '{args.arena}' decks are not freely built")
 
-    meta = _load(f"meta_{args.arena}.json")
+    # The field to screen against. --field-file overrides the arena's meta,
+    # which is how a league gets screened against ITS OWN opponents instead of
+    # a proxy: in a restricted league every opponent draws from the same pool,
+    # so "beats the Standard field" is not the question being asked. The file
+    # is meta-shaped -- {"decks": [{cards, battle_plan, deck_name, deck_id}]}
+    # -- because that is all opponents_from_meta() reads.
+    if args.field_file:
+        with open(args.field_file) as fh:
+            meta = json.load(fh)
+        print(f"bootstrap: field from {args.field_file}, "
+              f"{len(meta['decks'])} deck(s)")
+    else:
+        meta = _load(f"meta_{args.arena}.json")
     if lg is None:
         arenas.check_against_field(meta["decks"], catalog, args.arena)
         catalog = arenas.legal_catalog(catalog, args.arena)
@@ -1638,6 +1650,18 @@ def cmd_bootstrap(args, api: Api) -> int:
     from . import novelty
     own_ids = {int(i) for i in (args.deck_id,
                                 getattr(args, "second_deck_id", None)) if i}
+    # In league mode the deck being replaced is the LEAGUE deck, and with
+    # --field-file it is usually IN the field (the field is our own entries).
+    # Without this the novelty gate rejects every candidate that resembles the
+    # deck we are trying to improve, which is the one deck resemblance is not
+    # evidence against.
+    if lg is not None:
+        want_name = league.deck_name_for(lg)
+        try:
+            own_ids |= {int(d["id"]) for d in api.decks()
+                        if str(d.get("name") or "") == want_name}
+        except ApiError as e:
+            print(f"bootstrap: could not list decks for the novelty gate ({e})")
     kept = []
     for lab, cs, pl in cands:
         n, who = novelty.nearest(cs, meta["decks"], own_ids)
@@ -3310,6 +3334,9 @@ def main(argv=None) -> int:
 
     bs = sub.add_parser("bootstrap")
     bs.add_argument("--apply", action="store_true", default=False)
+    bs.add_argument("--field-file", default=None, metavar="PATH",
+                    help="screen against this meta-shaped field instead of "
+                         "the arena's -- for a league, its own entrants")
     bs.add_argument("--league", default=None, metavar="SLUG",
                     help="build for a LEAGUE's pool (its rarities and "
                          "expansions) and install into that league's own "
