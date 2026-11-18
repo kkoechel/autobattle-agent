@@ -1558,16 +1558,52 @@ def cmd_bootstrap(args, api: Api) -> int:
 
     cat_list = _load("cards.json")
     catalog = {int(c["id"]): c for c in cat_list}
-    if args.arena in arenas.NOT_BUILDABLE:
-        raise SystemExit(f"bootstrap: '{args.arena}' decks are not freely built")
-    meta = _load(f"meta_{args.arena}.json")
-    arenas.check_against_field(meta["decks"], catalog, args.arena)
     # Keep the unfiltered map for the legality assertions below. Checking
     # against the FILTERED catalogue would be vacuous: a disallowed card is
     # absent from it, illegal_cards() treats an absent card as unknown rather
     # than illegal, and the check would then pass for every deck forever.
     full_catalog = catalog
-    catalog = arenas.legal_catalog(catalog, args.arena)
+
+    # LEAGUE MODE. A league is not an arena: its rules come from the server
+    # (format_rules plus an expansion list) rather than from ARENA_RARITIES,
+    # and the deck goes to the league's own deck instead of the live arena
+    # slot. Everything between here and the install is unchanged, which is the
+    # point of filtering the catalogue rather than teaching each generator.
+    #
+    # --arena still chooses the FIELD to screen against, and that choice is
+    # the operator's because no league has a field of its own yet. For a
+    # pauper league `--arena pauper` screens against real pauper decks and is
+    # representative. For an expansion league nothing is representative: the
+    # opponents there will be restricted to the same pool and today there are
+    # none, so the arena field measures general strength and not the matchup.
+    # Said out loud below rather than hidden in a number.
+    lg = None
+    if args.league:
+        found = [x for x in league.fetch(api) if x.slug == args.league]
+        if not found:
+            raise SystemExit(f"bootstrap: no league '{args.league}' is open")
+        lg = found[0]
+        if lg.unmapped_expansions:
+            raise SystemExit(f"bootstrap: {lg.slug} allows "
+                             f"{', '.join(lg.unmapped_expansions)}, which is "
+                             f"not mapped to a card tag — see "
+                             f"league.EXPANSION_NAME_TO_SLUG")
+    elif args.arena in arenas.NOT_BUILDABLE:
+        raise SystemExit(f"bootstrap: '{args.arena}' decks are not freely built")
+
+    meta = _load(f"meta_{args.arena}.json")
+    if lg is None:
+        arenas.check_against_field(meta["decks"], catalog, args.arena)
+        catalog = arenas.legal_catalog(catalog, args.arena)
+        bad_of = lambda cs: arenas.illegal_cards(cs, full_catalog, args.arena)
+    else:
+        catalog = league.legal_pool(catalog, lg)
+        bad_of = lambda cs: league.deck_blockers(cs, full_catalog, lg)
+        print(f"bootstrap: league {lg.slug} — rarities="
+              f"{','.join(sorted(lg.rarities)) if lg.rarities else 'any'}, "
+              f"expansions={','.join(sorted(lg.expansions)) or 'any'}; "
+              f"screening against the {args.arena} field, which is a "
+              f"STRENGTH proxy and not this league's matchups")
     seeds = sorted(i for i, c in catalog.items() if is_playable(c)
                    and (c.get("rules_text") or "").strip())
     # Honour the same seed partition the agent will run with. Two agents in one
@@ -1577,15 +1613,15 @@ def cmd_bootstrap(args, api: Api) -> int:
     # novelty cap exist to prevent.
     if args.seed_mod > 1:
         seeds = [i for i in seeds if i % args.seed_mod == args.seed_rem]
-    print(f"bootstrap: {args.arena}, {len(seeds)} legal seeds, "
-          f"{len(meta['decks'])} decks in field")
+    print(f"bootstrap: {lg.slug if lg else args.arena}, {len(seeds)} legal "
+          f"seeds, {len(meta['decks'])} decks in field")
 
     cands, archs = [], {}
     for sd in seeds:
         a = build(sd, catalog, meta["decks"])
         if not a or len(a.cards) != 100:
             continue
-        bad = arenas.illegal_cards(a.cards, full_catalog, args.arena)
+        bad = bad_of(a.cards)
         if bad:
             print(f"  seed {sd}: generator produced illegal cards {bad[:4]}")
             continue
@@ -1660,7 +1696,7 @@ def cmd_bootstrap(args, api: Api) -> int:
     cards, plan = ensure_tutor_targets(cards, plan, catalog, log=print)
     taken = {(d.get("deck_name") or "").strip().lower() for d in meta["decks"]}
     name = name_for(best.theme, best.seed_name, cards, taken)
-    illegal = arenas.illegal_cards(cards, full_catalog, args.arena)
+    illegal = bad_of(cards)
     if illegal:
         raise SystemExit(f"bootstrap: refusing, {len(illegal)} illegal card(s)")
     if len(cards) != 100:
@@ -1685,6 +1721,9 @@ def cmd_bootstrap(args, api: Api) -> int:
     if not args.apply:
         print("bootstrap: DRY RUN, nothing written (pass --apply)")
         return 0
+    if lg is not None:
+        return _bootstrap_install_league(args, api, lg, cards, plan, name)
+
     # Snapshot first. This overwrites a live slot in place -- PUT /decks/{id}
     # keeps no history -- and "one shot, then the agent takes over" is also
     # one shot with nothing to go back to if the generated deck plays worse
@@ -1711,6 +1750,39 @@ def cmd_bootstrap(args, api: Api) -> int:
     print(f"bootstrap: wrote deck {args.deck_id}. The agent registers on its "
           f"next cycle, now that the installed deck is legal.")
     return 0
+
+
+def _bootstrap_install_league(args, api: Api, lg, cards: list[int],
+                              plan: dict, name: str) -> int:
+    """Put a generated deck into a league's own deck and submit it.
+
+    Deliberately does NOT rename the deck: league.ensure_deck() finds it by
+    the name `[lg] <slug>`, so renaming it to the generated archetype name
+    would orphan it and create a second one next run. The name is logged
+    instead.
+    """
+    decks = api.decks()
+    live = {x.slug for x in league.fetch(api, log=lambda *_: None)}
+    deck_id = league.ensure_deck(api, lg, decks, live)
+    if not deck_id:
+        return 1
+    # Snapshot whatever is in there first, for the same reason the arena path
+    # does: PUT /decks/{id} keeps no history. A brand-new league deck is
+    # empty, and checkpointing nothing is skipped.
+    try:
+        existing = api.deck(deck_id)
+        prior = [int(c["card_id"]) for c in (existing.get("cards") or [])
+                 for _ in range(int(c["quantity"]))]
+        if prior:
+            checkpoint(api, prior, existing.get("battle_plan") or {},
+                       f"{time.strftime('%m-%d %H:%M')} pre-bootstrap {lg.slug}")
+    except ApiError as e:
+        print(f"bootstrap: could not snapshot league deck {deck_id} ({e}) — "
+              f"refusing to overwrite it blind")
+        return 1
+    d = league.Decision("enter" if not lg.entered else "submit",
+                        f"bootstrap '{name}'", deck_id=deck_id)
+    return 0 if league.execute(api, lg, d, deck_id, cards, plan) else 1
 
 
 def keep_over_rotate(cand_w: float, inc_w: float | None,
@@ -3238,6 +3310,11 @@ def main(argv=None) -> int:
 
     bs = sub.add_parser("bootstrap")
     bs.add_argument("--apply", action="store_true", default=False)
+    bs.add_argument("--league", default=None, metavar="SLUG",
+                    help="build for a LEAGUE's pool (its rarities and "
+                         "expansions) and install into that league's own "
+                         "deck, submitting it. --arena still picks the field "
+                         "to screen against.")
     bs.add_argument("--seeds", type=int, default=7)
     bs.add_argument("--screen-field", type=int, default=0,
                     help="screen stage one against the top N of the field "

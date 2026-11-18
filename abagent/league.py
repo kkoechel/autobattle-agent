@@ -36,6 +36,7 @@ whether we have anything new to submit.
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 
 from . import arenas
@@ -63,6 +64,29 @@ from . import arenas
 #
 # TO RETIRE THIS: ask the main session for `allowed_expansion_slugs` in the
 # league view, one line beside allowed_expansion_names.
+# HOW LATE IN A LEAGUE DAY TO SPEND THE DAY'S ONE CHANGE.
+#
+# A change made during day N is first read when day N+1's cohort is built at
+# the day boundary, so every moment of day N is equally good for the cohort it
+# will play -- except that the list keeps improving. Submitting at 10:00 spends
+# the change; an improvement confirmed at 18:00 then has to wait for tomorrow's
+# change, and with 5 days there are only four that can ever play.
+#
+# So hold until the last SUBMIT_WINDOW_S of the day, which with an hourly timer
+# leaves about two cycles to get it done. Not longer: `abagent` waits for a
+# lock slot but the bot units SKIP when both are busy, so a one-cycle window
+# would drop a day's change whenever its single chance collided.
+#
+# WORTH KNOWING WHAT THIS IS AND IS NOT WORTH. It only pays when improvements
+# arrive more than once a day, and at the rate measured to 2026-11-18 they do
+# not: one confirmed change in a hundred rounds over five days, with the
+# card-swap pass not having run at all. On most days there is nothing new to
+# submit and this gate never fires. It is here because the swap pass now runs
+# on half the cycles and that rate is expected to change -- and because when
+# two improvements do land in one day, the early submit throws the second one
+# away silently.
+SUBMIT_WINDOW_S = 2 * 3600
+
 EXPANSION_NAME_TO_SLUG: dict[str, str] = {
     "Skeletron's Invasion": "skeletron-inv",   # confirmed live, league 10
     "Starter Set": "starter",                  # from the stated rotation order
@@ -70,6 +94,14 @@ EXPANSION_NAME_TO_SLUG: dict[str, str] = {
     "Outworld": "outworld",
     "Underworld": "underworld",                # not in the rotation; declared
 }
+
+
+def _iso_epoch(s: str) -> float:
+    """'2026-11-23T04:00:00Z' -> epoch seconds. The API sends UTC with a Z,
+    which datetime.fromisoformat refuses before 3.11, so it is replaced."""
+    from datetime import datetime, timezone
+    return datetime.fromisoformat(s.replace("Z", "+00:00")).replace(
+        tzinfo=timezone.utc).timestamp()
 
 
 @dataclass(frozen=True)
@@ -92,10 +124,18 @@ class League:
     change_count: int = 0
     deck_edited_since_entry: bool = False
     entered_deck_legal: bool | None = None      # None = the server did not say
+    # When the NEXT league day opens, epoch seconds -- the instant this day's
+    # change stops being readable. None when unknown or on the last day.
+    next_day_at: float | None = None
 
     @property
     def entered(self) -> bool:
         return self.entered_deck_id is not None
+
+    def seconds_left_today(self, now: float | None = None) -> float | None:
+        if self.next_day_at is None:
+            return None
+        return self.next_day_at - (now if now is not None else time.time())
 
 
 @dataclass(frozen=True)
@@ -130,7 +170,9 @@ def deck_blockers(cards: list[int], catalog: dict[int, dict],
 def decide(lg: League, working_cards: list[int], catalog: dict[int, dict],
            league_deck_id: int | None,
            league_deck: tuple[list[int], dict] | None = None,
-           working_plan: dict | None = None) -> Decision:
+           working_plan: dict | None = None,
+           now: float | None = None,
+           window_s: float = SUBMIT_WINDOW_S) -> Decision:
     """Enter, submit, or hold -- for ONE league. Pure, so every gate is
     testable without touching the API.
 
@@ -224,13 +266,32 @@ def decide(lg: League, working_cards: list[int], catalog: dict[int, dict],
                                if lg.deck_edited_since_entry else ""))
         what = ("cards" if sorted(have_cards) != sorted(working_cards)
                 else "battle plan")
-        return Decision("submit", f"the working {what} has moved on",
-                        deck_id=lg.entered_deck_id)
-    if not lg.deck_edited_since_entry:
+        out = Decision("submit", f"the working {what} has moved on",
+                       deck_id=lg.entered_deck_id)
+    elif not lg.deck_edited_since_entry:
         return Decision("hold", "what plays is already this list")
+    else:
+        out = Decision("submit", "the deck has changed since it was entered",
+                       deck_id=lg.entered_deck_id)
 
-    return Decision("submit", "the deck has changed since it was entered",
-                    deck_id=lg.entered_deck_id)
+    # 10. WHEN to spend it. Every moment of day N is equally good for the
+    #     cohort the change will play -- day N+1's -- so the only thing
+    #     separating 10:00 from 19:00 is that the list keeps improving and
+    #     there is exactly ONE change. Spending it early throws away any
+    #     improvement that lands later today. See SUBMIT_WINDOW_S.
+    #
+    #     Day 0 is exempt because changes are free and unlimited before the
+    #     league starts, and an illegal entry (gate 8) never waits -- it
+    #     scores nothing until it is fixed, so later is strictly worse.
+    if lg.day >= 1:
+        left = lg.seconds_left_today(now)
+        if left is not None and left > window_s:
+            return Decision("hold",
+                            f"holding today's one change for the last "
+                            f"{window_s / 3600:.0f}h of day {lg.day} "
+                            f"({left / 3600:.1f}h to go) — would otherwise "
+                            f"submit: {out.reason}")
+    return out
 
 
 def parse(row: dict) -> League:
@@ -248,6 +309,16 @@ def parse(row: dict) -> League:
     mapped = {EXPANSION_NAME_TO_SLUG[n] for n in names if n in EXPANSION_NAME_TO_SLUG}
     unmapped = tuple(n for n in names if n not in EXPANSION_NAME_TO_SLUG)
     withdrawn = bool(entry.get("withdrawn"))
+    # day_starts[N-1] opens day N, so the day AFTER the current one starts at
+    # day_starts[day]. Absent on the last day, which decide() already holds.
+    day = int(row.get("current_day") or 0)
+    starts = row.get("day_starts") or []
+    nxt = None
+    if 0 <= day < len(starts):
+        try:
+            nxt = _iso_epoch(str(starts[day]))
+        except Exception:
+            nxt = None
     return League(
         slug=str(row.get("slug") or ""),
         name=str(row.get("name") or row.get("slug") or "a league"),
@@ -256,8 +327,9 @@ def parse(row: dict) -> League:
         unmapped_expansions=unmapped,
         singleton=bool(rules.get("singleton")),
         requires_champion=bool(rules.get("requires_champion")),
-        day=int(row.get("current_day") or 0),
+        day=day,
         days_total=int(row.get("days_total") or 5),
+        next_day_at=nxt,
         entries_closed=bool(row.get("entries_closed")),
         can_change_now=bool(row.get("can_change_deck_now")),
         change_block_reason=row.get("change_block_reason"),

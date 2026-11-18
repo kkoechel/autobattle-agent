@@ -8,6 +8,7 @@ GET /leagues payload as argv[1] to also parse the real thing.
 import json, sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from abagent.league import (League, Decision, decide, parse, legal_pool,
+                            _iso_epoch as _iso,
                             ensure_deck, execute, deck_name_for,
                             EXPANSION_NAME_TO_SLUG)
 
@@ -121,6 +122,40 @@ d = decide(lg(), WORK, CAT, DECK,
            league_deck=(list(reversed(WORK)), dict(PLAN)), working_plan=dict(PLAN))
 check("the same multiset in another order is not a change", d.act == "hold", d)
 
+print("7b. WHEN to spend the day's one change (the submission window)")
+NOW = 1_800_000_000.0
+H = 3600.0
+PLAN = {"card_order": [KHAOS]}
+def mid(**kw):
+    """A mid-league league with something new to submit."""
+    base = dict(day=2, next_day_at=NOW + 5 * H)
+    base.update(kw)
+    return lg(**base)
+new_deck = dict(league_deck=([KHAOS], dict(PLAN)), working_plan=dict(PLAN))
+d = decide(mid(), WORK, CAT, DECK, now=NOW, **new_deck)
+check("5h left of the day -> HOLD the change",
+      d.act == "hold" and "holding today's one change" in d.reason, d)
+check("...and it says what it would have submitted",
+      "would otherwise submit" in d.reason, d)
+d = decide(mid(next_day_at=NOW + 1 * H), WORK, CAT, DECK, now=NOW, **new_deck)
+check("1h left -> submit", d.act == "submit", d)
+d = decide(mid(next_day_at=NOW + 2 * H - 1), WORK, CAT, DECK, now=NOW, **new_deck)
+check("exactly inside the 2h window -> submit", d.act == "submit", d)
+d = decide(mid(day=0, last_change_day=None), WORK, CAT, DECK, now=NOW, **new_deck)
+check("day 0 is exempt: changes are free, submit now", d.act == "submit", d)
+d = decide(mid(entered_deck_legal=False), WORK, CAT, DECK, now=NOW, **new_deck)
+check("an ILLEGAL entry never waits for the window", d.act == "submit", d)
+d = decide(mid(next_day_at=None), WORK, CAT, DECK, now=NOW, **new_deck)
+check("unknown boundary -> inert, submit as before", d.act == "submit", d)
+d = decide(mid(), WORK, CAT, DECK, now=NOW,
+           league_deck=(list(WORK), dict(PLAN)), working_plan=dict(PLAN))
+check("nothing new -> the no-op hold, NOT the window hold",
+      d.act == "hold" and "already holds this list" in d.reason, d)
+d = decide(mid(), WORK, CAT, DECK, now=NOW, window_s=6 * H, **new_deck)
+check("a wider window submits sooner", d.act == "submit", d)
+check("seconds_left_today does the arithmetic",
+      abs(mid().seconds_left_today(NOW) - 5 * H) < 1, mid().seconds_left_today(NOW))
+
 print("8. parse() falls to safe values")
 p = parse({"slug": "s", "name": "S", "current_day": 3, "days_total": 5,
            "entries_closed": False, "can_change_deck_now": True,
@@ -152,6 +187,18 @@ check("missing entry means not entered", not bare.entered)
 check("missing can_change is False, not True", bare.can_change_now is False)
 w = parse({"slug": "s", "entry": {"deck_id": 7, "withdrawn": True}})
 check("a withdrawn entry is not entered", not w.entered, w)
+STARTS = ["2026-11-23T04:00:00Z", "2026-11-24T04:00:00Z", "2026-11-25T04:00:00Z"]
+p2 = parse({"slug": "s", "current_day": 2, "day_starts": STARTS})
+check("day N's next boundary is day_starts[N]",
+      p2.next_day_at == _iso("2026-11-25T04:00:00Z"), p2.next_day_at)
+p3 = parse({"slug": "s", "current_day": 0, "day_starts": STARTS})
+check("day 0 points at day 1's start",
+      p3.next_day_at == _iso("2026-11-23T04:00:00Z"), p3.next_day_at)
+p4 = parse({"slug": "s", "current_day": 3, "day_starts": STARTS})
+check("the last day has no next boundary", p4.next_day_at is None, p4.next_day_at)
+check("a malformed stamp does not raise",
+      parse({"slug": "s", "current_day": 0,
+             "day_starts": ["not a date"]}).next_day_at is None)
 
 print("9. the pool a generator builds from")
 check("khaos league pool", set(legal_pool(CAT, lg())) == {KHAOS, BASIC, RARE},
@@ -235,6 +282,9 @@ if len(sys.argv) > 1:
           all(l.day == 0 and not l.entries_closed and l.can_change_now
               for l in got.values()), [(l.slug, l.day, l.entries_closed) for l in got.values()])
     check("5 days each", all(l.days_total == 5 for l in got.values()))
+    check("day 0 boundary = the advertised Sun 20:00 PST start",
+          all(l.next_day_at == _iso("2026-11-23T04:00:00Z") for l in got.values()),
+          [l.next_day_at for l in got.values()])
 
 print(f"\n{len(fails)} failure(s)" if fails else "\nall assertions pass")
 sys.exit(1 if fails else 0)
