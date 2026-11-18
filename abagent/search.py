@@ -229,13 +229,31 @@ def optimise(harness: Harness, cards: list[int], opponents: list[Opponent],
              confirm_top: int = 3, validate_seeds: int = 161,
              min_gain: float = MIN_GAIN, rounds: int = 4, order_samples: int = 6,
              swap_samples: int = 6, rng: random.Random | None = None,
-             deadline: float | None = None, log=print
+             deadline: float | None = None, first: str = "order", log=print
              ) -> tuple[list[int], dict, list[str]]:
     """Plan, play order and card list, alternating -- because they interact.
 
-    Order first within each round: a swap inherits the card_order slot of the
-    card it replaces, so a better-ordered deck gives every subsequent swap a
-    more meaningful slot to inherit.
+    `first` decides which of the two passes gets the round's budget, because
+    on a real deck only ONE of them fits in a cycle.
+
+    MEASURED, deck 40806 ('Multitude Eternal'), 2026-11-11: one
+    sweep_and_confirm costs ~982s -- a 7-deck screen at 21 seeds x 108
+    opponents is 308s and the 161-seed validation that follows it is 674s --
+    against a live --budget of 260s. sweep_and_confirm is also ONE
+    uninterruptible unit, so the deadline between the two passes is always
+    long past by the time the first one returns. Over the five days to
+    2026-11-18 the order pass ended the round 100 times out of 101 and the
+    card-swap pass was reached once; it confirmed nothing in five days
+    because it almost never ran.
+
+    Order used to be unconditionally first, on the reasoning that "a swap
+    inherits the card_order slot of the card it replaces, so a better-ordered
+    deck gives every subsequent swap a more meaningful slot to inherit". That
+    reasoning is intact but it is satisfied ACROSS cycles rather than within a
+    round: the order lives in the persisted plan, 100 sweeps of it confirmed
+    one change, and swap candidates are now tried at several card_order ranks
+    (swap_ranks) rather than only at the cut card's slot. So a swap-first
+    cycle still swaps into an order that a hundred previous cycles settled.
     """
     from .moves import (add_candidates, as_counter, cut_candidates,
                         field_signal, order_moves, swap, swap_ranks)
@@ -246,31 +264,28 @@ def optimise(harness: Harness, cards: list[int], opponents: list[Opponent],
     present, copies = field_signal(meta_decks)
     nm = lambda c: (catalog.get(c, {}).get("name") or f"#{c}")
 
-    for rnd in range(1, rounds + 1):
-        moved = False
+    if first not in ("order", "swap"):
+        raise ValueError(f"first must be 'order' or 'swap', not {first!r}")
 
-        if deadline and time.time() > deadline:
-            log(f"round{rnd}: deadline reached, stopping")
-            break
-
-        # --- play order -------------------------------------------------
+    def _try_order(rnd: int) -> bool:
+        """--- play order --- . True if it confirmed a change."""
+        nonlocal plan
         cands = [(cards, p) for p in order_moves(plan, rng, order_samples)]
         got = sweep_and_confirm(harness, cards, plan, cands, opponents, rng,
                                 sweep_seeds, confirm_seeds, min_t, confirm_top,
                                 validate_seeds, min_gain)
-        if got:
-            _, plan, gain, t = got
-            head = ", ".join(nm(c) for c in (plan.get("card_order") or [])[:3])
-            log(f"round{rnd} order: {gain:+.1f}W t={t:.1f} CONFIRMED "
-                f"(now leads with {head})")
-            changes.append(f"order {gain:+.1f}W")
-            moved = True
+        if not got:
+            return False
+        _, plan, gain, t = got
+        head = ", ".join(nm(c) for c in (plan.get("card_order") or [])[:3])
+        log(f"round{rnd} order: {gain:+.1f}W t={t:.1f} CONFIRMED "
+            f"(now leads with {head})")
+        changes.append(f"order {gain:+.1f}W")
+        return True
 
-        if deadline and time.time() > deadline:
-            log(f"round{rnd}: deadline reached after order, stopping")
-            break
-
-        # --- card swaps, proposed by the field ---------------------------
+    def _try_swap(rnd: int) -> bool:
+        """--- card swaps, proposed by the field --- . True if confirmed."""
+        nonlocal cards, plan
         mine = as_counter(cards)
         adds = add_candidates(mine, present, copies)
         cuts = cut_candidates(mine, present, plan)
@@ -296,18 +311,44 @@ def optimise(harness: Harness, cards: list[int], opponents: list[Opponent],
                 break
 
         got = sweep_and_confirm(harness, cards, plan, cands, opponents, rng,
-                               sweep_seeds, confirm_seeds, min_t, confirm_top,
-                               validate_seeds, min_gain)
-        if got:
-            new_cards, new_plan, gain, t = got
-            idx = next(i for i, (c, p) in enumerate(cands)
-                       if c == new_cards and p == new_plan)
-            cut, add, qty, rank = seen[idx]
-            log(f"round{rnd} swap: -{qty} {nm(cut)} +{qty} {nm(add)} "
-                f"@order[{rank}]  {gain:+.1f}W t={t:.1f} CONFIRMED")
-            changes.append(f"-{qty} {nm(cut)} +{qty} {nm(add)} {gain:+.1f}W")
-            cards, plan = new_cards, new_plan
-            moved = True
+                                sweep_seeds, confirm_seeds, min_t, confirm_top,
+                                validate_seeds, min_gain)
+        if not got:
+            return False
+        new_cards, new_plan, gain, t = got
+        idx = next(i for i, (c, p) in enumerate(cands)
+                   if c == new_cards and p == new_plan)
+        cut, add, qty, rank = seen[idx]
+        log(f"round{rnd} swap: -{qty} {nm(cut)} +{qty} {nm(add)} "
+            f"@order[{rank}]  {gain:+.1f}W t={t:.1f} CONFIRMED")
+        changes.append(f"-{qty} {nm(cut)} +{qty} {nm(add)} {gain:+.1f}W")
+        cards, plan = new_cards, new_plan
+        return True
+
+    # One sweep_and_confirm is ~982s on deck 40806 against a 260s budget, so
+    # the second pass of a round is a pass that does not happen. Which one is
+    # second is therefore the whole decision, and it is the caller's: see the
+    # docstring, and cli.py's --first.
+    passes = {"order": _try_order, "swap": _try_swap}
+    seq = ("swap", "order") if first == "swap" else ("order", "swap")
+
+    for rnd in range(1, rounds + 1):
+        moved = False
+
+        if deadline and time.time() > deadline:
+            log(f"round{rnd}: deadline reached, stopping")
+            break
+
+        out_of_time = False
+        for i, name in enumerate(seq):
+            if i and deadline and time.time() > deadline:
+                log(f"round{rnd}: deadline reached after {seq[0]}, stopping")
+                out_of_time = True
+                break
+            if passes[name](rnd):
+                moved = True
+        if out_of_time:
+            break
 
         if not moved:
             log(f"round{rnd}: nothing confirmed, stopping")

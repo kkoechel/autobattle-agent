@@ -1047,12 +1047,36 @@ def cmd_cycle(args, api: Api) -> int:
     # final sweep found nothing -- while an unbiased validation costs ~125s,
     # so leading with scalar sweeps would spend the whole budget confirming
     # nothing and hit the deadline before a single swap was tried.
+    #
+    # WHICH of optimise()'s two passes leads is now a choice, because only one
+    # of them fits. sweep_and_confirm is a single uninterruptible unit costing
+    # ~982s on this deck against --budget 260, so the deadline between the
+    # passes is always long past when the first returns, and the second pass is
+    # a pass that never runs. MEASURED over the five days to 2026-11-18 on
+    # subgames-nyc1: "deadline reached after order" 100 times, the swap pass
+    # reached once, zero swaps confirmed -- and the order pass it was yielding
+    # to confirmed exactly ONE change in those same 100 rounds. That is not a
+    # starved pass, it is an unmeasured one, which is the stronger reason to
+    # spend on it: order has a hundred observations and the card list has
+    # none.
+    #
+    # Alternating by the HOUR rather than by a stored counter is deliberate:
+    # the timer is hourly, so consecutive cycles alternate, and a skipped or
+    # doubled cycle shifts the phase without corrupting anything. There is no
+    # file to go stale and nothing to reconcile after a restart.
+    if args.first == "alternate":
+        first = "swap" if (int(t0) // 3600) % 2 else "order"
+    else:
+        first = args.first
+    print(f"cycle: {first} pass leads this round"
+          + (" (alternating hourly)" if args.first == "alternate" else
+             f" (--first {args.first})"))
     cards, plan, swaps = optimise(h, mine, opps, meta_decks, catalog, start,
                                   card_info=info, sweep_seeds=args.sweep_seeds,
                                   confirm_seeds=args.confirm_seeds,
                                   min_t=args.min_t, confirm_top=args.confirm_top,
                                   validate_seeds=args.validate_seeds,
-                                  min_gain=args.min_gain,
+                                  min_gain=args.min_gain, first=first,
                                   rounds=args.rounds, rng=rng, deadline=deadline)
     if args.tournaments:
         enter_tournaments(api, args.deck_id)
@@ -3190,6 +3214,16 @@ def main(argv=None) -> int:
     y = sub.add_parser("cycle")
     y.add_argument("--budget", type=int, default=420,
                    help="seconds of search before it must stop (default 420)")
+    y.add_argument("--first", choices=["order", "swap", "alternate"],
+                   default="alternate",
+                   help="which optimise() pass gets the round: play ORDER, "
+                        "card SWAPs, or ALTERNATE by the hour (default). One "
+                        "sweep_and_confirm costs ~982s on deck 40806 against a "
+                        "260s budget, so the second pass of a round is a pass "
+                        "that does not happen -- over the five days to "
+                        "2026-11-18, order ended the round 100 times of 101 and "
+                        "swaps were reached once. Alternating gives each half "
+                        "the cycles instead of giving order all of them.")
     y.add_argument("--sweep-seeds", type=int, default=21)
     y.add_argument("--confirm-seeds", type=int, default=21)
     y.add_argument("--sweeps", type=int, default=4)

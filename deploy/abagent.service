@@ -43,7 +43,7 @@ EnvironmentFile=/etc/abagent.env
 # deck-seed-opponent:
 #
 #     screen       7 decks x  21 seeds x 108 opponents =  308s
-#     confirm      4 decks x  21 seeds x 108 opponents =  176s
+#     confirm      4 decks x  21 seeds x 108 opponents =  176s   <- SEE BELOW
 #     validation   2 decks x 161 seeds x 108 opponents =  674s   <- 58%
 #                                                        -----
 #                                                        1158s
@@ -52,6 +52,31 @@ EnvironmentFile=/etc/abagent.env
 # unit cost ~297s on the clone, which is exactly where it used to print
 # "round1: deadline reached after order". Nothing was wrong with the 1100/1200
 # pair; the smallest interruptible block simply grew past it.
+#
+# CORRECTION, 2026-11-18: the `confirm` row above is for a stage that no
+# longer exists. sweep_and_confirm now screens and then validates, nothing in
+# between -- its own comment says so ("The old middle stage is gone: with a
+# screen that resolves, it was choosing among candidates again and
+# reintroducing the selection bias it was meant to remove"), though its
+# docstring still announces three stages. So one uninterruptible unit on this
+# deck is 308 + 674 = ~982s, not 1158s. Same conclusion, smaller number.
+#
+# WHAT THAT MEANS, and what changed today. ~982s against --budget 260 is not
+# a tight budget, it is a budget that cannot hold even ONE pass -- so the
+# deadline optimise() checks between its play-order pass and its card-swap
+# pass is always long past, and the card-swap pass is a pass that never runs.
+# Over the five days to 2026-11-18, abagent.service logged "deadline reached
+# after order" 100 times, reached the swap pass ONCE, and confirmed zero
+# swaps; the order pass it was yielding to confirmed exactly one change in
+# those same 100 rounds.
+#
+# A reserve cannot fix that -- there is nothing to reserve a share OF. So
+# cycle takes --first {order,swap,alternate}, default ALTERNATE, which gives
+# the round to each pass on alternate hours. No flag is needed here: the
+# default is the new behaviour. Order keeps half the cycles because it has to
+# be able to react to a changed card list; the card list gets the other half
+# because a hundred observations of order and none of the card list is an
+# argument for spending on the card list, not against it.
 #
 # KNOWN REMAINING FAULT, not fixed here: one stage_reserve cannot be right for
 # stages that cost 335s (counter) and ~1000s (rebase) on the same deck. 500
