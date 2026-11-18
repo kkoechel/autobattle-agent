@@ -22,7 +22,12 @@ import json
 import os
 import sys
 
+# The repo when run from it, /opt/abagent when run from a copy on the host --
+# these are one-off operator tools and they get copied around, so finding the
+# package is their job rather than the caller's.
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+if not os.path.isdir(os.path.join(sys.path[0], "abagent")):
+    sys.path.insert(0, "/opt/abagent")
 from abagent.api import Api, ApiError                       # noqa: E402
 from abagent.league import deck_name_for, fetch             # noqa: E402
 
