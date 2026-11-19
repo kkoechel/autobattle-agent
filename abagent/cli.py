@@ -1116,11 +1116,11 @@ def cmd_league_refine(args, _api) -> int:
                 print(f"  {who}: a field of one is itself, skipping")
                 held += 1
                 continue
-            # Swap leads. These lists came out of a generator and have never
-            # had a single card measured against an alternative, while their
-            # play order came from the generator's own template -- so the card
-            # list is the unmeasured surface here, which is the same argument
-            # that moved the arena cycle off order-first.
+            # MEASURED, 10 confirmed changes over three passes: 7 were
+            # play ORDER and 3 were card swaps, and the four largest were all
+            # order. The generator picks the order from a template and never
+            # measures it, so that is the surface with the slack -- not the
+            # card list, which is what I assumed first and was wrong about.
             budget = min(args.budget, max(0.0, hard - time.time()))
             print(f"  {who}: deck {lg.entered_deck_id}, {len(set(cards))} "
                   f"distinct, {len(opps)} opponents, pool {playable} "
@@ -1131,6 +1131,8 @@ def cmd_league_refine(args, _api) -> int:
                 sweep_seeds=args.sweep_seeds, confirm_seeds=args.confirm_seeds,
                 validate_seeds=args.validate_seeds, min_t=args.min_t,
                 min_gain=args.min_gain, rounds=args.rounds, first=args.first,
+                order_samples=args.order_samples,
+                swap_samples=args.swap_samples,
                 rng=rng, deadline=time.time() + budget,
                 log=lambda m: print(f"    {m}"))
             if not changes:
@@ -3654,6 +3656,20 @@ def main(argv=None) -> int:
                     help="ceiling for the whole run; it stops cleanly between "
                          "entries, which the bootstrap could not")
     lr.add_argument("--rounds", type=int, default=2)
+    lr.add_argument("--swap-samples", type=int, default=18,
+                    help="how many card swaps a pass TRIES. optimise()'s "
+                         "default is 6, which nothing in this CLI could set "
+                         "before, and 6 of a 182-card legal pool is a very "
+                         "thin sample. MEASURED: the standard league did nine "
+                         "entries in 217s against a 300s budget each -- 24s "
+                         "apiece, 92%% of the budget unspent, confirming "
+                         "nothing. The binding constraint was the candidate "
+                         "count, not the clock and not the gain gate")
+    lr.add_argument("--order-samples", type=int, default=18,
+                    help="how many play orders a pass tries. Same reasoning. "
+                         "Order has been the PRODUCTIVE surface so far: 7 of "
+                         "10 confirmed changes were order, including the "
+                         "largest (+1.6W at t=12.0)")
     lr.add_argument("--sweep-seeds", type=int, default=21)
     lr.add_argument("--confirm-seeds", type=int, default=21)
     lr.add_argument("--validate-seeds", type=int, default=61,
@@ -3675,10 +3691,16 @@ def main(argv=None) -> int:
                          "calibration -- 0.1 admitted one extra change at "
                          "t=2.1 and I cannot yet tell a real small gain from "
                          "a lucky one")
-    lr.add_argument("--first", choices=("order", "swap"), default="swap",
-                    help="which pass leads. SWAP by default: these lists came "
-                         "from a generator and have never had a card measured "
-                         "against an alternative")
+    lr.add_argument("--first", choices=("order", "swap"), default="order",
+                    help="which pass leads. ORDER by default, which reverses "
+                         "my first reasoning: I argued the card list was the "
+                         "unmeasured surface because a generator picked it, "
+                         "but the generator also picks the play order, from a "
+                         "TEMPLATE, and that is what measurement keeps "
+                         "rejecting -- 7 of 10 confirmed changes were order, "
+                         "including every one of rook's four and the largest "
+                         "at +1.6W t=12.0. It only binds when the budget runs "
+                         "out, since both passes usually finish")
     lr.add_argument("--apply", action="store_true",
                     help="actually write and submit; without it, a dry run")
     lr.set_defaults(fn=cmd_league_refine)
