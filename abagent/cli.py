@@ -948,6 +948,41 @@ def _league_pass(api: Api, catalog: dict[int, dict], cards: list[int],
     return moved
 
 
+# Entries another loop already owns, as (account, league-slug prefix).
+# league-refine must not touch these.
+#
+# MEASURED on 2026-11-19, not reasoned about. abagent.service's hourly `cycle`
+# mirrors main's working arena deck into every league that deck is legal for,
+# and the journal says exactly which that is -- one 16:06 run, all three
+# leagues:
+#
+#   standard-league-nov-22  -> SUBMIT: the working cards has moved on
+#   pauper-league-nov-22    -> HOLD: 8 card(s) this league forbids
+#   expansion-...-nov-22    -> HOLD: 11 card(s) this league forbids
+#
+# So Standard is the single entry that two loops can both write, and `cycle`
+# writes it hourly. A refinement there survives at most an hour; and once the
+# week starts it would also spend main's ONE change for the day on a deck
+# `cycle` is about to replace -- the worse of the two costs, because the
+# change is gone whether or not the deck is.
+#
+# The other way round is safe, by the same measurement rather than by hope:
+# the +0.6W card swap refinement submitted into main's EXPANSION entry at
+# 01:37 was still in deck 206022 at 16:14, fourteen `cycle` runs later, because
+# that deck is illegal there and `cycle` can only hold.
+#
+# A PREFIX, not a slug, because the slug carries the week
+# ("standard-league-nov-22") and this collision is structural -- it returns
+# with next week's league under a new name.
+CYCLE_OWNED: tuple[tuple[str, str], ...] = (("abagent", "standard-league"),)
+
+
+def cycle_owned(who: str, slug: str) -> bool:
+    """Is this (account, league) entry written by abagent.service's cycle?"""
+    return any(who == acct and slug.startswith(pre)
+               for acct, pre in CYCLE_OWNED)
+
+
 def _refine_accounts(paths: list[str], log=print) -> list[tuple[str, Api]]:
     """(who, Api) for each env file that holds a key. Keys are never printed.
 
@@ -994,6 +1029,9 @@ def cmd_league_refine(args, _api) -> int:
 
       * It never enters a league and never creates a deck. It improves an
         entry that exists. See league.submittable().
+      * It never touches an entry another loop writes. See CYCLE_OWNED: two
+        loops editing one entry is not a race to be won, it is an entry that
+        cannot be improved by either.
       * It does not checkpoint. bootstrap does, because it replaces a whole
         deck with a generated one and PUT keeps no history; this accepts ONE
         change at a time, already reported in the log, and the accounts are
@@ -1041,11 +1079,52 @@ def cmd_league_refine(args, _api) -> int:
         print("league-refine: no open leagues")
         return 0
 
-    submitted = held = failed = 0
-    for slug in slugs:
+    # Whatever --max-seconds cuts, it cuts off the END of both lists. 26
+    # refinable entries at --budget 300 is 7800s against a submission window
+    # of 7200, so a daily run always loses some entries -- and in a fixed
+    # order it would lose the SAME league's and the same accounts' every
+    # single day for the whole week. This does not buy more time; it decides
+    # that the shortfall moves.
+    #
+    # Half-hourly rather than daily, because the free-window loop runs several
+    # passes in one day and a day-of-year offset would hand them all the same
+    # order, which is the fault it is here to avoid.
+    if args.rotate:
+        k = int(t0 // 1800)
+        slugs = slugs[k % len(slugs):] + slugs[:k % len(slugs)]
+        accounts = (accounts[k % len(accounts):]
+                    + accounts[:k % len(accounts)])
+        print(f"league-refine: rotated — {slugs[0]} leads, "
+              f"{accounts[0][0]} goes first")
+
+    # EVERY LEAGUE GETS ITS OWN SLICE of --max-seconds, on a fixed schedule
+    # of boundaries. One shared deadline left the last league whatever the
+    # first two happened not to spend, and on 2026-11-19 that was the whole
+    # reason the operator script had to call this once per league with a
+    # hand-written share each -- which in turn hard-coded three slugs that
+    # change with next week's leagues.
+    #
+    # Boundaries rather than per-league budgets, so unspent time is still
+    # inherited: a league that finishes early hands the next one an earlier
+    # start against the same boundary. A league whose own entry overran can
+    # eat the next slice, which is why the check below SKIPS a league rather
+    # than ending the run -- a third league's slice may be untouched.
+    #
+    # Equal slices, though the leagues are not equally expensive: the
+    # operator script gave pauper 2700s against 1800s each for the others,
+    # because pauper's grindy common-only lists draw more and so play longer
+    # games. --rotate is what keeps that from always costing the same league.
+    share = args.max_seconds / len(slugs)
+    submitted = held = failed = skipped = 0
+    for i, slug in enumerate(slugs):
+        lg_hard = min(hard, t0 + share * (i + 1))
         if time.time() > hard:
             print(f"league-refine: out of time before {slug}")
             break
+        if time.time() > lg_hard:
+            print(f"league-refine: {slug} skipped, its {share:.0f}s slice is "
+                  f"already spent")
+            continue
         print(f"\n=== {slug} ===")
         if args.field_file:
             with open(args.field_file) as fh:
@@ -1060,9 +1139,14 @@ def cmd_league_refine(args, _api) -> int:
               f"partly SELF-PLAY, see the docstring")
 
         for who, api in accounts:
-            if time.time() > hard:
-                print(f"  {who}: out of time, stopping")
+            if time.time() > lg_hard:
+                print(f"  {who}: {slug}'s slice is spent, stopping")
                 break
+            if cycle_owned(who, slug) and not args.ignore_cycle_owned:
+                print(f"  {who}: SKIP — abagent.service's hourly cycle owns "
+                      f"this entry and rewrites it (see CYCLE_OWNED)")
+                skipped += 1
+                continue
             rows = [x for x in league.fetch(api, log=lambda *_: None)
                     if x.slug == slug]
             if not rows:
@@ -1121,7 +1205,7 @@ def cmd_league_refine(args, _api) -> int:
             # order. The generator picks the order from a template and never
             # measures it, so that is the surface with the slack -- not the
             # card list, which is what I assumed first and was wrong about.
-            budget = min(args.budget, max(0.0, hard - time.time()))
+            budget = min(args.budget, max(0.0, lg_hard - time.time()))
             print(f"  {who}: deck {lg.entered_deck_id}, {len(set(cards))} "
                   f"distinct, {len(opps)} opponents, pool {playable} "
                   f"playable, "
@@ -1163,7 +1247,8 @@ def cmd_league_refine(args, _api) -> int:
                 failed += 1 if d.act != "hold" else 0
 
     print(f"\nleague-refine: {submitted} submitted, {held} held, "
-          f"{failed} failed, {time.time() - t0:.0f}s")
+          f"{skipped} owned elsewhere, {failed} failed, "
+          f"{time.time() - t0:.0f}s")
     return 0
 
 
@@ -3653,8 +3738,10 @@ def main(argv=None) -> int:
                          "8-distinct list has fewer cuts to try but tries "
                          "each at several ranks")
     lr.add_argument("--max-seconds", type=int, default=3600,
-                    help="ceiling for the whole run; it stops cleanly between "
-                         "entries, which the bootstrap could not")
+                    help="ceiling for the whole run, DIVIDED EQUALLY between "
+                         "the open leagues so the last one is not left with "
+                         "the leftovers. It stops cleanly between entries, "
+                         "which the bootstrap could not")
     lr.add_argument("--rounds", type=int, default=2)
     lr.add_argument("--swap-samples", type=int, default=18,
                     help="how many card swaps a pass TRIES. optimise()'s "
@@ -3701,6 +3788,17 @@ def main(argv=None) -> int:
                          "including every one of rook's four and the largest "
                          "at +1.6W t=12.0. It only binds when the budget runs "
                          "out, since both passes usually finish")
+    lr.add_argument("--rotate", action="store_true",
+                    help="rotate the league and account order every half "
+                         "hour, so the entries --max-seconds cuts are not "
+                         "the same ones every run. For the timer; a one-off "
+                         "run is easier to read in a fixed order")
+    lr.add_argument("--ignore-cycle-owned", action="store_true",
+                    help="refine even the entries abagent.service's hourly "
+                         "cycle rewrites (see CYCLE_OWNED). Only sensible "
+                         "with that timer stopped: otherwise the refinement "
+                         "lasts under an hour and, during the week, spends "
+                         "that account's one change for the day as well")
     lr.add_argument("--apply", action="store_true",
                     help="actually write and submit; without it, a dry run")
     lr.set_defaults(fn=cmd_league_refine)

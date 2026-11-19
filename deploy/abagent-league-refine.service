@@ -1,0 +1,86 @@
+[Unit]
+Description=AutoBattle league refinement — improve the entries we already hold
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=abagent
+Group=abagent
+WorkingDirectory=/opt/abagent
+
+# NO EnvironmentFile. Every other unit here is one account; this one reads
+# NINE keys and reads them itself, from the files named in --env, so that the
+# list of accounts it can act for is visible in the command line rather than
+# inherited from the environment. league-refine never prints a key.
+#
+# Runs as `abagent` because the env files are 0600 abagent:abagent -- the same
+# ownership that lets systemd hand them to the single-account units.
+#
+# TWO FILES ARE DELIBERATELY ABSENT and must stay absent:
+#   /etc/abagent-explore.env  — a REAL PERSON'S account (id 45, Ryan Seneca).
+#   /etc/abagent-discover.env — the SAME key as /etc/abagent.env, so listing
+#                               it would refine main's entries twice.
+# A glob would have swept in both. The explicit list is the guard, which is
+# why it is repeated here rather than hidden in a wrapper script.
+#
+# WHY A SINGLE DAILY RUN, at 02:20 UTC. A league day boundary is 04:00 UTC and
+# a change may only be made in the last two hours of a day, so 02:00-04:00 is
+# the whole of the usable window; league.submittable() refuses outside it and
+# refuses BEFORE searching, so a run at any other hour would measure for an
+# hour and then throw the result away. Starting at :20 clears app2's 02:04
+# auto-reboot before the nine-deck field reads.
+#
+# --max-seconds 4500 is sized from the window, not from taste: worst case this
+# waits 600s for a core slot, so 02:30 + 4500s = 03:45, plus up to one
+# --budget overrun by an entry whose search cannot be interrupted = 03:50.
+# Ten minutes of margin before the day rolls at 04:00.
+#
+# 4500s does NOT cover all 26 refinable entries -- 26 x --budget 300 is 7800s
+# against a 7200s window, so no schedule covers them all. --rotate moves which
+# ones lose; see the rotation comment in cmd_league_refine.
+#
+# Shares /opt/abagent/var with abagent.service on purpose: refinement keeps no
+# state of its own (no bank, no history, no novelty memory), so the separate
+# var/ directories the explorer units need would only duplicate the card
+# catalog here.
+ExecStart=/usr/local/bin/abagent-serialise 600 /usr/bin/python3 -u -m abagent.cli league-refine \
+  --env /etc/abagent.env \
+  --env /etc/abagent-ember.env \
+  --env /etc/abagent-flint.env \
+  --env /etc/abagent-pike.env \
+  --env /etc/abagent-quill.env \
+  --env /etc/abagent-rook.env \
+  --env /etc/abagent-sable.env \
+  --env /etc/abagent-vane.env \
+  --env /etc/abagent-wren.env \
+  --rotate --apply --budget 300 --max-seconds 4500
+
+# One vCPU, four live games on it. Same share as the cycle it replaces time
+# with, not more: this runs once a day where that runs hourly.
+Nice=10
+CPUWeight=20
+IOWeight=20
+
+# No swap on this droplet, so an unbounded process is an OOM. The validator
+# peaks around 17MB; the cap is for the Python side holding the catalog and
+# the nine-deck field.
+MemoryHigh=400M
+MemoryMax=600M
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+# var/ for the temp payloads the validator reads; bin/ because fetch replaces
+# the validator in place when the server reports a newer engine.
+ReadWritePaths=/opt/abagent/var /opt/abagent/bin
+
+# Exit 75 means "both core slots were busy" and is a success, not a failure.
+SuccessExitStatus=75
+
+# 600s wait + 4500s run + 300s for an uninterruptible final entry + margin.
+TimeoutStartSec=5700
+
+[Install]
+WantedBy=multi-user.target

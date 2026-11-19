@@ -261,6 +261,27 @@ with tempfile.TemporaryDirectory() as td:
     check("a missing file is None, not an exception",
           key_from(os.path.join(td, "nope.env")) is None)
 
+print("7f. an entry another loop owns is never refined")
+from abagent.cli import cycle_owned, CYCLE_OWNED
+check("main's Standard entry is cycle's, whatever week it is",
+      cycle_owned("abagent", "standard-league-nov-22")
+      and cycle_owned("abagent", "standard-league-nov-29"),
+      CYCLE_OWNED)
+check("main's OTHER entries are refinable -- cycle cannot write them",
+      not cycle_owned("abagent", "pauper-league-nov-22")
+      and not cycle_owned("abagent", "expansion-league-skeletron-s-invasion-nov-22"))
+check("a bot's Standard entry is its own: no bot unit touches a league",
+      not cycle_owned("abagent-rook", "standard-league-nov-22")
+      and not cycle_owned("abagent-wren", "standard-league-nov-22"))
+# The prefix must not match a name that merely CONTAINS it, or a future
+# "pauper-standard-league" would be skipped for no reason.
+check("the prefix anchors at the start",
+      not cycle_owned("abagent", "x-standard-league-nov-22"))
+# "abagent" is a prefix of every bot's name, so a substring test on the
+# account would have frozen all nine Standard entries instead of one.
+check("the account is matched whole, not as a prefix",
+      not cycle_owned("abagent-ember", "standard-league-nov-22"))
+
 print("8. parse() falls to safe values")
 p = parse({"slug": "s", "name": "S", "current_day": 3, "days_total": 5,
            "entries_closed": False, "can_change_deck_now": True,

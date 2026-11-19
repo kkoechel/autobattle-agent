@@ -1,0 +1,24 @@
+[Unit]
+Description=AutoBattle league refinement, once a day inside the submission window
+
+[Timer]
+# 02:20 UTC. NOT a quiet-looking minute -- the only two hours in a league day
+# when a change can be submitted at all are 02:00-04:00 UTC (the last two
+# hours of a day that rolls at 04:00 UTC = 20:00 PST), and the service is
+# sized to finish by 03:50. See the arithmetic in the .service.
+#
+# Collides with nothing of ours on a fixed minute: the hourly units fire at
+# :06 (abagent), :10/:15/:30/:45 (bots) and :20 (discover), so discover is the
+# one same-minute neighbour, and it has the slack -- it skipped 0 cycles over
+# the week to 2026-11-19 while the expendable bots skipped 79 in 12h. Both go
+# through abagent-serialise, which has two slots, so neither is starved by
+# the other.
+OnCalendar=*-*-* 02:20:00 UTC
+AccuracySec=30s
+# false, deliberately. A run that missed its window is worthless, not late:
+# league.submittable() would refuse every entry and the pass would spend the
+# core measuring nothing. Better to lose a day than to run outside the window.
+Persistent=false
+
+[Install]
+WantedBy=timers.target
