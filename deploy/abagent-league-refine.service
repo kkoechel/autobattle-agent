@@ -50,6 +50,23 @@ WorkingDirectory=/opt/abagent
 # entries fit in a day; --rotate moves which four do not, rather than losing
 # the same four all week.
 #
+# --min-gain 0.5 rather than the 0.2 default, and this is the first evidence
+# EITHER WAY about that gate rather than another count of how many changes it
+# admits. Today's nine submitted changes were re-measured against the FROZEN
+# 2026-11-18 field -- same opponents, same seeds -- and how much of each
+# confirmed gain survived a change of field sorts cleanly at 0.5:
+#
+#   confirmed >= 0.5W   transferred 80-100%  (1.9 -> 1.61, 1.6 -> 1.77,
+#                                             0.6 -> 0.56, 0.6 -> 0.47,
+#                                             0.5 -> 0.41)
+#   confirmed <= 0.4W   transferred 0-150%   (0.3 -> 0.46, 0.3 -> 0.17,
+#                                             0.3 -> 0.09, 0.2 -> 0.00)
+#
+# Below 0.5 it is a coin flip: wren's +0.2W swap moved its entry 0.57W ->
+# 0.57W. During the week an entry gets ONE change a day, so admitting a
+# change worth nothing is the expensive mistake and declining one costs
+# nothing. n=9, so this is a gate sized from evidence, not a settled number.
+#
 # Shares /opt/abagent/var with abagent.service on purpose: refinement keeps no
 # state of its own (no bank, no history, no novelty memory), so the separate
 # var/ directories the explorer units need would only duplicate the card
@@ -64,7 +81,7 @@ ExecStart=/usr/local/bin/abagent-serialise 600 /usr/bin/python3 -u -m abagent.cl
   --env /etc/abagent-sable.env \
   --env /etc/abagent-vane.env \
   --env /etc/abagent-wren.env \
-  --rotate --apply --budget 300 --max-seconds 4200
+  --rotate --apply --budget 300 --max-seconds 4200 --min-gain 0.5
 
 # One vCPU, four live games on it. Same share as the cycle it replaces time
 # with, not more: this runs once a day where that runs hourly.
