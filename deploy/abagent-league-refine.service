@@ -31,14 +31,24 @@ WorkingDirectory=/opt/abagent
 # hour and then throw the result away. Starting at :20 clears app2's 02:04
 # auto-reboot before the nine-deck field reads.
 #
-# --max-seconds 4500 is sized from the window, not from taste: worst case this
-# waits 600s for a core slot, so 02:30 + 4500s = 03:45, plus up to one
-# --budget overrun by an entry whose search cannot be interrupted = 03:50.
-# Ten minutes of margin before the day rolls at 04:00.
+# --max-seconds 4200 is sized from the window and from a MEASURED overrun,
+# not from taste. Worst case this waits 600s for a core slot, so 02:30 +
+# 4200s = 03:40, plus the last entry running past its budget = 03:57.
 #
-# 4500s does NOT cover all 26 refinable entries -- 26 x --budget 300 is 7800s
-# against a 7200s window, so no schedule covers them all. --rotate moves which
-# ones lose; see the rotation comment in cmd_league_refine.
+# THAT OVERRUN IS 1000s, NOT 300s, and the first 18-sample pass is what
+# corrected it. optimise() checks its deadline only at the top of a round and
+# after the order sweep, so one entry's sweep is uninterruptible however long
+# it takes: against --budget 300, ember's expansion entry took 939s, main's
+# 544s, and quill's 79s -- a 12x spread on the same league and the same
+# budget. Sizing the margin at one budget would have had systemd kill this
+# unit mid-search.
+#
+# 4200s does NOT cover all 26 refinable entries. MEASURED at 18/18 samples:
+# standard 8 entries in 743s, pauper 9 in 1259s, expansion 9 in 2979s = 4981s
+# for one full pass, and the expansion league alone is 60% of it because its
+# common-heavy lists draw more and play longer games. So roughly 22 of 26
+# entries fit in a day; --rotate moves which four do not, rather than losing
+# the same four all week.
 #
 # Shares /opt/abagent/var with abagent.service on purpose: refinement keeps no
 # state of its own (no bank, no history, no novelty memory), so the separate
@@ -54,7 +64,7 @@ ExecStart=/usr/local/bin/abagent-serialise 600 /usr/bin/python3 -u -m abagent.cl
   --env /etc/abagent-sable.env \
   --env /etc/abagent-vane.env \
   --env /etc/abagent-wren.env \
-  --rotate --apply --budget 300 --max-seconds 4500
+  --rotate --apply --budget 300 --max-seconds 4200
 
 # One vCPU, four live games on it. Same share as the cycle it replaces time
 # with, not more: this runs once a day where that runs hourly.
@@ -79,8 +89,10 @@ ReadWritePaths=/opt/abagent/var /opt/abagent/bin
 # Exit 75 means "both core slots were busy" and is a success, not a failure.
 SuccessExitStatus=75
 
-# 600s wait + 4500s run + 300s for an uninterruptible final entry + margin.
-TimeoutStartSec=5700
+# 600s wait + 4200s run + 1000s for an uninterruptible final entry (measured
+# worst case 939s) + margin. The 300s I first allowed here was one --budget,
+# which is not what an entry costs.
+TimeoutStartSec=6000
 
 [Install]
 WantedBy=multi-user.target
