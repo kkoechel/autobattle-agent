@@ -149,12 +149,18 @@ object Castable {
 
     /**
      * How an OPPONENT's card could hand you a metric, making a self-side gate
-     * unjudgeable rather than dead. Metrics absent here -- poison_cured,
-     * honor_gained, shields_gained -- have no effect anywhere that gives them
-     * to the other player, which is why a missing cure is a proof.
+     * unjudgeable rather than dead.
+     *
+     * poison_cured is the only metric left with no opponent route, which is
+     * why a missing cure is still a proof. honor_gained and shields_gained
+     * were proofs here too until engine v4.58 added opponent_gain_honor and
+     * opponent_gain_shield; three live cards carry the honor one, so a
+     * self-honor gate is no longer dead in a deck that cannot gain honor.
      */
     private val OPP_TALLY = mapOf(
         "life_gained" to setOf("opponent_gain_life"),
+        "honor_gained" to setOf("opponent_gain_honor"),
+        "shields_gained" to setOf("opponent_gain_shield"),
         "poison_gained" to setOf("poison_opponent"),
         "cards_milled" to setOf("mill_opponent"),
         "cards_exiled" to setOf("exile_opponent_deck", "exile_opponent_hand",
@@ -177,8 +183,10 @@ object Castable {
     private val STAT_GAIN = mapOf(
         "life" to Spec(effects = setOf("gain_life"), passives = setOf("lifelink"),
             opp = setOf("opponent_gain_life")),
-        "honor" to Spec(effects = setOf("gain_honor"), passives = setOf("honorlink")),
-        "shields" to Spec(effects = setOf("gain_shield"), passives = setOf("shieldlink")),
+        "honor" to Spec(effects = setOf("gain_honor"), passives = setOf("honorlink"),
+            opp = setOf("opponent_gain_honor")),
+        "shields" to Spec(effects = setOf("gain_shield"), passives = setOf("shieldlink"),
+            opp = setOf("opponent_gain_shield")),
         "poison" to Spec(effects = setOf("gain_poison"), opp = setOf("poison_opponent")),
     )
 

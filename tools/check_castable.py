@@ -40,6 +40,14 @@ DIRT_KINGDOM = 1157      # needs self cards_recycled >= 3
 TOWER_SCHOLAR = 11       # recycles, so it opens Dirt Kingdom's gate
 INERT_FILLER = 1         # Ancient Power Station: temp energy and nothing else
 
+# The v4.58 pair. Both metrics were named in castable.py as having no
+# opponent route at all -- the same shape of silence as poison_cured before
+# Muck Crawler -- until engine v4.58 (8e28f46) added opponent_gain_honor and
+# opponent_gain_shield.
+GOOD_KARMA = 1138        # needs self honor_gained; an opponent can supply it
+SHIELD_SOLDIER = 1130    # needs self shields_gained
+HONOR_ASSISTANT = 1360   # Honorable Assistant: carries opponent_gain_honor
+
 # FlintVale's deck as the 2026-10-26 handover found it: ten dead Crawlers.
 # Ids pinned, not names, and kept here because the agent has since rewritten
 # the deck and no version history was kept. Mirrors DC_CANARY_DECK in the main
@@ -99,7 +107,8 @@ def main(argv: list[str]) -> int:
     cards = raw["cards"] if isinstance(raw, dict) else raw
     catalog = {int(c["id"]): c for c in cards}
 
-    need = set(BRAZEN_BLIGHT) | set(FLINT_102186) | set(ROOK_51580) | {APOTHECARY, MAGEFLESH_BEETLE}
+    need = (set(BRAZEN_BLIGHT) | set(FLINT_102186) | set(ROOK_51580)
+            | {APOTHECARY, MAGEFLESH_BEETLE, GOOD_KARMA, SHIELD_SOLDIER, HONOR_ASSISTANT})
     missing = sorted(need - set(catalog))
     if missing:
         print(f"catalogue {path} ({len(catalog)} cards) is missing {missing}")
@@ -158,6 +167,27 @@ def main(argv: list[str]) -> int:
     want_alive("Dirt Kingdom    [chaos]", recycle_gate, DIRT_KINGDOM, True)
     want_alive("Dirt Kingdom    [recyc]", {DIRT_KINGDOM: 1, TOWER_SCHOLAR: 15, INERT_FILLER: 84},
                DIRT_KINGDOM, False)
+
+    # THE v4.58 PAIR. Not a rule but a catalogue fact, so it is read off the
+    # catalogue rather than pinned: a self-side gate is dead only while
+    # nothing in the pool can hand that metric to the other player. On
+    # 2026-11-19 three cards carry opponent_gain_honor (1360, 1368, 1392) and
+    # none carries opponent_gain_shield, so honor must be unjudged and shields
+    # must still be dead -- and the day a shield one is printed this leg
+    # flips itself instead of going stale.
+    def carriers(effect: str) -> list[int]:
+        return [cid for cid, c in catalog.items()
+                if effect in json.dumps(c.get("effects_json"))]
+
+    for metric, cid, effect in (("honor_gained", GOOD_KARMA, "opponent_gain_honor"),
+                                ("shields_gained", SHIELD_SOLDIER, "opponent_gain_shield")):
+        gate = {cid: 1, INERT_FILLER: 99}
+        have = carriers(effect)
+        label = f"{metric:14s} [{len(have)} opp]"
+        if have:
+            want_alive(label, gate, cid, False)
+        else:
+            want_dead(label, gate, cid, False)
 
     # Nothing else in these decks may be called dead: the main app's detector
     # reports exactly one finding on each, and a port that finds more is

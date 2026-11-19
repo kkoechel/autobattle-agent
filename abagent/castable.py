@@ -112,12 +112,21 @@ SELF_TALLY: dict[str, dict] = {
 
 # What hands a metric to the controller's OPPONENT. Read here in one
 # direction only: these are the ways an OPPONENT's card could open a self-side
-# gate for you, which makes the gate unjudgeable rather than dead. Metrics
-# absent from this table -- poison_cured, honor_gained, shields_gained -- have
-# no effect anywhere that gives them to the other player, which is why a
-# missing cure is a proof and a missing self-poison is not.
+# gate for you, which makes the gate unjudgeable rather than dead.
+#
+# poison_cured is the only metric left with no opponent route, which is why a
+# missing cure is still a proof. honor_gained and shields_gained WERE listed
+# here as proofs too, and engine v4.58 (8e28f46) ended that by adding
+# opponent_gain_honor and opponent_gain_shield. Three live cards carry the
+# honor one -- Honorable Assistant 1360, Knight's Assistant 1368, Plantaxian
+# Station 1392 -- so Good Karma 1138 ("gained at least 1 Honor this turn") was
+# being called dead in a deck that cannot gain honor itself, when an opponent
+# can hand it over. No card carries opponent_gain_shield yet; it is listed
+# because the engine does, not because a verdict turns on it today.
 OPP_TALLY: dict[str, tuple[str, ...]] = {
     "life_gained":     ("opponent_gain_life",),
+    "honor_gained":    ("opponent_gain_honor",),
+    "shields_gained":  ("opponent_gain_shield",),
     "poison_gained":   ("poison_opponent",),
     "cards_milled":    ("mill_opponent",),
     "cards_exiled":    ("exile_opponent_deck", "exile_opponent_hand", "exile_opponent_discard",
@@ -138,8 +147,10 @@ OPP_TALLY: dict[str, tuple[str, ...]] = {
 # carries into the turn the card is played.
 STAT_GAIN: dict[str, dict] = {
     "life":    {"effects": ("gain_life",),   "passives": ("lifelink",),   "opp": ("opponent_gain_life",)},
-    "honor":   {"effects": ("gain_honor",),  "passives": ("honorlink",),  "opp": (), "champion_melee": True},
-    "shields": {"effects": ("gain_shield",), "passives": ("shieldlink",), "opp": ()},
+    "honor":   {"effects": ("gain_honor",),  "passives": ("honorlink",),
+                "opp": ("opponent_gain_honor",), "champion_melee": True},
+    "shields": {"effects": ("gain_shield",), "passives": ("shieldlink",),
+                "opp": ("opponent_gain_shield",)},
     "poison":  {"effects": ("gain_poison",), "passives": (),              "opp": ("poison_opponent",)},
 }
 
