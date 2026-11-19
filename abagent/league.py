@@ -167,6 +167,53 @@ def deck_blockers(cards: list[int], catalog: dict[int, dict],
                                    lg.expansions or None)
 
 
+def window_hold(lg: League, now: float | None = None,
+                window_s: float = SUBMIT_WINDOW_S) -> str | None:
+    """Why spending the day's one change RIGHT NOW would be premature, or None.
+
+    Day 0 is exempt: before the league starts, changes are free and unlimited.
+    An absent day boundary (the last day) is not a hold here -- that is a
+    separate and stronger fact, and its own gate.
+    """
+    if lg.day < 1:
+        return None
+    left = lg.seconds_left_today(now)
+    if left is None or left <= window_s:
+        return None
+    return (f"holding today's one change for the last {window_s / 3600:.0f}h "
+            f"of day {lg.day} ({left / 3600:.1f}h to go)")
+
+
+def submittable(lg: League, now: float | None = None,
+                window_s: float = SUBMIT_WINDOW_S) -> str | None:
+    """Why this entry cannot usefully be improved right now, or None.
+
+    A PRE-FLIGHT for refinement, which is expensive: measuring one candidate
+    against a league field costs a minute or two of a single vCPU, and an
+    improvement that cannot be submitted today is an improvement thrown away,
+    because nothing here persists a candidate between runs.
+
+    It answers decide()'s gates 3, 6, 7 and 10 and deliberately NOT:
+      * gate 4 (legality) -- producing a legal list is what refining is FOR;
+      * gate 5 (entering) -- refinement never enters a league. That is the
+        structural reason it can never touch an account we merely hold a key
+        for: an account with no entry has nothing for it to refine;
+      * gate 8 (an illegal entry) -- that must be replaced whatever the window
+        says, and the judgement belongs to decide(), not to a pre-flight.
+    """
+    if not lg.entered:
+        return "not entered (refine never enters a league)"
+    if lg.unmapped_expansions:
+        return ("expansion(s) not mapped to a card tag: "
+                + ", ".join(lg.unmapped_expansions))
+    if lg.day >= lg.days_total:
+        return (f"day {lg.day} of {lg.days_total} is the last "
+                f"-- a change now could never play")
+    if not lg.can_change_now:
+        return lg.change_block_reason or "the server says not now"
+    return window_hold(lg, now, window_s)
+
+
 def decide(lg: League, working_cards: list[int], catalog: dict[int, dict],
            league_deck_id: int | None,
            league_deck: tuple[list[int], dict] | None = None,
@@ -283,14 +330,9 @@ def decide(lg: League, working_cards: list[int], catalog: dict[int, dict],
     #     Day 0 is exempt because changes are free and unlimited before the
     #     league starts, and an illegal entry (gate 8) never waits -- it
     #     scores nothing until it is fixed, so later is strictly worse.
-    if lg.day >= 1:
-        left = lg.seconds_left_today(now)
-        if left is not None and left > window_s:
-            return Decision("hold",
-                            f"holding today's one change for the last "
-                            f"{window_s / 3600:.0f}h of day {lg.day} "
-                            f"({left / 3600:.1f}h to go) — would otherwise "
-                            f"submit: {out.reason}")
+    why = window_hold(lg, now, window_s)
+    if why:
+        return Decision("hold", f"{why} — would otherwise submit: {out.reason}")
     return out
 
 
@@ -444,3 +486,84 @@ def execute(api, lg: League, d: Decision, deck_id: int,
         f"({len(counts)} distinct), day {lg.day}"
         + ("" if changed is None else f", changed={changed}"))
     return True
+
+
+def key_from(env_path: str) -> str | None:
+    """AB_API_KEY out of a shell-style env file. Read, used, never logged.
+
+    The variable is `AB_API_KEY`, not `ABAGENT_API_KEY`: a script that guessed
+    the latter found no keys in any of ten env files and printed a confident
+    "0 entries" rather than an error, because a missing key is a `continue`.
+    """
+    try:
+        with open(env_path) as fh:
+            for line in fh:
+                line = line.strip()
+                if line.startswith("AB_API_KEY="):
+                    return line.split("=", 1)[1].strip().strip("'\"")
+    except OSError as e:
+        print(f"  {env_path}: cannot read ({e.strerror})")
+    return None
+
+
+def field_from_entries(accounts, slug: str, log=print) -> dict | None:
+    """A meta-shaped field of the decks WE have entered in one league.
+
+    `accounts` is [(who, Api)]. GET /leagues reports only the caller's own
+    entry, so a field can only be assembled by a caller holding several keys.
+    Returns None rather than an empty field: screening against nothing would
+    silently measure nothing.
+
+    REBUILD THIS BETWEEN RUNS. Two accounts that search the same pool against
+    the same snapshot pick the same winner, and the novelty gate cannot catch
+    it -- the gate rejects a copy of a deck IN the field, and a snapshot taken
+    before both runs contains neither of their new decks. Measured 2026-11-18:
+    two accounts installed the identical hundred cards that way.
+    """
+    decks, seen = [], set()
+    for who, api in accounts:
+        rows = [x for x in fetch(api, log=lambda *_: None) if x.slug == slug]
+        if not rows:
+            log(f"  {who}: league not visible")
+            continue
+        lg = rows[0]
+        did = lg.entered_deck_id
+        if not did:
+            # The deck named for the league may exist but never have been
+            # submitted. An opponent only meets what was ENTERED, so prefer
+            # the entry and fall back to the name only to describe a field
+            # that is about to be entered.
+            want = deck_name_for(lg)
+            try:
+                by_name = {str(d.get("name") or ""): int(d["id"])
+                           for d in api.decks()}
+            except Exception as e:
+                log(f"  {who}: cannot list decks ({e})")
+                continue
+            did = by_name.get(want)
+            if not did:
+                log(f"  {who}: not entered and no '{want}'")
+                continue
+            log(f"  {who}: not entered; using '{want}' ({did})")
+        if did in seen:
+            continue
+        try:
+            row = api.deck(did)
+        except Exception as e:
+            log(f"  {who}: deck {did} unreadable ({e})")
+            continue
+        cards = [int(c["card_id"]) for c in (row.get("cards") or [])
+                 for _ in range(int(c["quantity"]))]
+        if len(cards) != 100:
+            log(f"  {who}: deck {did} has {len(cards)} cards, skipping")
+            continue
+        seen.add(did)
+        decks.append({"deck_id": did,
+                      "deck_name": str(row.get("name") or f"deck {did}"),
+                      "cards": cards,
+                      "battle_plan": row.get("battle_plan") or {}})
+        log(f"  {who}: {row.get('name')} ({did}), {len(set(cards))} distinct")
+    if not decks:
+        return None
+    return {"decks": decks, "cohort_id": 0,
+            "finalized_at": f"synthetic field for {slug}"}

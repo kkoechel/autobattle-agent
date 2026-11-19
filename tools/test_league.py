@@ -8,6 +8,8 @@ GET /leagues payload as argv[1] to also parse the real thing.
 import json, sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from abagent.league import (League, Decision, decide, parse, legal_pool,
+                            window_hold, submittable,
+                            field_from_entries, key_from,
                             _iso_epoch as _iso,
                             ensure_deck, execute, deck_name_for,
                             EXPANSION_NAME_TO_SLUG)
@@ -155,6 +157,109 @@ d = decide(mid(), WORK, CAT, DECK, now=NOW, window_s=6 * H, **new_deck)
 check("a wider window submits sooner", d.act == "submit", d)
 check("seconds_left_today does the arithmetic",
       abs(mid().seconds_left_today(NOW) - 5 * H) < 1, mid().seconds_left_today(NOW))
+
+print("7c. submittable(): the PRE-FLIGHT refinement runs before it spends CPU")
+check("an entry with time left and a change in hand -> go",
+      submittable(mid(next_day_at=NOW + 1 * H), now=NOW) is None,
+      submittable(mid(next_day_at=NOW + 1 * H), now=NOW))
+check("day 0 -> go (changes are free and unlimited)",
+      submittable(mid(day=0, last_change_day=None), now=NOW) is None)
+w = submittable(mid(), now=NOW)
+check("5h left of the day -> the WINDOW hold, worded as decide()'s is",
+      w is not None and "holding today's one change" in w, w)
+check("...and it is literally the same function decide() uses",
+      w == window_hold(mid(), NOW), (w, window_hold(mid(), NOW)))
+check("not entered -> refuses, and says refine never enters",
+      "never enters" in (submittable(mid(entered_deck_id=None), now=NOW) or ""),
+      submittable(mid(entered_deck_id=None), now=NOW))
+check("the last day -> refuses (a change then could never play)",
+      "could never play" in (submittable(mid(day=5), now=NOW) or ""),
+      submittable(mid(day=5), now=NOW))
+check("the server says no -> quotes the server",
+      submittable(mid(can_change_now=False,
+                      change_block_reason="already changed today"),
+                  now=NOW) == "already changed today")
+check("a blocked league with no reason still refuses",
+      submittable(mid(can_change_now=False), now=NOW) is not None)
+check("an unmapped expansion -> refuses rather than build from the wrong pool",
+      "not mapped" in (submittable(mid(unmapped_expansions=("Mystery Set",)),
+                                   now=NOW) or ""))
+# The one deliberate divergence from decide(): gate 8. decide() submits an
+# ILLEGAL entry whatever the window says, because it scores nothing until it
+# is fixed. submittable() does NOT special-case it -- a pre-flight that let an
+# illegal entry through would send refinement off to search for a legal list
+# it then could not submit until the window anyway.
+check("an illegal entry is NOT excused by the pre-flight (decide() owns that)",
+      submittable(mid(entered_deck_legal=False), now=NOW) is not None,
+      submittable(mid(entered_deck_legal=False), now=NOW))
+check("...while decide() still submits it immediately",
+      decide(mid(entered_deck_legal=False), WORK, CAT, DECK, now=NOW,
+             **new_deck).act == "submit")
+check("an unknown day boundary is inert, not a hold",
+      submittable(mid(next_day_at=None), now=NOW) is None)
+check("window_hold is None on day 0 whatever the clock says",
+      window_hold(mid(day=0), NOW) is None)
+
+print("7d. field_from_entries(): the field refinement screens against")
+class FieldApi:
+    """Just enough of Api for field_from_entries: leagues, decks, deck."""
+    def __init__(self, entered, cards=None, named=None, rows=None):
+        self.entered, self.named = entered, named
+        self.cards = cards if cards is not None else [KHAOS] * 100
+        self.rows = rows
+    def leagues(self):
+        if self.rows is not None:
+            return self.rows
+        return [{"slug": "khaos-wk1", "name": "E", "current_day": 2,
+                 "days_total": 5,
+                 "entry": {"deck_id": self.entered} if self.entered else {}}]
+    def decks(self):
+        return [{"id": self.named, "name": "[lg] khaos-wk1"}] if self.named else []
+    def deck(self, did):
+        q = {}
+        for c in self.cards:
+            q[c] = q.get(c, 0) + 1
+        return {"id": did, "name": f"deck {did}",
+                "cards": [{"card_id": k, "quantity": v} for k, v in q.items()],
+                "battle_plan": {}}
+
+quiet = lambda *_: None
+f = field_from_entries([("a", FieldApi(601)), ("b", FieldApi(602))],
+                       "khaos-wk1", log=quiet)
+check("two entered accounts -> a field of two",
+      f is not None and len(f["decks"]) == 2, f and len(f["decks"]))
+check("each deck carries its flat 100-card list",
+      all(len(d["cards"]) == 100 for d in f["decks"]))
+check("no entries at all -> None, never an empty field",
+      field_from_entries([("a", FieldApi(None))], "khaos-wk1", log=quiet) is None)
+check("a deck that is not 100 cards is skipped, not entered as a cripple",
+      field_from_entries([("a", FieldApi(601, cards=[KHAOS] * 7))],
+                         "khaos-wk1", log=quiet) is None)
+f = field_from_entries([("a", FieldApi(601)), ("b", FieldApi(601))],
+                       "khaos-wk1", log=quiet)
+check("the same deck seen twice appears once", len(f["decks"]) == 1, f)
+f = field_from_entries([("a", FieldApi(None, named=700))], "khaos-wk1",
+                       log=quiet)
+check("not entered but the named deck exists -> used, so a field can be "
+      "described before anyone is in it",
+      f is not None and f["decks"][0]["deck_id"] == 700, f)
+check("a league we cannot see contributes nothing",
+      field_from_entries([("a", FieldApi(601, rows=[]))], "khaos-wk1",
+                         log=quiet) is None)
+
+print("7e. key_from(): AB_API_KEY, and never the wrong variable")
+import tempfile
+with tempfile.TemporaryDirectory() as td:
+    good = os.path.join(td, "good.env")
+    open(good, "w").write("# a comment\nABAGENT_DECK_ID=5\nAB_API_KEY='sek ret'\n")
+    check("reads AB_API_KEY and strips its quotes", key_from(good) == "sek ret",
+          repr(key_from(good)))
+    bad = os.path.join(td, "bad.env")
+    open(bad, "w").write("ABAGENT_API_KEY=nope\n")
+    check("ABAGENT_API_KEY is NOT the variable -> None, which the caller "
+          "must report rather than skip silently", key_from(bad) is None)
+    check("a missing file is None, not an exception",
+          key_from(os.path.join(td, "nope.env")) is None)
 
 print("8. parse() falls to safe values")
 p = parse({"slug": "s", "name": "S", "current_day": 3, "days_total": 5,

@@ -948,6 +948,212 @@ def _league_pass(api: Api, catalog: dict[int, dict], cards: list[int],
     return moved
 
 
+def _refine_accounts(paths: list[str], log=print) -> list[tuple[str, Api]]:
+    """(who, Api) for each env file that holds a key. Keys are never printed.
+
+    The caller lists the files explicitly, and that is the safety boundary
+    rather than a convenience: this box also holds an env file for a REAL
+    person's account (a human who happens to run an explorer on it), and a
+    glob would have swept it in. Refinement could still never submit for it,
+    because it only ever improves an entry that already exists and that
+    account has none -- but "could not" is a better guarantee when it is two
+    independent reasons rather than one.
+    """
+    out: list[tuple[str, Api]] = []
+    for p in paths:
+        who = os.path.basename(p).replace(".env", "")
+        key = league.key_from(p)
+        if not key:
+            log(f"  {who}: no AB_API_KEY in {p}")
+            continue
+        out.append((who, Api(key)))
+    return out
+
+
+def cmd_league_refine(args, _api) -> int:
+    """Improve the decks we already have entered, against the league's field.
+
+    THE GAP THIS FILLS. `cycle` mirrors one account's working deck into every
+    league it is legal for, which is nothing for a league in a format that
+    account does not play. Measured 2026-11-18: of 27 entries across three
+    leagues, 26 were frozen for the week -- the eight bot units run
+    `explore --register`, which never touches a league at all, and the one
+    account that does run `cycle` can only ever move its Standard entry.
+    So an entry was whatever generated it, for five days.
+
+    WHY IT IS AFFORDABLE, which was not obvious. optimise()'s expensive unit,
+    sweep_and_confirm, was measured at ~982s against the pure arena's 108
+    opponents. A league field is EIGHT. The cost is linear in opponents, so
+    the same pass costs roughly a seventieth of a vCPU-hour here, and a
+    search that cannot fit one pass into an hourly arena cycle fits several
+    against a league. The 2h20m Pauper bootstrap was expensive for a
+    different reason -- it screened 276 CANDIDATES -- and is the wrong tool
+    from here on.
+
+    WHAT IT DELIBERATELY DOES NOT DO:
+
+      * It never enters a league and never creates a deck. It improves an
+        entry that exists. See league.submittable().
+      * It does not checkpoint. bootstrap does, because it replaces a whole
+        deck with a generated one and PUT keeps no history; this accepts ONE
+        change at a time, already reported in the log, and the accounts are
+        at or near their deck limits -- a checkpoint here would evict the
+        arena agent's own checkpoints to insure a single confirmed swap.
+      * It does not persist a candidate it cannot submit. That is why
+        league.submittable() runs BEFORE the search rather than after: an
+        improvement found outside the day's submission window is an
+        improvement thrown away.
+
+    THE HONEST LIMIT. The field is our own entries, so this is partly
+    self-play: it measures "better than my siblings", not "better in the
+    league". Once the house bots and real players are in, the field should
+    come from the day's standings instead -- `--field-file` takes an
+    externally built one for exactly that.
+    """
+    t0 = time.time()
+    hard = t0 + args.max_seconds
+    accounts = _refine_accounts(args.env)
+    if not accounts:
+        raise SystemExit("league-refine: no usable --env file")
+    print(f"league-refine: {len(accounts)} account(s), "
+          f"{args.budget}s per entry, {args.max_seconds}s in all")
+
+    cat_list = _load("cards.json")
+    catalog = {int(c["id"]): c for c in cat_list}
+    info = card_info_map(cat_list)
+    h = Harness(VALIDATOR, cat_list, workdir=VAR)
+    rng = random.Random(int(t0))
+
+    # Which leagues. Read from the first account and filter, rather than
+    # trusting a slug the operator typed: a misspelling would otherwise look
+    # like a league nobody is entered in.
+    first_who, first_api = accounts[0]
+    slugs = [x.slug for x in league.fetch(first_api, log=lambda *_: None)]
+    if args.league:
+        unknown = [s for s in args.league if s not in slugs]
+        if unknown:
+            raise SystemExit(f"league-refine: no open league named "
+                             f"{', '.join(unknown)} (open: {', '.join(slugs)})")
+        slugs = [s for s in slugs if s in args.league]
+    if not slugs:
+        print("league-refine: no open leagues")
+        return 0
+
+    submitted = held = failed = 0
+    for slug in slugs:
+        if time.time() > hard:
+            print(f"league-refine: out of time before {slug}")
+            break
+        print(f"\n=== {slug} ===")
+        if args.field_file:
+            with open(args.field_file) as fh:
+                meta = json.load(fh)
+            print(f"  field from {args.field_file}: {len(meta['decks'])} deck(s)")
+        else:
+            meta = league.field_from_entries(accounts, slug)
+        if meta is None:
+            print(f"  {slug}: no field could be built, skipping")
+            continue
+        print(f"  field: {len(meta['decks'])} of our own entries — this is "
+              f"partly SELF-PLAY, see the docstring")
+
+        for who, api in accounts:
+            if time.time() > hard:
+                print(f"  {who}: out of time, stopping")
+                break
+            rows = [x for x in league.fetch(api, log=lambda *_: None)
+                    if x.slug == slug]
+            if not rows:
+                continue
+            lg = rows[0]
+            why = league.submittable(lg)
+            if why:
+                print(f"  {who}: hold — {why}")
+                held += 1
+                continue
+            try:
+                row = api.deck(lg.entered_deck_id)
+            except ApiError as e:
+                print(f"  {who}: cannot read entered deck "
+                      f"{lg.entered_deck_id} ({e})")
+                failed += 1
+                continue
+            # Only ever rewrite a deck this agent made FOR a league. The
+            # entry names a deck id and nothing stops that being a deck
+            # somebody built by hand -- a human who entered their own list and
+            # happens to share this box would otherwise have it silently
+            # optimised out from under them. league.ensure_deck() creates
+            # these with the `[lg] ` prefix, so the prefix is the provenance.
+            dname = str(row.get("name") or "")
+            if not dname.startswith(league.LEAGUE_PREFIX):
+                print(f"  {who}: the entry points at '{dname}', which this "
+                      f"agent did not create for a league — refusing to "
+                      f"rewrite it")
+                failed += 1
+                continue
+            cards, plan = expand(row), dict(row.get("battle_plan") or {})
+            if len(cards) != 100:
+                print(f"  {who}: entered deck has {len(cards)} cards, skipping")
+                failed += 1
+                continue
+            # Only legal cards may be proposed. Without this the swap pass
+            # would spend its budget measuring cards the league forbids and
+            # then have the result refused by decide()'s gate 4.
+            pool = league.legal_pool(catalog, lg)
+            opps = opponents_from_meta(meta,
+                                       exclude_deck_ids={lg.entered_deck_id})
+            if not opps:
+                print(f"  {who}: a field of one is itself, skipping")
+                held += 1
+                continue
+            # Swap leads. These lists came out of a generator and have never
+            # had a single card measured against an alternative, while their
+            # play order came from the generator's own template -- so the card
+            # list is the unmeasured surface here, which is the same argument
+            # that moved the arena cycle off order-first.
+            budget = min(args.budget, max(0.0, hard - time.time()))
+            print(f"  {who}: deck {lg.entered_deck_id}, {len(set(cards))} "
+                  f"distinct, {len(opps)} opponents, pool {len(pool)}, "
+                  f"{budget:.0f}s")
+            new_cards, new_plan, changes = optimise(
+                h, cards, opps, meta["decks"], pool, plan, card_info=info,
+                sweep_seeds=args.sweep_seeds, confirm_seeds=args.confirm_seeds,
+                validate_seeds=args.validate_seeds, min_t=args.min_t,
+                min_gain=args.min_gain, rounds=args.rounds, first=args.first,
+                rng=rng, deadline=time.time() + budget,
+                log=lambda m: print(f"    {m}"))
+            if not changes:
+                print(f"  {who}: nothing confirmed")
+                held += 1
+                continue
+            for c in changes:
+                print(f"  {who}: CONFIRMED {c}")
+            d = league.decide(lg, new_cards, catalog, lg.entered_deck_id,
+                              league_deck=(cards, plan), working_plan=new_plan)
+            if not args.apply:
+                print(f"  {who}: DRY RUN, would {d.act} — {d.reason}")
+                continue
+            if league.execute(api, lg, d, lg.entered_deck_id,
+                              new_cards, new_plan,
+                              log=lambda m: print(f"  {who}: {m}")):
+                submitted += 1
+                # The field has moved: this account's entry is now a different
+                # deck, and the next account must answer the field as it
+                # stands. Rebuilding is nine deck reads and it is the whole
+                # reason two accounts stopped installing the same hundred
+                # cards. Skipped when the operator supplied a fixed field.
+                if not args.field_file:
+                    meta = league.field_from_entries(
+                        accounts, slug, log=lambda *_: None) or meta
+            else:
+                held += 1 if d.act == "hold" else 0
+                failed += 1 if d.act != "hold" else 0
+
+    print(f"\nleague-refine: {submitted} submitted, {held} held, "
+          f"{failed} failed, {time.time() - t0:.0f}s")
+    return 0
+
+
 def cmd_clone(args, api: Api) -> int:
     """Copy a deck into a new one for the agent to own.
 
@@ -3411,6 +3617,43 @@ def main(argv=None) -> int:
                      help="actually enter / spend the day's one deck change")
     lgp.set_defaults(fn=cmd_league)
 
+    lr = sub.add_parser("league-refine", help="improve the league decks we "
+                        "have already entered, against the league's own field")
+    lr.add_argument("--env", action="append", required=True,
+                    help="an env file holding AB_API_KEY, repeatable. LISTED "
+                         "EXPLICITLY on purpose: this box also carries an env "
+                         "file for a real person's account, and a glob would "
+                         "sweep it in")
+    lr.add_argument("--league", action="append",
+                    help="limit to these slugs (default: every open league)")
+    lr.add_argument("--field-file",
+                    help="a meta-shaped field to screen against instead of "
+                         "our own entries -- for a field built from the day's "
+                         "standings once other players are in it. Suppresses "
+                         "the rebuild after each submit")
+    lr.add_argument("--budget", type=int, default=240,
+                    help="seconds of search per entry (default 240; one "
+                         "sweep_and_confirm against 8 opponents is ~100s)")
+    lr.add_argument("--max-seconds", type=int, default=3600,
+                    help="ceiling for the whole run; it stops cleanly between "
+                         "entries, which the bootstrap could not")
+    lr.add_argument("--rounds", type=int, default=2)
+    lr.add_argument("--sweep-seeds", type=int, default=21)
+    lr.add_argument("--confirm-seeds", type=int, default=21)
+    lr.add_argument("--validate-seeds", type=int, default=61,
+                    help="the unbiased re-measurement of an accepted change. "
+                         "61 not 161: against 8 opponents rather than 108 the "
+                         "same confidence costs a seventh of the time")
+    lr.add_argument("--min-t", type=float, default=2.0)
+    lr.add_argument("--min-gain", type=float, default=0.4)
+    lr.add_argument("--first", choices=("order", "swap"), default="swap",
+                    help="which pass leads. SWAP by default: these lists came "
+                         "from a generator and have never had a card measured "
+                         "against an alternative")
+    lr.add_argument("--apply", action="store_true",
+                    help="actually write and submit; without it, a dry run")
+    lr.set_defaults(fn=cmd_league_refine)
+
     n = sub.add_parser("clone")
     n.add_argument("--source", type=int, required=True)
     n.add_argument("--name", default="abagent Standard")
@@ -3635,7 +3878,11 @@ def main(argv=None) -> int:
     r.set_defaults(fn=cmd_results)
 
     args = ap.parse_args(argv)
-    if args.cmd == "health":
+    # Both build their own Api (or several): health needs none, and
+    # league-refine holds one per account from --env. Api() raises without
+    # AB_API_KEY, so constructing it here would make a multi-account command
+    # depend on whichever single account happened to be in the environment.
+    if args.cmd in ("health", "league-refine"):
         return args.fn(args, None)
     api = Api()
     if args.deck_id is None and args.cmd == "cycle":
