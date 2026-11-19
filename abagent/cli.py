@@ -1018,6 +1018,8 @@ def cmd_league_refine(args, _api) -> int:
     print(f"league-refine: {len(accounts)} account(s), "
           f"{args.budget}s per entry, {args.max_seconds}s in all")
 
+    from .moves import is_playable
+
     cat_list = _load("cards.json")
     catalog = {int(c["id"]): c for c in cat_list}
     info = card_info_map(cat_list)
@@ -1100,6 +1102,14 @@ def cmd_league_refine(args, _api) -> int:
             # would spend its budget measuring cards the league forbids and
             # then have the result refused by decide()'s gate 4.
             pool = league.legal_pool(catalog, lg)
+            # Report the PLAYABLE size, which is the number a human can check
+            # against the league's stated pool. The raw pool also carries
+            # supplements and tokens the generator needs for lookups, and
+            # printing that total read as a pool four times too large -- it
+            # sent me hunting a leak in the expansion filter that was not
+            # there (570 raw vs 182 playable vs the 179 filed cards + 3
+            # basics the server's own pool is).
+            playable = sum(1 for c in pool.values() if is_playable(c))
             opps = opponents_from_meta(meta,
                                        exclude_deck_ids={lg.entered_deck_id})
             if not opps:
@@ -1113,7 +1123,8 @@ def cmd_league_refine(args, _api) -> int:
             # that moved the arena cycle off order-first.
             budget = min(args.budget, max(0.0, hard - time.time()))
             print(f"  {who}: deck {lg.entered_deck_id}, {len(set(cards))} "
-                  f"distinct, {len(opps)} opponents, pool {len(pool)}, "
+                  f"distinct, {len(opps)} opponents, pool {playable} "
+                  f"playable, "
                   f"{budget:.0f}s")
             new_cards, new_plan, changes = optimise(
                 h, cards, opps, meta["decks"], pool, plan, card_info=info,
@@ -3631,9 +3642,14 @@ def main(argv=None) -> int:
                          "our own entries -- for a field built from the day's "
                          "standings once other players are in it. Suppresses "
                          "the rebuild after each submit")
-    lr.add_argument("--budget", type=int, default=240,
-                    help="seconds of search per entry (default 240; one "
-                         "sweep_and_confirm against 8 opponents is ~100s)")
+    lr.add_argument("--budget", type=int, default=300,
+                    help="seconds of search per entry. MEASURED on nine "
+                         "expansion entries: 135s average, 24-289s spread, "
+                         "and at 240 the one entry that overran was cut off "
+                         "mid-SWAP and lost a +0.6W card change it found at "
+                         "300. The spread is the deck, not the box: an "
+                         "8-distinct list has fewer cuts to try but tries "
+                         "each at several ranks")
     lr.add_argument("--max-seconds", type=int, default=3600,
                     help="ceiling for the whole run; it stops cleanly between "
                          "entries, which the bootstrap could not")
@@ -3645,7 +3661,20 @@ def main(argv=None) -> int:
                          "61 not 161: against 8 opponents rather than 108 the "
                          "same confidence costs a seventh of the time")
     lr.add_argument("--min-t", type=float, default=2.0)
-    lr.add_argument("--min-gain", type=float, default=0.4)
+    lr.add_argument("--min-gain", type=float, default=0.2,
+                    help="how much a change must gain to be worth one of the "
+                         "week's four usable submissions. NOT the arena's "
+                         "0.4: that is 0.4 wins out of 108 opponents, or "
+                         "+0.37 points, while here it is 0.4 out of EIGHT, or "
+                         "+5 points -- a bar some thirteen times higher in "
+                         "the terms that matter. Pure proportionality would "
+                         "give 0.03 and is also wrong, because 8 opponents "
+                         "estimate far less precisely than 108; min_t guards "
+                         "the noise and this guards materiality, so 0.2 is "
+                         "+2.5 points. ONE run per setting is not a "
+                         "calibration -- 0.1 admitted one extra change at "
+                         "t=2.1 and I cannot yet tell a real small gain from "
+                         "a lucky one")
     lr.add_argument("--first", choices=("order", "swap"), default="swap",
                     help="which pass leads. SWAP by default: these lists came "
                          "from a generator and have never had a card measured "
