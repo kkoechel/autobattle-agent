@@ -111,14 +111,27 @@ android {
         // card 1431 as a plain creature, and every version in between was
         // obsolete before a bundle could be made.
         //
-        // That is the pattern now, not an accident: 42, 43 and 44 all went
-        // stale before upload, and only 1.34-45 is uploadable today. The rule
-        // stays "assume a built code is spent".
+        // That is the pattern now, not an accident: 42, 43, 44 and 45 all went
+        // stale before upload. The rule stays "assume a built code is spent".
+        //
+        // 46 on 2026-11-20, onto engine v4.72 (b863852). 45 was never
+        // uploaded: on 11-19, with the AAR at 4.69 and the league already on
+        // 4.71, Ryan said "Im not uploading the aab now, there will be a new
+        // engine version soon" -- so the 4.70 and 4.71 build asks were held
+        // deliberately rather than missed, and 4.72 landed that evening. This
+        // is the first build where waiting was the decision rather than the
+        // accident, and it collapsed three asks into one bundle.
+        //
+        // 4.72 is also the first of these versions whose features are in live
+        // cards: by 11-20 eight cards carry an `only_if` key and four use the
+        // `card_count` gate, so a 4.69 AAR would resolve them wrongly rather
+        // than merely differ on a log line. payload_v472 witnesses it --
+        // digest abd82c68 under 4.72, e38abba2 under 4.71.
         //
         // Check tools/check_engine_parity.sh immediately before uploading, not
         // when starting the build, because the answer changes daily.
-        versionCode 45
-        versionName "1.34"
+        versionCode 46
+        versionName "1.35"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         // Side-by-side test install: ./gradlew assembleRelease -PdevId

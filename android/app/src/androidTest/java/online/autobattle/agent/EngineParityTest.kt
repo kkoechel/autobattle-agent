@@ -49,14 +49,27 @@ import org.junit.runner.RunWith
  * cannot see that. `check_v461.js` and `check_v469.js` can, and do.
  *
  * That asymmetry is the thing to remember: a fixture built for a change is not
- * automatically a fixture that can witness it. Six of these ten can; four
+ * automatically a fixture that can witness it. Six of those ten can; four
  * cannot, and the version assertion below is what covers the gap.
+ *
+ * ## 2026-11-20, v4.72
+ *
+ * `payload_v472` (per-ability `only_if`, and the `card_count` gate kind) CAN
+ * witness its own change: the same asset digests
+ * `abd82c68...` under 4.72 and `e38abba2...` under 4.71, measured by running
+ * `cmd/parity --hash` over both extracted engine trees. So it catches a 4.71
+ * AAR, and `cmd/mobilecheck` -- the same `mobile.Run` this test calls --
+ * agreed with `cmd/parity` on the 4.72 digest before the AAR was installed.
+ *
+ * Eleven fixtures now, seven of which can witness the change they were built
+ * for. The v4.70 and v4.71 asks were superseded unbuilt, so no fixture exists
+ * for either; `payload_v472` is the only witness that the AAR is not 4.69.
  */
 @RunWith(AndroidJUnit4::class)
 class EngineParityTest {
 
     /** Keep in step with android/app/libs/engine.aar.json and ENGINE.md. */
-    private val engineVersion = "4.69"
+    private val engineVersion = "4.72"
 
     private data class Fixture(val asset: String, val matches: Int, val digest: String)
 
@@ -81,6 +94,8 @@ class EngineParityTest {
             "509e52f703d5a0b3965bc6df899bae3b99afa5cda6fb6c938a54dee7fc5a18a7"),
         Fixture("payload_v469.json", 30,
             "4cd174174e7406da82f8a90ae1aa768abcf2f25ea2659530edf05d757e75fa6a"),
+        Fixture("payload_v472.json", 15,
+            "abd82c683432fd50fce72201bc98373b1c9864b4b98135cfc8b150bd9243d080"),
     )
 
     private fun read(asset: String): String =

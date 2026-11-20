@@ -6,9 +6,9 @@ built artefact against the live league before a release.
 
 | | |
 |---|---|
-| engine version | **4.69** |
-| built from | `autobattle.online` commit `7ceb6e6`, `Engine v4.69: hold_removal_without_target + prefer_new_names` (engine subtree `d34bf0d`) |
-| built on | 2026-11-16 |
+| engine version | **4.72** |
+| built from | `autobattle.online` commit `b863852`, `Engine v4.72: per-ability only_if conditions + card_count gate` (engine subtree `361b8fb`) |
+| built on | 2026-11-20 |
 | built by | `shell/engine/build_aar.sh`, extracted with `git archive` so the main repo is never touched |
 
 ## Build it from the engine source at the version the league scores with
@@ -237,3 +237,48 @@ engine.
 
 Every fixture was confirmed `CLI == cmd/parity == mobile.Run` byte for byte
 before its digest was recorded.
+
+## 2026-11-20: v4.72, and the first build where waiting was the decision
+
+versionCode **46**, versionName **1.35**, from `b863852` (engine subtree
+`361b8fb`). It collapses three build asks into one bundle: 4.70 and 4.71 were
+both filed as their own ask and both superseded unbuilt.
+
+**This is the first entry in this file where the gap was deliberate.** Every
+note above is about a bundle going stale by accident. On 11-19 the AAR was at
+4.69 and the league was already on 4.71, and Ryan said "Im not uploading the
+aab now, there will be a new engine version soon" -- so the ask was held, the
+mismatch was left knowingly red, and the reason was written into the 4.71
+handoff entry so a later session would not build it by reflex. 4.72 landed
+that evening. Three asks, one build, no wasted versionCode.
+
+**And 4.72 is the first of this run whose features reach live cards.** The
+handoff recorded "0 of 17,640 catalogue games differ from 4.71 (no live card
+uses the new field yet)", which was true when written and false by the next
+afternoon: by 11-20 the pool had grown 1444 -> 1457 and **8 cards carry an
+`only_if` key** (Mox Lich, Mox Zombie, Engineering Corps, Troll Smash, Weird
+Researcher, Cave Pig, Troll Ingenuity, Brindeloid Watch) with **4 using the
+`card_count` gate**. So unlike 4.60/4.61/4.69, a stale AAR here would resolve
+real cards wrongly rather than differ on a log line. A "no card uses it yet"
+fact has the shelf life of a card batch.
+
+### Verification
+
+| | |
+|---|---|
+| `go test ./...` on the extracted tree | ok, and `TestV472_OnlyIfCardCount` proven to run under `-run TestV472 -v` rather than assumed from a green package |
+| `check_v472.js` on the 4.72 JS engine | 3/3 PASS (Hive caps Queens at 1 over 343 made, Nest caps Bees at 3, Keeper's unmet cost-then pays nothing) |
+| CLI digest agrees with the bind surface | `cmd/parity --hash` and `cmd/mobilecheck` both `abd82c68...`, mobilecheck also reporting `4.72` |
+| the fixture can witness the change | same asset digests `e38abba2...` under a separately extracted 4.71 tree -- so `payload_v472` catches a 4.71 AAR, unlike the blind v469 |
+| `check_engine_parity.sh` | PARITY OK, run again immediately before handing the bundle over |
+| **the `.so` in the bundle is the one in the AAR** | both `da68af98...`, 3,928,096 bytes -- no gradle cache served the old library, and the size moved off 4.56's 3,876,784 |
+| versionCode read from the bundle | `versionCode\x1a\x02` + ASCII `46`, `versionName\x1a\x04` + `1.35`, decoded out of the protobuf manifest rather than trusted from build.gradle |
+| engine version inside the bundle's library | `4.72`, and no other 4.5x/4.6x/4.7x string |
+
+**Not done: the on-device leg.** `adb devices` is empty, so no rehearsal has
+run on the S22 and `EngineParityTest` has not executed against the real AAR on
+hardware -- the eleven fixtures above are verified through the Go bind surface
+only. The AAR itself is the same artefact either way, but the JNI crossing is
+exactly what that test exists to check. Plug the phone in and run
+`./gradlew installRelease -PdevId` (never `connectedAndroidTest -PdevId`, which
+uninstalls what it tests and takes the league token with it).
