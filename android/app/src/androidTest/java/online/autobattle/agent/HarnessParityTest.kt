@@ -22,6 +22,29 @@ import org.junit.runner.RunWith
  * were folded differently, and either would make every recommendation the app
  * shows subtly untrue. The reference in assets/reference.json was produced by
  * abagent's own harness against the same cached catalogue and meta.
+ *
+ * ## The reference is ENGINE-VERSION-BOUND. Regenerate it on every bump.
+ *
+ * It was committed on 2026-09-24 against engine **v3.95** and never
+ * regenerated, so by the 4.72 build both numeric tests here failed on the
+ * device — 3 of 21 seeds and a 0.095-win mean. That is drift, not a port bug,
+ * and it was proven rather than assumed before touching the fixture:
+ *
+ *  - engines **4.69, 4.71 and 4.72 all give the same answer** (63.6667, seed
+ *    424243 = 61), so no recent engine change caused it and the gap predates
+ *    the 4.69 build that reported its tests green;
+ *  - the Python harness at 4.72 reproduces this test's on-device numbers to
+ *    the last digit, so the port is faithful;
+ *  - and the **September binary still in bin/ (v3.95) reproduces the old
+ *    reference EXACTLY**, all 21 seeds and all four aggregates. That is the
+ *    load-bearing one: a harness whose payload building or folding had
+ *    regressed could not reproduce a September golden bit-for-bit, so
+ *    regenerating could not be hiding a regression.
+ *
+ * Regenerate with `python3 tools/regen_reference.py`, which stamps the engine
+ * version into the file as `_engine_version`. If these two tests fail, read
+ * that field first: if it is not the live engine, the fixture is stale, and
+ * the three checks above are how to tell drift from a real port bug.
  */
 @RunWith(AndroidJUnit4::class)
 class HarnessParityTest {
