@@ -275,10 +275,38 @@ fact has the shelf life of a card batch.
 | versionCode read from the bundle | `versionCode\x1a\x02` + ASCII `46`, `versionName\x1a\x04` + `1.35`, decoded out of the protobuf manifest rather than trusted from build.gradle |
 | engine version inside the bundle's library | `4.72`, and no other 4.5x/4.6x/4.7x string |
 
-**Not done: the on-device leg.** `adb devices` is empty, so no rehearsal has
-run on the S22 and `EngineParityTest` has not executed against the real AAR on
-hardware -- the eleven fixtures above are verified through the Go bind surface
-only. The AAR itself is the same artefact either way, but the JNI crossing is
-exactly what that test exists to check. Plug the phone in and run
-`./gradlew installRelease -PdevId` (never `connectedAndroidTest -PdevId`, which
-uninstalls what it tests and takes the league token with it).
+### The on-device leg, done 2026-11-21 — and the phone needs no cable
+
+`adb devices` was empty when the bundle was built, but **the S22 is reachable
+over the network** at `192.168.88.39:5555` and was already authorised, so the
+on-device leg needs no USB. Check `adb devices -l` before assuming otherwise.
+
+**39/39 instrumented tests pass**, `EngineParityTest` among them across all
+eleven fixtures -- the JNI proof the host harnesses cannot give. Note for the
+record that the "4/4" in earlier entries was EngineParityTest alone; the device
+runs 39 tests in six classes.
+
+It did not start green. `HarnessParityTest`'s two numeric legs failed, and the
+cause was a fixture committed on 2026-09-24 against engine **v3.95** and never
+regenerated -- not this build, and not a port bug. See that test's own comment
+for the three measurements that separate drift from a regression; the
+load-bearing one is that the September binary still in `bin/` reproduces the
+old reference exactly, which a harness that had itself regressed could not do.
+`tools/regen_reference.py` now stamps the engine version into the fixture.
+
+**The chain is verified end to end.** The `libgojni.so` pulled back off the
+phone is byte-identical to the one in the AAR and in the bundle
+(`da68af98`, 3,928,096 bytes) and carries `4.72`: engine source at `b863852`
+-> AAR -> bundle -> installed APK, all the same bytes.
+
+**Nothing on the device was harmed, checked rather than hoped.**
+`online.autobattle.agent` (`blind wizard`) is still versionCode 40 with its
+2026-10-28 `lastUpdateTime`, and `.dev` (`ParityProbe`) upgraded in place to
+46 / 1.35-dev with `firstInstallTime` still 2026-11-11 -- an upgrade, not a
+reinstall, so its token survived. `connectedAndroidTest` with **no flags** is
+the safe form: debug builds carry the `.debug` suffix, so the package it
+installs and then uninstalls is disposable. Never `-PdevId` on that task.
+
+`.dev` is current per the standing instruction (`assembleRelease -PdevId` plus
+`adb install -r`), and the shipped bundle is confirmed NOT the dev variant --
+no `agent.dev` or `Cardbattle (dev)` string in its manifest.
