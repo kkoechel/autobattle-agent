@@ -1,11 +1,11 @@
 package online.autobattle.agent.chat
 
-import mobile.Mobile
 import online.autobattle.agent.engine.Aggregator
 import online.autobattle.agent.engine.Catalogue
 import online.autobattle.agent.engine.Deck
 import online.autobattle.agent.engine.Mutate
 import online.autobattle.agent.engine.PayloadBuilder
+import online.autobattle.agent.engine.simulate
 import online.autobattle.agent.engine.Score
 import org.json.JSONArray
 import org.json.JSONObject
@@ -63,14 +63,6 @@ internal fun deckOf(d: JSONObject, slot: String): Deck {
         d.optJSONObject("battle_plan"), d.optString("deck_name"), d.optInt("deck_id", -1))
 }
 
-internal fun simulate(
-    cat: Catalogue, arms: List<Deck>, opps: List<Deck>, seeds: List<Int>, workers: Int,
-): Map<String, Score> {
-    val payload = PayloadBuilder(cat.raw).build(arms, opps, seeds)
-    val env = JSONObject(Mobile.run(payload, workers.toLong()))
-    return Aggregator.aggregate(
-        env.getJSONArray("results").toString(), arms, seeds, opps.size)
-}
 
 /**
  * Cards a deck plays that we do not.

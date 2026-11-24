@@ -4,6 +4,7 @@ import online.autobattle.agent.engine.Archetype
 import online.autobattle.agent.engine.Catalogue
 import online.autobattle.agent.engine.Deck
 import online.autobattle.agent.engine.Score
+import online.autobattle.agent.engine.simulate
 import online.autobattle.agent.engine.Stats
 import org.json.JSONArray
 import org.json.JSONObject

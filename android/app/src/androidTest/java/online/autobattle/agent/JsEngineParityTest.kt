@@ -5,6 +5,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import mobile.Mobile
 import online.autobattle.agent.engine.JsRunner
 import org.json.JSONObject
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -79,12 +80,25 @@ class JsEngineParityTest {
 
     private fun read(asset: String): String = String(assetBytes(asset), Charsets.UTF_8)
 
-    /** The app context, so the runner reads cohort-worker.js from the APP's assets. */
-    private fun runner(timeoutMs: Long = 20 * 60 * 1000L) = JsRunner(
-        InstrumentationRegistry.getInstrumentation().targetContext,
-        assetBytes("battle-engine.js"),
-        timeoutMs,
-    )
+    /**
+     * One runner for the whole class, closed at the end.
+     *
+     * The app context, not the instrumentation one, so the runner reads
+     * cohort-worker.js from the APP's assets -- the same copy it will read in
+     * production. Reused rather than rebuilt per test because the WebView
+     * costs ~0.67s to bring up, and reuse is the behaviour worth testing:
+     * these tests run many cohorts through one runner, as Compete.train does.
+     */
+    private val js by lazy {
+        JsRunner(
+            InstrumentationRegistry.getInstrumentation().targetContext,
+            assetBytes("battle-engine.js"),
+            20 * 60 * 1000L,
+        )
+    }
+
+    @After
+    fun shutDown() = js.close()
 
     /**
      * The pinned engine is the bytes it claims to be. Without this, a corrupted
@@ -100,7 +114,6 @@ class JsEngineParityTest {
     /** The whole point: the JS engine gives the Go CLI's digest, every fixture. */
     @Test
     fun digestsMatchTheCli() {
-        val js = runner()
         for (f in fixtures) {
             val env = JSONObject(js.run(read(f.asset), 4))
             assertEquals(f.asset, f.digest, env.getString("hash"))
@@ -116,7 +129,6 @@ class JsEngineParityTest {
     @Test
     fun workerCountDoesNotChangeTheAnswer() {
         val f = fixtures.first { it.asset == "payload_v462.json" }
-        val js = runner()
         val one = JSONObject(js.run(read(f.asset), 1))
         val many = JSONObject(js.run(read(f.asset), 6))
         assertEquals(one.getString("hash"), many.getString("hash"))
@@ -128,7 +140,7 @@ class JsEngineParityTest {
     @Test
     fun resultsSurviveTheBridgeIntact() {
         val f = fixtures.first { it.asset == "payload.json" }   // 1,491 rows, the big one
-        val env = JSONObject(runner().run(read(f.asset), 4))
+        val env = JSONObject(js.run(read(f.asset), 4))
         val results = env.getJSONArray("results")
         assertEquals(f.matches, results.length())
         val row = results.getJSONObject(0)
@@ -145,8 +157,8 @@ class JsEngineParityTest {
     fun theTwoEnginesAgreeWithEachOtherOnThisDevice() {
         for (f in fixtures) {
             val go = JSONObject(Mobile.run(read(f.asset), 4L)).getString("hash")
-            val js = JSONObject(runner().run(read(f.asset), 4)).getString("hash")
-            assertEquals(f.asset, go, js)
+            val jsHash = JSONObject(js.run(read(f.asset), 4)).getString("hash")
+            assertEquals(f.asset, go, jsHash)
         }
     }
 }

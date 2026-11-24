@@ -134,6 +134,27 @@ android {
         versionName "1.35"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
+        // THE AAR'S PROVENANCE, READ FROM ITS OWN METADATA.
+        //
+        // libs/engine.aar.json is the single source of truth for which engine
+        // this build carries. Copying either value into Kotlin by hand would
+        // make a fifth place to keep in step (the JSON, EngineParityTest,
+        // ENGINE.md, check_engine_parity.sh), and the version has been wrong
+        // in one of those before.
+        //
+        // ENGINE_JS_SHA256 is sha256 of js/battle-engine.js at the AAR's
+        // source_commit. At runtime the app hashes the live file and compares:
+        // different bytes mean the engine has moved past this AAR, so the
+        // measurement falls back to the server's JS. It is a sha and not a
+        // version string because battle-engine.js carries no version constant,
+        // and not a canary payload because a fixed canary only ever detects
+        // the change it was built for -- all eleven parity fixtures give
+        // identical digests under 4.72 and 4.73.
+        def engineMeta = new groovy.json.JsonSlurper()
+            .parse(file('libs/engine.aar.json'))
+        buildConfigField "String", "ENGINE_VERSION", "\"${engineMeta.version}\""
+        buildConfigField "String", "ENGINE_JS_SHA256", "\"${engineMeta.js_sha256}\""
+
         // Side-by-side test install: ./gradlew assembleRelease -PdevId
         //
         // A build signed with the UPLOAD key cannot replace one Play
@@ -219,7 +240,10 @@ android {
         }
     }
 
-    buildFeatures { compose true }
+    buildFeatures {
+        compose true
+        buildConfig true   // for ENGINE_VERSION / ENGINE_JS_SHA256 above
+    }
 }
 
 dependencies {

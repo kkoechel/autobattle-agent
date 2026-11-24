@@ -1,11 +1,12 @@
 package online.autobattle.agent.data
 
 import android.content.Context
-import mobile.Mobile
 import online.autobattle.agent.api.ApiClient
 import online.autobattle.agent.engine.Aggregator
 import online.autobattle.agent.engine.Catalogue
 import online.autobattle.agent.engine.Deck
+import online.autobattle.agent.engine.Engines
+
 import online.autobattle.agent.engine.PayloadBuilder
 import online.autobattle.agent.engine.Score
 import org.json.JSONArray
@@ -135,7 +136,7 @@ class Analyst(private val ctx: Context, private val api: ApiClient) {
 
         val seedList = (0 until seeds).map { 1_000_000 + it }
         val payload = PayloadBuilder(cat).build(listOf(candidate), opponents, seedList)
-        val env = JSONObject(Mobile.run(payload, workers.toLong()))
+        val env = JSONObject(Engines.run(payload, workers))
         val score = Aggregator.aggregate(
             env.getJSONArray("results").toString(), listOf(candidate), seedList, opponents.size
         )["C0"]!!
@@ -148,7 +149,7 @@ class Analyst(private val ctx: Context, private val api: ApiClient) {
             score = score,
             matchups = matchups,
             seeds = seeds,
-            engineVersion = Mobile.version(),
+            engineVersion = Engines.lastUse.label,
             elapsedMs = System.currentTimeMillis() - started,
         )
     }

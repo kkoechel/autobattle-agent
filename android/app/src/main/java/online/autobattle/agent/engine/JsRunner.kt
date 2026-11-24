@@ -10,6 +10,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import java.io.ByteArrayInputStream
+import java.io.Closeable
 import java.security.MessageDigest
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -29,8 +30,9 @@ import java.util.concurrent.atomic.AtomicReference
  *    just fetches '/payload.json' and this class streams it.
  *  - The engine is served the same way, so the worker can importScripts it.
  *
- * Nothing is fetched from the real network here. [engineJs] is bytes the caller
- * has already verified against a sha256; this class only runs them.
+ * Nothing is fetched from the real network here: blockNetworkLoads is on.
+ * [engineJs] is bytes the caller has already verified against a sha256; this
+ * class only runs them.
  *
  * THE DIGEST IS COMPUTED IN KOTLIN, deliberately. The page hands back the same
  * canonical text that battle-engine.js's own hashResults() would hash -- the
@@ -38,97 +40,66 @@ import java.util.concurrent.atomic.AtomicReference
  * UTF-8 bytes. Letting the page call crypto.subtle instead would make the
  * digest depend on the WebView counting the synthetic origin as a secure
  * context, which is exactly the kind of thing that works until it does not.
+ *
+ * ONE WEBVIEW, REUSED. Measured on the S22: ~603 matches/s at 4 workers plus
+ * ~0.67s fixed per call, which is the WebView coming up and the 423KB engine
+ * being parsed. Compete.train makes up to fourteen calls in a run, so paying
+ * that on every call would add ten seconds of nothing. Each run reloads the page,
+ * which gives a fresh JS context and drops the previous run's workers.
  */
 class JsRunner(
     appCtx: Context,
     private val engineJs: ByteArray,
     private val timeoutMs: Long = 30 * 60 * 1000L,
-) : CohortRunner {
+) : CohortRunner, Closeable {
 
     private val appCtx = appCtx.applicationContext
+    private val main = Handler(Looper.getMainLooper())
+
     private val workerJs: ByteArray by lazy {
         this.appCtx.assets.open(WORKER_ASSET).use { it.readBytes() }
     }
 
+    /** State of the run in flight. Read by the bridge and the interceptor. */
+    private class Pending {
+        val canon = StringBuilder()
+        val latch = CountDownLatch(1)
+        val failure = AtomicReference<String?>(null)
+        val rows = AtomicInteger(-1)
+    }
+
+    @Volatile private var pending: Pending? = null
+    @Volatile private var payloadBytes: ByteArray = ByteArray(0)
+    @Volatile private var shards: Int = 4
+    @Volatile private var web: WebView? = null
+
     override val label = "js (server)"
 
-    @SuppressLint("SetJavaScriptEnabled")
+    @Synchronized
     override fun run(payload: String, workers: Int): String {
         check(Looper.myLooper() != Looper.getMainLooper()) {
             "JsRunner.run blocks until the cohort finishes; call it off the main thread"
         }
 
-        val payloadBytes = payload.toByteArray(Charsets.UTF_8)
-        val canon = StringBuilder()
-        val failure = AtomicReference<String?>(null)
-        val rows = AtomicInteger(-1)
-        val done = CountDownLatch(1)
-        val held = AtomicReference<WebView?>(null)
+        val p = Pending()
+        payloadBytes = payload.toByteArray(Charsets.UTF_8)
+        shards = workers.coerceIn(1, MAX_SHARDS)
+        pending = p
 
-        val bridge = object {
-            /** A slice of the canonical results text. */
-            @JavascriptInterface
-            fun chunk(s: String) {
-                synchronized(canon) { canon.append(s) }
-            }
+        val wv = webView()
+        main.post { wv.loadUrl("https://$HOST/index.html") }
 
-            @JavascriptInterface
-            fun done(n: Int) {
-                rows.set(n); done.countDown()
-            }
-
-            @JavascriptInterface
-            fun fail(message: String) {
-                failure.set(message); done.countDown()
-            }
-        }
-
-        val main = Handler(Looper.getMainLooper())
-        main.post {
-            val wv = WebView(appCtx)
-            held.set(wv)
-            wv.settings.javaScriptEnabled = true
-            wv.settings.domStorageEnabled = false
-            wv.settings.blockNetworkLoads = true   // nothing here may touch the real network
-            wv.addJavascriptInterface(bridge, BRIDGE)
-            wv.webViewClient = object : WebViewClient() {
-                override fun shouldInterceptRequest(
-                    view: WebView, request: WebResourceRequest,
-                ): WebResourceResponse? {
-                    if (!request.url.host.equals(HOST, ignoreCase = true)) return null
-                    return when (request.url.path) {
-                        "/", "/index.html" -> serve("text/html", page(workers).toByteArray(Charsets.UTF_8))
-                        "/engine.js" -> serve("application/javascript", engineJs)
-                        "/$WORKER_ASSET" -> serve("application/javascript", workerJs)
-                        "/payload.json" -> serve("application/json", payloadBytes)
-                        else -> null
-                    }
-                }
-
-                override fun onReceivedError(
-                    view: WebView, request: WebResourceRequest,
-                    error: android.webkit.WebResourceError,
-                ) {
-                    if (request.isForMainFrame) {
-                        failure.compareAndSet(null, "page failed to load: ${error.description}")
-                        done.countDown()
-                    }
-                }
-            }
-            wv.loadUrl("https://$HOST/index.html")
-        }
-
-        val finished = try {
-            done.await(timeoutMs, TimeUnit.MILLISECONDS)
-        } finally {
-            main.post { held.getAndSet(null)?.let { it.loadUrl("about:blank"); it.destroy() } }
-        }
+        val finished = p.latch.await(timeoutMs, TimeUnit.MILLISECONDS)
+        pending = null
+        // Leave the page on about:blank so a finished run holds no workers and
+        // no multi-megabyte result string while the next payload is built.
+        main.post { web?.loadUrl("about:blank") }
 
         if (!finished) throw IllegalStateException("JS engine did not finish within ${timeoutMs}ms")
-        failure.get()?.let { throw IllegalStateException("JS engine: $it") }
+        p.failure.get()?.let { throw IllegalStateException("JS engine: $it") }
 
-        val text = synchronized(canon) { canon.toString() }
-        check(text.isNotEmpty()) { "JS engine returned ${rows.get()} rows but no results text" }
+        val text = synchronized(p.canon) { p.canon.toString() }
+        check(text.isNotEmpty()) { "JS engine reported ${p.rows.get()} rows but sent no results" }
 
         val hash = MessageDigest.getInstance("SHA-256")
             .digest(text.toByteArray(Charsets.UTF_8))
@@ -138,6 +109,78 @@ class JsRunner(
         // valid JSON and can be megabytes, so re-parsing it to re-serialise it
         // would cost more than the simulation on a small run.
         return """{"results":$text,"hash":"$hash"}"""
+    }
+
+    /** Creates the WebView on the main thread, once, and waits for it. */
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun webView(): WebView {
+        web?.let { return it }
+        val made = AtomicReference<WebView?>(null)
+        val ready = CountDownLatch(1)
+        main.post {
+            val wv = WebView(appCtx)
+            wv.settings.javaScriptEnabled = true
+            wv.settings.domStorageEnabled = false
+            wv.settings.blockNetworkLoads = true
+            wv.addJavascriptInterface(bridge, BRIDGE)
+            wv.webViewClient = client
+            made.set(wv)
+            ready.countDown()
+        }
+        check(ready.await(30, TimeUnit.SECONDS)) { "WebView was not created within 30s" }
+        return made.get()!!.also { web = it }
+    }
+
+    override fun close() {
+        val wv = web ?: return
+        web = null
+        main.post { wv.loadUrl("about:blank"); wv.destroy() }
+    }
+
+    private val bridge = object {
+        /** A slice of the canonical results text. */
+        @JavascriptInterface
+        fun chunk(s: String) {
+            val p = pending ?: return
+            synchronized(p.canon) { p.canon.append(s) }
+        }
+
+        @JavascriptInterface
+        fun done(n: Int) {
+            val p = pending ?: return
+            p.rows.set(n); p.latch.countDown()
+        }
+
+        @JavascriptInterface
+        fun fail(message: String) {
+            val p = pending ?: return
+            p.failure.compareAndSet(null, message); p.latch.countDown()
+        }
+    }
+
+    private val client = object : WebViewClient() {
+        override fun shouldInterceptRequest(
+            view: WebView, request: WebResourceRequest,
+        ): WebResourceResponse? {
+            if (!request.url.host.equals(HOST, ignoreCase = true)) return null
+            return when (request.url.path) {
+                "/", "/index.html" -> serve("text/html", page(shards).toByteArray(Charsets.UTF_8))
+                "/engine.js" -> serve("application/javascript", engineJs)
+                "/$WORKER_ASSET" -> serve("application/javascript", workerJs)
+                "/payload.json" -> serve("application/json", payloadBytes)
+                else -> null
+            }
+        }
+
+        override fun onReceivedError(
+            view: WebView, request: WebResourceRequest,
+            error: android.webkit.WebResourceError,
+        ) {
+            if (!request.isForMainFrame) return
+            val p = pending ?: return
+            p.failure.compareAndSet(null, "page failed to load: ${error.description}")
+            p.latch.countDown()
+        }
     }
 
     private fun serve(mime: String, bytes: ByteArray) = WebResourceResponse(
@@ -151,12 +194,12 @@ class JsRunner(
      *
      * Sharding cannot change the answer: hashResults() sorts by match_id before
      * hashing, and the merge is keyed by match_id too. Verified against the Go
-     * CLI's digest for payload.json at 2, 4 and 6 shards.
+     * CLI's digest for payload.json at 1, 2, 4 and 6 shards.
      */
     private fun page(workers: Int): String = """
 <!doctype html><meta charset="utf-8"><title>cohort</title><body><script>
 (function () {
-  var W = Math.max(1, Math.min(6, $workers));
+  var W = Math.max(1, Math.min($MAX_SHARDS, $workers));
   function fail(e) { $BRIDGE.fail(String((e && e.message) || e)); }
   try {
     fetch('/payload.json').then(function (r) { return r.json(); }).then(function (payload) {
@@ -212,5 +255,6 @@ class JsRunner(
         const val HOST = "engine.local"
         const val BRIDGE = "Agent"
         const val WORKER_ASSET = "cohort-worker.js"
+        const val MAX_SHARDS = 6
     }
 }

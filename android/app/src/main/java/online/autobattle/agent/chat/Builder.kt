@@ -1,10 +1,11 @@
 package online.autobattle.agent.chat
 
-import mobile.Mobile
 import online.autobattle.agent.engine.Aggregator
 import online.autobattle.agent.engine.Archetype
 import online.autobattle.agent.engine.Catalogue
 import online.autobattle.agent.engine.Deck
+import online.autobattle.agent.engine.Engines
+
 import online.autobattle.agent.engine.Mutate
 import online.autobattle.agent.engine.Names
 import online.autobattle.agent.engine.PayloadBuilder
@@ -220,7 +221,7 @@ class Builder(
         arms.add(deckOf(control, "CTRL"))
 
         val payload = PayloadBuilder(cat.raw).build(arms, opponents, seedList)
-        val env = JSONObject(Mobile.run(payload, workers.toLong()))
+        val env = JSONObject(Engines.run(payload, workers))
         val scored = Aggregator.aggregate(
             env.getJSONArray("results").toString(), arms, seedList, opponents.size)
 

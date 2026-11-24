@@ -1,13 +1,16 @@
 package online.autobattle.agent.game
 
-import mobile.Mobile
 import online.autobattle.agent.engine.Aggregator
 import online.autobattle.agent.engine.Archetype
 import online.autobattle.agent.engine.Catalogue
 import online.autobattle.agent.engine.Deck
+import online.autobattle.agent.engine.Engines
+
 import online.autobattle.agent.engine.Mutate
 import online.autobattle.agent.engine.PayloadBuilder
 import online.autobattle.agent.engine.Score
+import online.autobattle.agent.engine.simulate
+
 import online.autobattle.agent.engine.Stats
 import org.json.JSONArray
 import org.json.JSONObject
@@ -238,15 +241,11 @@ object Compete {
         return meta
     }
 
+    /** Local name for the shared runner; which engine runs is Engines' call. */
     private fun score(
         cat: Catalogue, arms: List<Deck>, opponents: List<Deck>,
         seeds: List<Int>, workers: Int,
-    ): Map<String, Score> {
-        val payload = PayloadBuilder(cat.raw).build(arms, opponents, seeds)
-        val env = JSONObject(Mobile.run(payload, workers.toLong()))
-        return Aggregator.aggregate(
-            env.getJSONArray("results").toString(), arms, seeds, opponents.size)
-    }
+    ): Map<String, Score> = simulate(cat, arms, opponents, seeds, workers)
 
     /**
      * What the plan trial found, and whether it is worth believing.
@@ -663,7 +662,7 @@ object Compete {
         // cannot say WHICH seed lost.
         val builder = PayloadBuilder(cat.raw)
         val payload = builder.build(listOf(mine), opponents, block)
-        val env = JSONObject(Mobile.run(payload, workers.toLong()))
+        val env = JSONObject(Engines.run(payload, workers))
         val raw = env.getJSONArray("results")
         val s = Aggregator.aggregate(raw.toString(), listOf(mine), block, opponents.size)["me"]
             ?: error("the engine returned no result")
@@ -810,7 +809,7 @@ object Compete {
         onProgress(Progress("Playing the round back", 0, 1))
         val builder = PayloadBuilder(cat.raw)
         val payload = builder.build(listOf(mine), rivals, seeds)
-        val out = JSONObject(Mobile.run(payload, workers.toLong()))
+        val out = JSONObject(Engines.run(payload, workers))
         val raw = out.getJSONArray("results")
         val s = Aggregator.aggregate(raw.toString(), listOf(mine), seeds, rivals.size)["me"]
             ?: error("the engine returned no result")

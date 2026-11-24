@@ -49,3 +49,23 @@ object GoRunner : CohortRunner {
     override fun run(payload: String, workers: Int): String =
         Mobile.run(payload, workers.toLong())
 }
+
+/**
+ * Payload in, scores out -- the three statements every caller used to repeat.
+ *
+ * There were two copies of this, byte for byte identical and unshared:
+ * chat/Lab.kt's `simulate` and game/Compete.kt's private `score`, with four
+ * more sites inlining the same thing. That is how a call site silently keeps
+ * running the old engine after everything else has moved, so there is now one.
+ *
+ * Which engine actually runs is [Engines]' decision, not the caller's.
+ */
+fun simulate(
+    cat: Catalogue, arms: List<Deck>, opponents: List<Deck>,
+    seeds: List<Int>, workers: Int,
+): Map<String, Score> {
+    val payload = PayloadBuilder(cat.raw).build(arms, opponents, seeds)
+    val env = org.json.JSONObject(Engines.run(payload, workers))
+    return Aggregator.aggregate(
+        env.getJSONArray("results").toString(), arms, seeds, opponents.size)
+}

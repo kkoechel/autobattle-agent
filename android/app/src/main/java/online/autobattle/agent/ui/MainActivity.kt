@@ -24,6 +24,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import online.autobattle.agent.api.ApiClient
+import online.autobattle.agent.engine.Engines
 import online.autobattle.agent.api.ApiException
 import online.autobattle.agent.data.Secrets
 
@@ -40,6 +41,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Which engine measurements run on. Nothing is fetched here; the first
+        // cohort pays for the check, and without this call Engines falls back
+        // to the AAR and says the check did not happen.
+        Engines.init(applicationContext)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED) {

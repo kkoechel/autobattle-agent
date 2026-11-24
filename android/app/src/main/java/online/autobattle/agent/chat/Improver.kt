@@ -1,6 +1,5 @@
 package online.autobattle.agent.chat
 
-import mobile.Mobile
 import online.autobattle.agent.engine.Aggregator
 import online.autobattle.agent.engine.Archetype
 import online.autobattle.agent.engine.Catalogue
@@ -8,6 +7,7 @@ import online.autobattle.agent.engine.Deck
 import online.autobattle.agent.engine.Mutate
 import online.autobattle.agent.engine.PayloadBuilder
 import online.autobattle.agent.engine.Score
+import online.autobattle.agent.engine.simulate
 import online.autobattle.agent.engine.Stats
 import org.json.JSONArray
 import org.json.JSONObject
