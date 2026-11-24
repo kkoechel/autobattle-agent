@@ -70,7 +70,25 @@ object Engines {
      */
     fun run(payload: String, workers: Int): String {
         val runner = pick()
-        return runner.run(payload, workers)
+        if (runner === GoRunner) return runner.run(payload, workers)
+        return try {
+            runner.run(payload, workers)
+        } catch (t: Throwable) {
+            // The JS path broke: a truncated engine, a WebView that would not
+            // come up, a payload too big for the bridge. A number from the
+            // older engine beats no number at all -- but it is no longer a
+            // CHECKED number, so it is labelled like any other unverified one.
+            synchronized(this) { js?.close(); js = null; jsSha = null }
+            lastUse = Use("go ${BuildConfig.ENGINE_VERSION}", checked = false, usingJs = false)
+            GoRunner.run(payload, workers)
+        }
+    }
+
+    /** Test-only: forget the context as well as the cache. */
+    internal fun forget() {
+        synchronized(this) { js?.close(); js = null; jsSha = null }
+        appCtx = null
+        lastUse = Use("go ${BuildConfig.ENGINE_VERSION}", checked = false, usingJs = false)
     }
 
     private fun pick(): CohortRunner {

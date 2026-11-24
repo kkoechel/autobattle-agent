@@ -44,18 +44,17 @@ object EngineSource {
         // Re-hashed on every read rather than trusting a stored sha: a
         // truncated write or a half-finished download must not be able to
         // present itself as a known-good engine.
-        val cached = if (f.exists()) runCatching { f.readBytes() }.getOrNull() else null
-        if (cached != null && cached.isNotEmpty() &&
-            System.currentTimeMillis() - f.lastModified() < maxAgeMs
-        ) {
+        val cached = if (f.exists()) runCatching { f.readBytes() }.getOrNull()?.takeIf(::looksLikeEngine)
+            else null
+        if (cached != null && System.currentTimeMillis() - f.lastModified() < maxAgeMs) {
             return Loaded(cached, sha256(cached), fresh = false)
         }
 
-        val downloaded = runCatching { download() }.getOrNull()
-        if (downloaded == null || downloaded.isEmpty()) {
+        val downloaded = runCatching { download() }.getOrNull()?.takeIf(::looksLikeEngine)
+        if (downloaded == null) {
             // Stale beats absent: an old engine still tells us whether the AAR
             // was current as of the last time we could ask.
-            return cached?.takeIf { it.isNotEmpty() }?.let { Loaded(it, sha256(it), fresh = false) }
+            return cached?.let { Loaded(it, sha256(it), fresh = false) }
         }
 
         runCatching { File(f.parentFile, "$CACHE_FILE.tmp").let { tmp ->
@@ -86,6 +85,22 @@ object EngineSource {
         } finally {
             conn.disconnect()
         }
+    }
+
+    /**
+     * A cheap shape check, not an integrity check.
+     *
+     * There is no sha to verify against, so this cannot detect a substituted
+     * engine -- HTTPS is what does that. What it DOES catch is the common
+     * failure: a truncated download or a half-written cache file, which would
+     * otherwise be hashed, compared, and then handed to a WebView as the
+     * engine. A captive-portal HTML page fails it too.
+     */
+    private fun looksLikeEngine(bytes: ByteArray): Boolean {
+        if (bytes.size < 100_000) return false
+        val head = String(bytes, 0, minOf(bytes.size, 4096), Charsets.UTF_8)
+        val tail = String(bytes, maxOf(0, bytes.size - 4096), minOf(bytes.size, 4096), Charsets.UTF_8)
+        return "BattleEngine" in head + tail && "runCohort" in head + tail
     }
 
     fun sha256(bytes: ByteArray): String =
