@@ -106,6 +106,24 @@ object Engines {
             return GoRunner
         }
 
+        // THE CHEAP PATH. GET /api/v1/engine declares {version, sha256, url},
+        // so the question "has the engine moved past this build?" costs a few
+        // hundred bytes instead of a 437KB download, and the bytes that do get
+        // downloaded are verified against a sha the server stated rather than
+        // merely sniffed for shape.
+        EngineSource.describe()?.let { d ->
+            if (d.sha == BuildConfig.ENGINE_JS_SHA256) {
+                lastUse = Use("go ${BuildConfig.ENGINE_VERSION}", checked = true, usingJs = false)
+                return GoRunner
+            }
+            EngineSource.loadVerified(ctx, d)?.let { got ->
+                lastUse = Use("js ${d.version} (server)", checked = true, usingJs = true)
+                return runnerFor(ctx, got.bytes, got.sha)
+            }
+            // Declared, but the bytes could not be had intact. Fall through:
+            // the old path may still have a usable cached engine.
+        }
+
         val live = EngineSource.load(ctx)
         if (live == null) {
             lastUse = Use("go ${BuildConfig.ENGINE_VERSION}", checked = false, usingJs = false)
@@ -118,17 +136,20 @@ object Engines {
         }
 
         // The engine has moved. Build (or rebuild) the JS runner for these bytes.
-        val runner = synchronized(this) {
-            if (js == null || jsSha != live.sha) {
+        lastUse = Use("js ${live.sha.take(8)} (server)", checked = true, usingJs = true)
+        return runnerFor(ctx, live.bytes, live.sha)
+    }
+
+    /** The JS runner for exactly these bytes, rebuilt when they change. */
+    private fun runnerFor(ctx: Context, bytes: ByteArray, sha: String): CohortRunner =
+        synchronized(this) {
+            if (js == null || jsSha != sha) {
                 js?.close()
-                js = JsRunner(ctx, live.bytes)
-                jsSha = live.sha
+                js = JsRunner(ctx, bytes)
+                jsSha = sha
             }
             js!!
         }
-        lastUse = Use("js ${live.sha.take(8)} (server)", checked = true, usingJs = true)
-        return runner
-    }
 
     /** Drops any cached engine and runner. Tests, and a forced re-check. */
     fun reset(ctx: Context) {

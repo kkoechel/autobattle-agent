@@ -9,12 +9,22 @@ import java.security.MessageDigest
 /**
  * The live js/battle-engine.js: fetched, fingerprinted, kept on disk.
  *
- * WHAT THE SHA IS AND IS NOT. It is a FINGERPRINT used to tell whether the
- * engine has moved past the AAR -- not an integrity check. There is nothing to
- * verify it against: the server declares no sha for this file (the draft app
- * gets one in its /draft/compute payload; asking for the same on the agent API
- * is a main-app change we deliberately do not depend on). What protects the
- * bytes is HTTPS to autobattle.online, which is exactly the trust ui/Replay.kt
+ * THE SERVER NOW DECLARES ITS ENGINE. GET /api/v1/engine answers
+ * {engine_version, engine_sha256, engine_url} (main added it 2026-11-24 at
+ * Ryan's request), so the normal path is: ask, compare the declared sha with
+ * this build's, and download only when they differ -- then VERIFY the bytes
+ * against the sha the server declared. That is a real integrity check, which
+ * the old path could not do, and it replaces a 437KB download every six hours
+ * with a request of a couple of hundred bytes.
+ *
+ * engine_url is sha-versioned, so unlike the bare path it can be cached hard.
+ * Its host is checked before it is fetched: a URL out of a response body is
+ * not a licence to go anywhere.
+ *
+ * THE OLD PATH IS KEPT as a fallback, for when the endpoint cannot be reached.
+ * There the sha is only a FINGERPRINT for "has the engine moved past the AAR",
+ * not an integrity check -- nothing declares the expected value, so HTTPS to
+ * autobattle.online is what protects the bytes, exactly the trust ui/Replay.kt
  * already places in the same file when it loads it into a WebView.
  *
  * CACHE-BUSTING IS NOT OPTIONAL. The plain URL is served
@@ -26,7 +36,72 @@ import java.security.MessageDigest
 object EngineSource {
 
     private const val ENGINE_URL = "https://autobattle.online/js/battle-engine.js"
+    private const val DESCRIBE_URL = "https://autobattle.online/api/v1/engine"
     private const val CACHE_FILE = "battle-engine.js"
+
+    /** Only this host is ever fetched, whatever a response body asks for. */
+    private const val ALLOWED_HOST = "autobattle.online"
+
+    /** What the server says its engine is. */
+    class Desc(val version: String, val sha: String, val url: String)
+
+    /**
+     * Asks the server which engine it is serving. Null when the endpoint
+     * cannot be reached or answers something unusable -- the caller then
+     * falls back to [load].
+     */
+    fun describe(): Desc? = runCatching {
+        val conn = (java.net.URL(DESCRIBE_URL).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            useCaches = false
+            setRequestProperty("Cache-Control", "no-cache")
+            setRequestProperty("User-Agent", "AutoBattleAgent-Android")
+            connectTimeout = 10_000
+            readTimeout = 15_000
+        }
+        val body = try {
+            if (conn.responseCode != 200) return@runCatching null
+            conn.inputStream.use { it.readBytes() }.toString(Charsets.UTF_8)
+        } finally {
+            conn.disconnect()
+        }
+        val o = org.json.JSONObject(body)
+        val sha = o.optString("engine_sha256").lowercase()
+        val url = o.optString("engine_url")
+        val version = o.optString("engine_version")
+        // Everything here came off the wire, so none of it is trusted on sight:
+        // a sha that is not a sha cannot be compared, and a url that is not on
+        // our own host is not fetched.
+        if (!sha.matches(Regex("[0-9a-f]{64}"))) return@runCatching null
+        val host = runCatching { java.net.URL(url).host }.getOrNull()
+        if (!url.startsWith("https://") || !host.equals(ALLOWED_HOST, ignoreCase = true)) {
+            return@runCatching null
+        }
+        Desc(version, sha, url)
+    }.getOrNull()
+
+    /**
+     * The engine the server declared, from cache or freshly downloaded, with
+     * the bytes CHECKED against [want].sha. Null when it cannot be had intact.
+     */
+    fun loadVerified(ctx: Context, want: Desc): Loaded? {
+        val f = File(ctx.applicationContext.filesDir, CACHE_FILE)
+        val cached = if (f.exists()) runCatching { f.readBytes() }.getOrNull() else null
+        if (cached != null && sha256(cached) == want.sha) {
+            return Loaded(cached, want.sha, fresh = false)
+        }
+        val got = runCatching { download(want.url) }.getOrNull() ?: return null
+        // The whole point of the endpoint: bytes that do not hash to what the
+        // server declared are discarded, not run.
+        if (sha256(got) != want.sha || !looksLikeEngine(got)) return null
+        runCatching {
+            File(f.parentFile, "$CACHE_FILE.tmp").let { tmp ->
+                tmp.writeBytes(got)
+                if (!tmp.renameTo(f)) { f.writeBytes(got); tmp.delete() }
+            }
+        }
+        return Loaded(got, want.sha, fresh = true)
+    }
 
     /** Six hours: an engine ships a few times a week at most. */
     const val DEFAULT_MAX_AGE_MS = 6L * 60 * 60 * 1000
@@ -69,9 +144,10 @@ object EngineSource {
         File(ctx.applicationContext.filesDir, CACHE_FILE).delete()
     }
 
-    private fun download(): ByteArray {
+    private fun download(url: String? = null): ByteArray {
         val bucket = System.currentTimeMillis() / DEFAULT_MAX_AGE_MS
-        val conn = (URL("$ENGINE_URL?v=$bucket").openConnection() as HttpURLConnection).apply {
+        val target = url ?: "$ENGINE_URL?v=$bucket"
+        val conn = (URL(target).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             useCaches = false
             setRequestProperty("Cache-Control", "no-cache")
@@ -80,7 +156,7 @@ object EngineSource {
             readTimeout = 60_000
         }
         try {
-            if (conn.responseCode != 200) error("engine download: HTTP ${conn.responseCode}")
+            if (conn.responseCode != 200) error("engine download: HTTP ${conn.responseCode} from $target")
             return conn.inputStream.use { it.readBytes() }
         } finally {
             conn.disconnect()

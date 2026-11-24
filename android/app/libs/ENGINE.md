@@ -413,3 +413,41 @@ Draft #2424 was what that looks like: one match whose board doubled every turn,
 this guards the next one.
 
 47/47 instrumented tests on the S22 with both changes in.
+
+## 2026-11-24: the server declares its engine, and 4.75 proves the design
+
+Main built `GET /api/v1/engine` the same day it was asked for. It answers
+`{engine_version, engine_sha256, engine_url}`, and `engine_url` is
+sha-versioned.
+
+`EngineSource.describe()` is now the normal path and the old bare-URL download
+is the fallback. Three things change:
+
+- **Staleness costs a few hundred bytes**, not a 437KB download every 6 hours.
+- **The download is CHECKED**, not sniffed. It must hash to the sha the server
+  declared or it is discarded. The old path could only ask "is it big enough
+  and does it contain the right two symbols", because nothing stated what the
+  bytes should be.
+- **The label says a version**: "js 4.75 (server)" rather than "js 47c575c6".
+
+`engine_url` comes out of a response body, so its host is checked against
+autobattle.online before anything is fetched from it.
+
+### 4.75 is the first bump that changed an answer
+
+Ten of the eleven parity fixtures are byte-identical from 4.72 through 4.75.
+`payload.json`, the 1,491-match one, is not: `1b5e48ac...` -> `6ac148d4...`
+under 4.75 (xN link keywords now use the whole multiplier; `create_token_copy`
+takes `max_tokens`).
+
+This is worth recording because it settles the canary argument for good. The
+fixture a canary would have been built from, `payload_v472.json`, is one of the
+TEN THAT DID NOT CHANGE — so a canary would have reported "no drift" across
+4.73, 4.74 and 4.75, including the one bump that genuinely alters results on a
+real cohort. Comparing shas caught all three without knowing anything about
+what the engine does.
+
+It also means a stale AAR is no longer only slower. On 4.72 against a league
+scoring 4.75, a 1,491-match cohort now measures differently.
+
+49/49 instrumented tests on the S22.

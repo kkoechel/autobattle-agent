@@ -8,6 +8,8 @@ import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume
 import org.junit.Test
@@ -77,6 +79,42 @@ class EnginesRoutingTest {
         )
         assertTrue("it reached the server, so it checked", Engines.lastUse.checked)
         assertEquals("a checked measurement needs no caution", "", Engines.lastUse.caution)
+    }
+
+    /**
+     * The server must serve the engine it says it serves.
+     *
+     * This is what GET /api/v1/engine bought us and the old path could not do:
+     * before, a download was checked for SHAPE (big enough, has the right two
+     * symbols in it) because nothing declared what it should hash to.
+     */
+    @Test
+    fun theServerDeclaresTheEngineItActuallyServes() {
+        Engines.forget()
+        Engines.reset(ctx)
+        val d = EngineSource.describe()
+        Assume.assumeNotNull("offline: there is nothing to check", d)
+
+        val got = EngineSource.loadVerified(ctx, d!!)
+        assertNotNull("declared ${d.sha.take(8)} but those bytes did not verify", got)
+        assertEquals("the sha must be the declared one", d.sha, got!!.sha)
+        assertTrue("an engine is a few hundred KB", got.bytes.size > 100_000)
+    }
+
+    /**
+     * And a declaration that does not match the bytes must be REFUSED rather
+     * than run. Without this the sha would be decoration.
+     */
+    @Test
+    fun bytesThatDoNotMatchTheDeclaredShaAreRefused() {
+        Engines.forget()
+        Engines.reset(ctx)
+        val d = EngineSource.describe()
+        Assume.assumeNotNull("offline: there is nothing to check", d)
+
+        val lie = EngineSource.Desc(d!!.version, "0".repeat(64), d.url)
+        assertNull("bytes that hash to something else were accepted",
+            EngineSource.loadVerified(ctx, lie))
     }
 
     /**
