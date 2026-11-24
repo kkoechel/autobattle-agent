@@ -133,7 +133,23 @@ def main() -> int:
 
     print(f"measuring {len(cands)} candidates vs {len(opps)} field decks, "
           f"{SEEDS} seeds, round {round_no}", flush=True)
-    sc = h.evaluate(cands, opps, block, drop_crashers=True, log=print)
+    try:
+        sc = h.evaluate(cands, opps, block, drop_crashers=True, log=print)
+    except RuntimeError as e:
+        # Every candidate rides in ONE validator call here -- that batching is
+        # the whole economy of this script -- so there is no partial result to
+        # keep when the call cannot end, and nothing to degrade to. What this
+        # catch buys is a diagnosis instead of a traceback, and an honest exit:
+        # no pool was written, so the unit SHOULD read as failed.
+        #
+        # The pool is a precompute, not a dependency. Without it the phone runs
+        # the twelve-generation cold climb it ran before shells existed, which
+        # is slower and just as correct.
+        print(f"shells: measuring stopped -- {e}", file=sys.stderr)
+        print("shells: no pool written; the phone falls back to a cold climb. "
+              "Re-run with ABAGENT_BISECT_TIMEOUTS=1 to find which candidate "
+              "it was, or open the kept payload named above.", file=sys.stderr)
+        return 1
 
     ranked = sorted(((v.wins, k) for k, v in sc.items()), reverse=True)
     keep, kept_lists = [], []

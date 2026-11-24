@@ -110,14 +110,33 @@ def main() -> int:
     # round-robin and the cheapest -- the cards map is ~900KB and process
     # startup is the fixed cost, so folding opponents into one payload
     # amortises both.
-    rows = []
+    rows, unscored = [], []
     for i, me in enumerate(decks):
         others = [harness.Opponent(slot_id=f"o{j}", cards=expand(o["cards"]),
                                    battle_plan=o.get("battle_plan") or {},
                                    name=o["handle"])
                   for j, o in enumerate(decks) if j != i]
-        sc = h.evaluate([("me", expand(me["cards"]), me.get("battle_plan") or {})],
-                        others, block, drop_crashers=True, log=print)
+        try:
+            sc = h.evaluate([("me", expand(me["cards"]), me.get("battle_plan") or {})],
+                            others, block, drop_crashers=True, log=print)
+        except RuntimeError as e:
+            # A validator call that cannot END is the one failure this loop had
+            # no answer for. drop_crashers absorbs a PANIC and returns {}, which
+            # the branch below scores 0; a TIMEOUT re-raises by design, because
+            # bisecting one costs more than the round has. Uncaught, that raise
+            # exits 1 and scores NOBODY -- which is exactly what happened on
+            # 2026-11-24, three consecutive rounds dead at the two-minute mark.
+            #
+            # The rule for this is already written above: a worse round beats no
+            # round. So the deck is left OUT and the count travels with the
+            # result. Deliberately NOT scored 0 like a panic is: a timeout is as
+            # likely to be this box under contention as a bad deck, and a 0
+            # recorded against a player because the box was busy is a lie about
+            # that player, where a missing row is only a gap.
+            unscored.append(me["handle"])
+            print(f"round: {me['handle']}'s deck NEVER FINISHED; left unscored "
+                  f"-- {e}", file=sys.stderr)
+            continue
         if "me" not in sc:
             print(f"round: {me['handle']}'s deck crashed the engine; scored 0")
             rows.append({"player_id": me["player_id"], "deck_name": me["deck_name"],
@@ -148,11 +167,26 @@ def main() -> int:
               "cards": d["cards"], "battle_plan": d.get("battle_plan") or {}}
              for d in decks]
 
+    # Two is the smallest field that can be a round-robin at all. Below that
+    # the standings would move on a handful of surviving decks and read as a
+    # real result, so nothing is posted and the unit fails visibly instead.
+    if len(rows) < 2:
+        print(f"round: only {len(rows)} of {len(decks)} deck(s) could be "
+              f"scored; not posting a round", file=sys.stderr)
+        return 1
+
+    note = f"round-robin over {len(rows)} decks"
+    if unscored:
+        # In the record, not only in the journal. The file's own standard: a
+        # result is never a lie about itself.
+        who = (", ".join(unscored) if len(unscored) <= 5
+               else f"{len(unscored)} decks")
+        note += f"; {len(unscored)} unscored (never finished): {who}"
     out = call("/round", {"results": rows, "seeds": SEEDS, "seed0": seed0,
-                          "decks": snaps,
-                          "note": f"round-robin over {len(decks)} decks"},
+                          "decks": snaps, "note": note},
                admin=True)
-    print(f"round {out['round_id']}: {out['decks']} decks scored")
+    print(f"round {out['round_id']}: {out['decks']} decks scored"
+          + (f", {len(unscored)} unscored" if unscored else ""))
     return 0
 
 

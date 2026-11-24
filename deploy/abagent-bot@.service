@@ -64,6 +64,15 @@ SuccessExitStatus=75
 # next to the TimeoutStartSec it has to stay under.
 Environment=ABAGENT_DEADLINE=1200
 
+# ONE validator call's wall cap, three quarters of the TimeoutStartSec below.
+# The harness stops a call that cannot end, names the deck and keeps the
+# payload; without that the whole unit is SIGKILLed at the wall with nothing
+# saved, which is how 29 timeouts a day went unexplained until 2026-11-24.
+# Three quarters rather than a measured rate: the cap only has to sit strictly
+# under the supervisor's kill, and calibrating one from throughput is what
+# broke agentgame-round that same day -- 120s allowed for work needing 480.
+Environment=ABAGENT_VALIDATOR_TIMEOUT=1125
+
 TimeoutStartSec=1500
 
 [Install]

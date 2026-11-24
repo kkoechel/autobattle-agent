@@ -146,6 +146,15 @@ SuccessExitStatus=75
 # legal moment runs its full length past cycle_max: 2400 - 500 + 1000 = 2900.
 # A wall at 2700 would kill a legally-admitted rebase, which is the 900-vs-900
 # mistake again with bigger numbers.
+# ONE validator call's wall cap, three quarters of the TimeoutStartSec below.
+# The harness stops a call that cannot end, names the deck and keeps the
+# payload; without that the whole unit is SIGKILLed at the wall with nothing
+# saved, which is how 29 timeouts a day went unexplained until 2026-11-24.
+# Three quarters rather than a measured rate: the cap only has to sit strictly
+# under the supervisor's kill, and calibrating one from throughput is what
+# broke agentgame-round that same day -- 120s allowed for work needing 480.
+Environment=ABAGENT_VALIDATOR_TIMEOUT=2250
+
 TimeoutStartSec=3000
 
 [Install]

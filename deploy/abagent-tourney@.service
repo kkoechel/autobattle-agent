@@ -20,6 +20,15 @@ ExecStart=/usr/bin/python3 -u -m abagent.cli --deck-id ${ABAGENT_DECK_ID} \
 # Three HTTP POSTs. Costs nothing, so it does not need to be niced below the
 # explorers -- but it must never be the reason a cycle misses its window.
 Nice=15
+# ONE validator call's wall cap, three quarters of the TimeoutStartSec below.
+# The harness stops a call that cannot end, names the deck and keeps the
+# payload; without that the whole unit is SIGKILLed at the wall with nothing
+# saved, which is how 29 timeouts a day went unexplained until 2026-11-24.
+# Three quarters rather than a measured rate: the cap only has to sit strictly
+# under the supervisor's kill, and calibrating one from throughput is what
+# broke agentgame-round that same day -- 120s allowed for work needing 480.
+Environment=ABAGENT_VALIDATOR_TIMEOUT=135
+
 TimeoutStartSec=180
 
 NoNewPrivileges=yes

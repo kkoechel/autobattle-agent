@@ -100,15 +100,31 @@ def main() -> int:
         return 1
     print(f"measuring {len(cands)} candidates vs {len(opps)} field decks, "
           f"{SEEDS} seeds", flush=True)
-    sc = h.evaluate(cands, opps, block, drop_crashers=True, log=print)
+    try:
+        sc = h.evaluate(cands, opps, block, drop_crashers=True, log=print)
+    except RuntimeError as e:
+        # One call for the whole batch, so there is no partial result to keep.
+        # See make_shells.py for the same catch and the same reasoning.
+        print(f"starters: measuring stopped -- {e}", file=sys.stderr)
+        print("starters: nothing written; the previous starter set stands.",
+              file=sys.stderr)
+        return 1
 
     # The field's OWN median, measured the same way, is the target. Using an
     # absolute win count would drift the moment the field got stronger.
     fs = []
     for i, d in enumerate(field):
         others = [o for j, o in enumerate(opps) if j != i]
-        s = h.evaluate([("f", expand(d["cards"]), d.get("battle_plan") or {})],
-                       others, block, drop_crashers=True, log=print)
+        try:
+            s = h.evaluate([("f", expand(d["cards"]), d.get("battle_plan") or {})],
+                           others, block, drop_crashers=True, log=print)
+        except RuntimeError as e:
+            # The target is a MEDIAN, so one missing field deck moves it by
+            # less than the noise on it. Dropping that deck is strictly better
+            # than losing the whole calibration to it.
+            print(f"starters: {d['handle']}'s deck never finished; left out of "
+                  f"the median -- {e}", file=sys.stderr)
+            continue
         if "f" in s:
             fs.append(s["f"].wins)
     target = st.median(fs) if fs else len(opps) / 2.0

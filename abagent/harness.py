@@ -120,21 +120,35 @@ class Harness:
         # ended. Ryan fixed that card, and chose NOT to bound board size in the
         # engines, so the next such card does this again.
         #
-        # Scaled by match count rather than fixed, because `evaluate` bisects a
-        # failing payload: a fixed budget would be paid again at every level
-        # (log2(40) of them) and blow the run's deadline while hunting. Halving
-        # the matches halves the budget, so the whole hunt costs about twice
-        # the first probe.
-        # RATE IS A PROPERTY OF THE BOX, NOT OF THE ENGINE, and the box is a
-        # shared 1-vCPU at load ~6.5 where wall time runs several times CPU
-        # time. 8 matches/s is taken from what subgames-nyc1 actually achieved
-        # (8,568 matches, 935s of CPU, still unfinished), NOT from a laptop,
-        # where the same payload's healthy half ran at ~27/s. Setting this from
-        # a laptop measurement would make the timeout fire on legitimate work
-        # and record good candidates as NEVER FINISHES, which is worse than the
-        # hang it is meant to catch. Re-measure on the box before lowering it.
-        self.rate = float(os.environ.get("ABAGENT_VALIDATOR_RATE", "8"))
-        self.floor_s = float(os.environ.get("ABAGENT_VALIDATOR_FLOOR", "60"))
+        # ONE FLAT CAP, NOT A RATE. This was first written as
+        # floor + n_matches/rate, with the rate taken from quill's screening
+        # throughput on this box (~9 matches/s). That is a WALL-CLOCK budget
+        # derived from a THROUGHPUT measurement, and the two are not the same
+        # quantity. The coordinator imports this same module and plays full
+        # round-robin games at ~1.1/s on v4.75, so the formula handed it 120s
+        # for work that needs 480 and agentgame-round failed three consecutive
+        # rounds within an hour of the deploy on 2026-11-24 -- my regression,
+        # not a hang. A rate has to be re-measured for every caller, every
+        # workload and every engine bump (v4.76 alone moved the coordinator to
+        # ~2.7/s), and the cost of getting it wrong is legitimate work recorded
+        # as NEVER FINISHES, which is worse than the hang it exists to catch.
+        #
+        # So the job here is narrow: turn a silent SIGKILL at TimeoutStartSec
+        # into a reported failure with the payload kept. For that the cap never
+        # needs to be tighter than the unit's own wall, and each unit sets it
+        # from its own TimeoutStartSec, next to the ABAGENT_DEADLINE it already
+        # sets that way. Scaling bought nothing once a timeout stopped
+        # bisecting (see _BISECT_TIMEOUTS): a panic bisect fails FAST at every
+        # level and never pays this cap at all.
+        #
+        # THE DEFAULT ERRS LONG ON PURPOSE. 1800s is above every legitimate
+        # call measured on the box -- the coordinator's worst round-robin call
+        # was ~480s wall before v4.76 and ~180s after, quill's screening passes
+        # are ~12s -- and above the TimeoutStartSec of most units that run it.
+        # An importer nobody remembered to configure therefore degrades to the
+        # behaviour from before this existed, systemd killing the unit, rather
+        # than mis-reporting good work. Tighten per unit, never here.
+        self.timeout_s = float(os.environ.get("ABAGENT_VALIDATOR_TIMEOUT", "1800"))
         # (label, panic line) for every candidate the engine died on.
         self.engine_failures: list[tuple[str, str]] = []
         self._sweep_stale_payloads()
@@ -301,9 +315,12 @@ class Harness:
             )
         return scored
 
-    def budget_for(self, n_matches: int) -> float:
-        """Seconds a validator call of this size is allowed."""
-        return self.floor_s + n_matches / max(self.rate, 1.0)
+    def budget(self) -> float:
+        """Wall seconds ONE validator call is allowed, whatever its size.
+
+        Deliberately not a function of the match count -- see __init__.
+        """
+        return self.timeout_s
 
     def _run(self, payload: dict) -> list[dict]:
         with tempfile.NamedTemporaryFile("w", suffix=".json", dir=self.workdir,
@@ -311,7 +328,7 @@ class Harness:
             json.dump(payload, fh)
             path = fh.name
         keep = False
-        budget = self.budget_for(len(payload.get("matches") or ()))
+        budget = self.budget()
         try:
             try:
                 proc = subprocess.run([self.validator, "--local-payload", path],
