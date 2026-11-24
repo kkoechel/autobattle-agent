@@ -527,4 +527,23 @@ was 423,760 bytes against a live 442,610 — pinned at v4.73 while the file abov
 claimed to re-pin every time. And **the phone is at `192.168.88.38`**, not the
 `.39` recorded on 11-21; `adb devices -l` before assuming either.
 
+### `.dev` refreshed on the phone, 2026-11-24
+
+`assembleRelease -PdevId` + `adb install -r`, on Ryan's ask. `.dev` went
+**46 / 1.35-dev -> 47 / 1.36-dev** and its `firstInstallTime` is still
+`2026-11-11 17:29:33`, so it upgraded in place and the `ParityProbe` token
+survived; only `lastUpdateTime` moved.
+
+`online.autobattle.agent` (`blind wizard`) is **untouched** -- versionCode 40,
+1.30, `firstInstallTime` 2026-10-17, `lastUpdateTime` 2026-10-28, all four
+identical before and after. Checked rather than assumed, and no `uninstall`
+was in the command at all: an install conflict would have been reported, not
+cleared, because that token is unrecoverable.
+
+The APK badging confirmed the variant before anything was installed
+(`online.autobattle.agent.dev`, `Cardbattle (dev)`), and the `libgojni.so`
+pulled back off the phone is byte-identical to the one in the AAR
+(`508e0b1b...`, 3,957,832 bytes) carrying `4.76`: **dd1b394 -> AAR -> APK ->
+phone, the same bytes at every hop.**
+
 The upload stays Ryan's.
