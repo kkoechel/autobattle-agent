@@ -511,6 +511,16 @@ object Compete {
         val rivals: List<Deck> = emptyList(),
         val cardDefs: String = "",
         /**
+         * Why this number might not be what the league would produce.
+         *
+         * Captured when the trial RAN, not read when it is drawn: by the time
+         * a result is on screen the agent may have run something else, and a
+         * label that describes a different measurement is worse than none.
+         * Empty whenever the engine was confirmed current, which is almost
+         * always -- see engine/Engines.kt.
+         */
+        val caution: String = "",
+        /**
          * id -> the DISPLAY fields: art, rules text, rarity, subtype.
          *
          * The engine's definitions carry none of these, which is correct --
@@ -700,7 +710,8 @@ object Compete {
         return Trial(mine.name.ifBlank { "your deck" }, s.wins, opponents.size, block.size,
             beaten, lost, even, best, worst,
             games = games, mine = mine, rivals = opponents,
-            cardDefs = builder.cardDefs, display = displayMap(cardsJson))
+            cardDefs = builder.cardDefs, caution = Engines.lastUse.caution,
+            display = displayMap(cardsJson))
     }
 
     /**

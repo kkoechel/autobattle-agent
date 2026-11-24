@@ -310,3 +310,71 @@ installs and then uninstalls is disposable. Never `-PdevId` on that task.
 `.dev` is current per the standing instruction (`assembleRelease -PdevId` plus
 `adb install -r`), and the shipped bundle is confirmed NOT the dev variant --
 no `agent.dev` or `Cardbattle (dev)` string in its manifest.
+
+## 2026-11-23: the AAR stops being the only engine
+
+Every section above is a variation on one problem: the Go engine is compiled
+into this AAR, the AAR can only change in a Play release, and so a shipped app
+measures with one engine while the league scores with another. It happened
+again on 2026-11-23 — AAR 4.72, league 4.73 — and Ryan chose to hold the
+release, which left `tools/check_engine_parity.sh` red by choice.
+
+**The app now carries both engines and picks.** `engine/Engines.kt` hashes the
+live `js/battle-engine.js` and compares it with `BuildConfig.ENGINE_JS_SHA256`,
+which gradle reads from `engine.aar.json`'s new `js_sha256` field — the sha of
+that file at the AAR's own `source_commit`:
+
+| live vs AAR's JS | engine used | why |
+|---|---|---|
+| same bytes | Go (this AAR) | it is current, and ~2.5x faster |
+| different | the server's JS | the engine moved; that IS what the league scores with |
+| cannot reach the server | Go, **labelled** | Ryan 2026-11-23: measure anyway, say so |
+
+Google's self-update policy is what makes this legal: downloading native code
+is forbidden, interpreted code in a WebView is carved out. The JS engine is the
+only one of the two that is *allowed* to stay current without a release.
+
+### Why a sha and not a version, and not a canary
+
+`battle-engine.js` exposes **no version constant** — its UMD exports are only
+`{runCohort, simulateMatch, recordBattle, hashResults}`. The first design used
+a pinned canary payload run through both engines instead; measuring killed it:
+
+**all eleven parity fixtures give identical digests under 4.72 and 4.73.** They
+predate Brindeloid Warrior joining the filler set, so a canary built from them
+would have been blind to precisely the drift that prompted the work. A fixed
+canary only ever detects the change it was built for. A sha has no such blind
+spot, and a false positive (a comment-only JS change) costs speed, never
+correctness.
+
+### What was measured, before any of it was written
+
+| claim | how |
+|---|---|
+| JS == Go, exactly | the served engine reproduces **all eleven** CLI-derived fixture digests, `payload.json`'s `1b5e48ac…` included |
+| sharding is safe | `hashResults()` sorts by `match_id`; 1, 2, 4 and 6 shards all give the same digest |
+| Workers run headless | a WebView on a synthetic origin spawns them and returns the exact digest, on the S22 |
+| the cost | **~603 matches/s at 4 workers** on the S22, vs the README's ~1,491/s for Go — a ~2.5x tax, matching 2.2x on the laptop |
+
+`JsEngineParityTest` is the first row kept running; `EnginesRoutingTest` proves
+the decision rule against whatever the server serves that day, so it keeps
+meaning something after the AAR is rebuilt. 47/47 on the S22.
+
+### What this does NOT change
+
+`check_engine_parity.sh` still compares this AAR against the league and is still
+worth reading — a stale AAR now costs speed instead of correctness, but it is
+still stale. **Rebuild the AAR as usual; you just no longer have to hurry.**
+When you do, update `js_sha256` alongside `version`/`sha256`, re-pin
+`androidTest/assets/battle-engine.js` from the live URL, and re-derive fixture
+digests from the Go CLI (`cmd/parity <asset> --hash`), never from what the app
+returns.
+
+### Known cost, not yet paid down
+
+Each `run()` reloads the page, so every call re-parses the 423KB engine in
+fresh workers: ~0.67s, and `Compete.train` makes up to fourteen calls. Reusing
+the WebView object (done) did **not** fix this — measured, it saved ~0.5s
+across eleven runs, because the cost is the re-parse and not the WebView.
+Fixing it properly means keeping one page and one worker pool alive across
+runs; `cohort-worker.js` already has the `loaded !== engineUrl` guard for it.

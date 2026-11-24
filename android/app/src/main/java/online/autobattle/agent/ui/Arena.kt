@@ -938,6 +938,16 @@ fun ArenaPane(
                         ". A rehearsal only \u2014 the league plays its own " +
                         "games at the next round.\u201d",
                         style = snesText(12, androidx.compose.ui.graphics.Color(0xFFA8A8C8)))
+                    // Only ever set when the agent could not reach the server
+                    // to confirm its engine is the one the league scores with.
+                    // Being on the DOWNLOADED engine is the mechanism working
+                    // and says nothing here.
+                    if (t.caution.isNotEmpty()) {
+                        Text("\u201cI could not reach the server to check that my engine is " +
+                            "the one the league scores with, so read that as my own " +
+                            "engine's view of it.\u201d",
+                            style = snesText(12, androidx.compose.ui.graphics.Color(0xFFE8C88C)))
+                    }
                 }
                 // ANY CARD THE AGENT IS TALKING ABOUT IS TAPPABLE.
                 //
