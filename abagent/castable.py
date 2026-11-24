@@ -41,9 +41,14 @@ reference's, quoted because they are what makes the answer safe to act on:
     behind proven_only.
 
 WHAT IS NOT PORTED, so a clean result here is not a clean result there:
-the "must utilize/sacrifice a <supertype>" target proof, which needs
+the "must utilize/sacrifice/return a <supertype>" target proof, which needs
 supertype words, token copies, reanimation and the coinlink token. The main
-app finds those; this does not. Run the main app's
+app finds those; this does not. (v4.74 added `return` to that same check, so
+it is missing here for the reason the other two always were, not a new gap.)
+The reference's two softer tiers have no equivalent here either --
+"needs_opponent", and "unanalyzed", which covers a `counters` cost in a deck
+with no counter source. This module answers dead or nothing, and both of those
+are nothing. Run the main app's
 `php shell/deck_dead_cards.php --deck=ID` when the answer has to be complete.
 """
 from __future__ import annotations
@@ -71,6 +76,13 @@ START = {"life": 100, "honor": 0, "shields": 0, "poison": 0}
 # never of a missing producer, so it is never dead.
 BASELINE_METRICS = frozenset({"cards_drawn", "cards_played", "energy_spent"})
 
+# v4.74: `pay_and` is counted wherever a payment could tally, because its
+# `pay` is a whole cost object in this vocabulary and resolving which key it
+# carries is not worth it -- over-counted on purpose, rule 1. The new cost keys
+# feed the tally of the effect each one reuses: `poison` -> gain_poison (and so
+# life_lost too, since poison ticks for damage), `mill` -> mill_self,
+# `exile_library` -> cards_exiled.
+#
 # What tallies a metric for the CONTROLLER. Combat links are absent on
 # purpose: combat is turn step 6c, the play phase is step 5, and both players'
 # tallies reset at the next turn start -- so nothing in combat can ever open a
@@ -78,27 +90,31 @@ BASELINE_METRICS = frozenset({"cards_drawn", "cards_played", "energy_spent"})
 SELF_TALLY: dict[str, dict] = {
     "life_gained":     {"effects": ("gain_life",)},
     "honor_gained":    {"effects": ("gain_honor",)},
-    "honor_lost":      {"effects": ("lose_honor", "pay_honor_and"), "costs": ("honor",)},
+    "honor_lost":      {"effects": ("lose_honor", "pay_honor_and", "pay_and"), "costs": ("honor",)},
     "shields_gained":  {"effects": ("gain_shield",)},
-    "poison_gained":   {"effects": ("gain_poison",)},
+    "poison_gained":   {"effects": ("gain_poison", "pay_and"), "costs": ("poison",)},
     # The ONLY tally site is remove_poison, and it counts what it REMOVED --
     # Math.min(amount, your poison) -- so a cure with no poison on you opens
     # nothing. Turn-start decay is a bare poison-- with no tally at all, which
     # is why a deck cannot wait the gate out. Hence requires_stat.
     "poison_cured":    {"effects": ("remove_poison",), "requires_stat": "poison"},
-    "cards_recycled":  {"effects": ("shuffle_discard_to_library", "recycle_self", "recycle_and"),
+    "cards_recycled":  {"effects": ("shuffle_discard_to_library", "recycle_self", "recycle_and",
+                                    "pay_and"),
                         "costs": ("recycle",), "passives": ("reshuffle",)},
-    "cards_milled":    {"effects": ("mill_self",)},
+    "cards_milled":    {"effects": ("mill_self", "pay_and"), "costs": ("mill",)},
     "cards_exiled":    {"effects": ("exile_self_deck", "exile_self_hand", "exile_self_discard",
-                                    "exile_discard_and", "exile_tagged", "exile_deck_and_manifest"),
-                        "costs": ("exile_discard",), "passives": ("gravecast",)},
-    "cards_discarded": {"effects": ("discard_self", "discard_and"), "costs": ("discard",)},
+                                    "exile_discard_and", "exile_tagged", "exile_deck_and_manifest",
+                                    "pay_and"),
+                        "costs": ("exile_discard", "exile_library"), "passives": ("gravecast",)},
+    "cards_discarded": {"effects": ("discard_self", "discard_and", "pay_and"), "costs": ("discard",)},
     # gain_poison belongs here too: poison ticks through dmgPlayer() at the
     # start of your NEXT turn, before you play.
-    "life_lost":       {"effects": ("deal_damage_to_self", "pay_life_and", "gain_poison"),
-                        "costs": ("life",)},
+    "life_lost":       {"effects": ("deal_damage_to_self", "pay_life_and", "gain_poison",
+                                    "pay_and"),
+                        "costs": ("life", "poison")},
     # toDiscardOrExile() tallies every permanent of yours that leaves play.
-    "permanents_died": {"effects": ("sacrifice_and", "sacrifice_own_permanent", "destroy_self",
+    "permanents_died": {"effects": ("sacrifice_and", "sacrifice_own_permanent", "pay_and",
+                                    "destroy_self",
                                     "destroy_tagged", "destroy_random_tagged", "destroy_target",
                                     "kill_target", "destroy_permanents_by_cost",
                                     "deal_damage_to_permanents_by_cost",
@@ -123,10 +139,12 @@ SELF_TALLY: dict[str, dict] = {
 # being called dead in a deck that cannot gain honor itself, when an opponent
 # can hand it over. No card carries opponent_gain_shield yet; it is listed
 # because the engine does, not because a verdict turns on it today.
+# v4.74: a pay_and may pay with a gift_* key, which runs these same effects
+# for the opponent, so pay_and is an opponent route for each of them too.
 OPP_TALLY: dict[str, tuple[str, ...]] = {
-    "life_gained":     ("opponent_gain_life",),
-    "honor_gained":    ("opponent_gain_honor",),
-    "shields_gained":  ("opponent_gain_shield",),
+    "life_gained":     ("opponent_gain_life", "pay_and"),
+    "honor_gained":    ("opponent_gain_honor", "pay_and"),
+    "shields_gained":  ("opponent_gain_shield", "pay_and"),
     "poison_gained":   ("poison_opponent",),
     "cards_milled":    ("mill_opponent",),
     "cards_exiled":    ("exile_opponent_deck", "exile_opponent_hand", "exile_opponent_discard",
@@ -139,18 +157,19 @@ OPP_TALLY: dict[str, tuple[str, ...]] = {
                         "destroy_permanents_by_cost", "deal_damage_to_permanents_by_cost",
                         "deal_damage_to_random_creature", "deal_damage_to_random_tagged",
                         "deal_damage_to_tagged", "deal_damage_to_weakest_creature", "adjust_health"),
-    "cards_drawn":     ("opponent_draw_card",),
+    "cards_drawn":     ("opponent_draw_card", "pay_and"),
 }
 
 # Persistent stats -- a Life/Honor/Shields amount rather than a per-turn
 # tally. Any gain at ANY time counts, combat links included, because the stat
 # carries into the turn the card is played.
 STAT_GAIN: dict[str, dict] = {
-    "life":    {"effects": ("gain_life",),   "passives": ("lifelink",),   "opp": ("opponent_gain_life",)},
+    "life":    {"effects": ("gain_life",),   "passives": ("lifelink",),
+                "opp": ("opponent_gain_life", "pay_and")},
     "honor":   {"effects": ("gain_honor",),  "passives": ("honorlink",),
-                "opp": ("opponent_gain_honor",), "champion_melee": True},
+                "opp": ("opponent_gain_honor", "pay_and"), "champion_melee": True},
     "shields": {"effects": ("gain_shield",), "passives": ("shieldlink",),
-                "opp": ("opponent_gain_shield",)},
+                "opp": ("opponent_gain_shield", "pay_and")},
     "poison":  {"effects": ("gain_poison",), "passives": (),              "opp": ("poison_opponent",)},
 }
 
@@ -242,6 +261,20 @@ def _facts(cid: int, card: dict) -> dict:
         for v in p.values():
             if isinstance(v, (dict, list)):
                 _walk(v, "reactive", f)
+    # v4.74: what a gravecast `pay` SPENDS also tallies -- a pay carrying
+    # sacrifice or mill produces permanents_died or cards_milled exactly as the
+    # same key in additional_cost would. Kept OUT of f["cost"], which is what
+    # gates casting from HAND: a `pay` is paid only when the card is cast from
+    # the discard, INSTEAD of additional_cost, so counting it as a hand cost
+    # would invent a gate the card does not have. The union keeps the first of
+    # a repeated key, as the reference's `+=` does.
+    alt: dict = {}
+    for p in passives if isinstance(passives, list) else []:
+        if (isinstance(p, dict) and p.get("type") == "gravecast"
+                and isinstance(p.get("pay"), dict)):
+            for k, v in p["pay"].items():
+                alt.setdefault(k, v)
+    f["alt_cost"] = alt
     if isinstance(f["cost"].get("effect"), (dict, list)):
         _walk(f["cost"]["effect"], "pre", f)
     sup = e.get("supplement")
@@ -296,7 +329,7 @@ def _produces(cards: list[dict], spec: dict, when: str) -> str | None:
         if f[when] & set(spec.get("effects", ())):
             return f["name"]
         for k in spec.get("costs", ()):
-            if f["cost"].get(k):
+            if f["cost"].get(k) or f["alt_cost"].get(k):
                 return f["name"]
         if f["passives"] & set(spec.get("passives", ())):
             return f["name"]
