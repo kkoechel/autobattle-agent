@@ -106,6 +106,23 @@ class Harness:
         self.validator = validator
         self.cards = cards_map(catalog)
         self.workdir = workdir
+        # A VALIDATOR CALL MUST BE ABLE TO END. Measured 2026-11-24: quill ran
+        # 13 of the box's 29 daily timeouts, and a killed run consumed 15min
+        # 35s of CPU inside the Go child while the Python parent sat in
+        # subprocess.run with one second of its own. The payload it left behind
+        # carried Clockwork Castle with supertype "Structure Relic" -- the
+        # pre-fix card that could manifest itself -- in six candidate slots at
+        # ten copies each, so the board doubled every turn and the match never
+        # ended. Ryan fixed that card, and chose NOT to bound board size in the
+        # engines, so the next such card does this again.
+        #
+        # Scaled by match count rather than fixed, because `evaluate` bisects a
+        # failing payload: a fixed budget would be paid again at every level
+        # (log2(40) of them) and blow the run's deadline while hunting. Halving
+        # the matches halves the budget, so the whole hunt costs about twice
+        # the first probe.
+        self.rate = float(os.environ.get("ABAGENT_VALIDATOR_RATE", "40"))
+        self.floor_s = float(os.environ.get("ABAGENT_VALIDATOR_FLOOR", "45"))
         # (label, panic line) for every candidate the engine died on.
         self.engine_failures: list[tuple[str, str]] = []
         self._sweep_stale_payloads()
@@ -153,7 +170,11 @@ class Harness:
         try:
             return self._evaluate(candidates, opponents, seeds)
         except RuntimeError as e:
-            if "panic" not in str(e):
+            # A TIMEOUT IS TREATED EXACTLY LIKE A PANIC, and for the same
+            # reason: one generated deck should not take the cycle down. The
+            # bisect below isolates which candidate it is, and the budget
+            # halves with the payload, so the hunt stays inside the deadline.
+            if "panic" not in str(e) and "TIMED OUT" not in str(e):
                 raise
             say = log or (lambda m: None)
             if len(candidates) == 1:
@@ -161,11 +182,14 @@ class Harness:
                 # deck that crashes the engine is a bug worth reporting, not
                 # noise to swallow.
                 lab = candidates[0][0]
+                timed_out = "TIMED OUT" in str(e)
                 first = next((ln for ln in str(e).splitlines()
-                              if "panic:" in ln), "panic")
+                              if "panic:" in ln or "TIMED OUT" in ln),
+                             "timeout" if timed_out else "panic")
                 self.engine_failures.append((lab, first.strip()))
-                say(f"harness: candidate '{lab}' CRASHES THE ENGINE "
-                    f"({first.strip()}); dropped")
+                say(f"harness: candidate '{lab}' "
+                    + ("NEVER FINISHES" if timed_out else "CRASHES THE ENGINE")
+                    + f" ({first.strip()}); dropped")
                 return {}
             # Bisect. One candidate out of forty used to take the whole cycle
             # down with it, which is how an agent sits idle for hours over a
@@ -257,15 +281,33 @@ class Harness:
             )
         return scored
 
+    def budget_for(self, n_matches: int) -> float:
+        """Seconds a validator call of this size is allowed."""
+        return self.floor_s + n_matches / max(self.rate, 1.0)
+
     def _run(self, payload: dict) -> list[dict]:
         with tempfile.NamedTemporaryFile("w", suffix=".json", dir=self.workdir,
                                          delete=False) as fh:
             json.dump(payload, fh)
             path = fh.name
         keep = False
+        budget = self.budget_for(len(payload.get("matches") or ()))
         try:
-            proc = subprocess.run([self.validator, "--local-payload", path],
-                                  capture_output=True, text=True)
+            try:
+                proc = subprocess.run([self.validator, "--local-payload", path],
+                                      capture_output=True, text=True,
+                                      timeout=budget)
+            except subprocess.TimeoutExpired:
+                # subprocess.run kills the child before re-raising, so the spin
+                # stops here rather than running on until systemd takes the
+                # whole unit down. Keep the payload for the same reason a panic
+                # does: it is the only artefact that reproduces this, and a
+                # match that cannot finish is worth more than the disk it uses.
+                keep = True
+                raise RuntimeError(
+                    f"validator TIMED OUT after {budget:.0f}s on "
+                    f"{len(payload.get('matches') or ())} match(es); "
+                    f"payload kept at {path}")
             if proc.returncode != 0:
                 # Keep the payload when the engine dies. It used to be removed
                 # in `finally` whatever happened, which meant an engine panic
