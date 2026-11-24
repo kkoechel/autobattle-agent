@@ -77,8 +77,13 @@ def main():
     kept = [f for f in os.listdir(work) if f.endswith(".json")]
     check("and the file is really there", len(kept) == 1, f"{kept}")
 
-    # 3. a timeout rides the same drop-crashers path as a panic
-    h = harness(hangs, work, ABAGENT_VALIDATOR_RATE=40, ABAGENT_VALIDATOR_FLOOR=2)
+    # 3. with the hunt enabled, a timeout rides the drop-crashers path
+    import importlib, abagent.harness as H
+    os.environ["ABAGENT_BISECT_TIMEOUTS"] = "1"
+    importlib.reload(H)
+    check("hunting is on when asked for", H._BISECT_TIMEOUTS is True)
+    h = H.Harness(hangs, [], workdir=work)
+    h.rate, h.floor_s = 40.0, 2.0
     said = []
     out = h.evaluate([("solo", [1], {})],
                      [type("O", (), {"slot_id": "O0", "cards": [1],
@@ -90,6 +95,26 @@ def main():
           str(h.engine_failures))
     check("the log says it never finishes, not that it crashed",
           any("NEVER FINISHES" in m for m in said), "; ".join(said)[:110])
+
+    # 4. by default the hunt is OFF, because each bisect level pays the full
+    #    timeout again. Proven on quill's kept payload: the 3,024 Castle
+    #    matches never finished at all, so bisecting them would have spent
+    #    multiples of the first probe against the run's deadline.
+    os.environ.pop("ABAGENT_BISECT_TIMEOUTS", None)
+    importlib.reload(H)
+    check("hunting is off unless asked for", H._BISECT_TIMEOUTS is False)
+    h2 = H.Harness(hangs, [], workdir=work)
+    h2.rate, h2.floor_s = 40.0, 2.0
+    raised = None
+    try:
+        h2.evaluate([("solo", [1], {})],
+                    [type("O", (), {"slot_id": "O0", "cards": [1],
+                                    "battle_plan": {}})()],
+                    [1], drop_crashers=True, log=lambda m: None)
+    except RuntimeError as e:
+        raised = str(e)
+    check("a timeout propagates rather than being quietly dropped",
+          raised is not None and "TIMED OUT" in raised, str(raised)[:80])
 
     print()
     if FAILED:

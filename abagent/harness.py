@@ -20,6 +20,10 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 
+# Hunt for WHICH candidate hangs, instead of reporting and stopping. Off by
+# default: each bisect level pays the full timeout again.
+_BISECT_TIMEOUTS = os.environ.get("ABAGENT_BISECT_TIMEOUTS", "") not in ("", "0")
+
 # Engine payloads want the subtype under 'card_type', and tag effects match
 # against 'tags' -- NOT 'ability_tags', which is a display-only derived set
 # that differs on 342 of 859 cards and fails silently when wrong.
@@ -121,8 +125,16 @@ class Harness:
         # (log2(40) of them) and blow the run's deadline while hunting. Halving
         # the matches halves the budget, so the whole hunt costs about twice
         # the first probe.
-        self.rate = float(os.environ.get("ABAGENT_VALIDATOR_RATE", "40"))
-        self.floor_s = float(os.environ.get("ABAGENT_VALIDATOR_FLOOR", "45"))
+        # RATE IS A PROPERTY OF THE BOX, NOT OF THE ENGINE, and the box is a
+        # shared 1-vCPU at load ~6.5 where wall time runs several times CPU
+        # time. 8 matches/s is taken from what subgames-nyc1 actually achieved
+        # (8,568 matches, 935s of CPU, still unfinished), NOT from a laptop,
+        # where the same payload's healthy half ran at ~27/s. Setting this from
+        # a laptop measurement would make the timeout fire on legitimate work
+        # and record good candidates as NEVER FINISHES, which is worse than the
+        # hang it is meant to catch. Re-measure on the box before lowering it.
+        self.rate = float(os.environ.get("ABAGENT_VALIDATOR_RATE", "8"))
+        self.floor_s = float(os.environ.get("ABAGENT_VALIDATOR_FLOOR", "60"))
         # (label, panic line) for every candidate the engine died on.
         self.engine_failures: list[tuple[str, str]] = []
         self._sweep_stale_payloads()
@@ -170,11 +182,19 @@ class Harness:
         try:
             return self._evaluate(candidates, opponents, seeds)
         except RuntimeError as e:
-            # A TIMEOUT IS TREATED EXACTLY LIKE A PANIC, and for the same
-            # reason: one generated deck should not take the cycle down. The
-            # bisect below isolates which candidate it is, and the budget
-            # halves with the payload, so the hunt stays inside the deadline.
-            if "panic" not in str(e) and "TIMED OUT" not in str(e):
+            # A PANIC bisects: it is cheap, because a panicking payload fails
+            # FAST at every level. A TIMEOUT does not -- each level costs its
+            # whole budget, so hunting one hanging deck through 40 candidates
+            # spends more than the run has. Measured 2026-11-24 on quill's kept
+            # payload: the 5,544 matches with no Castle finished in 204s, the
+            # 3,024 with one never finished at all. Bisecting that would have
+            # cost several multiples of the first probe, all of it against the
+            # deadline. So a timeout reports and stops by default, and the hunt
+            # is opt-in for when someone is actually looking.
+            timed_out = "TIMED OUT" in str(e)
+            if "panic" not in str(e) and not timed_out:
+                raise
+            if timed_out and not _BISECT_TIMEOUTS:
                 raise
             say = log or (lambda m: None)
             if len(candidates) == 1:
