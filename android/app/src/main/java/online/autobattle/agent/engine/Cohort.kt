@@ -22,6 +22,21 @@ import mobile.Mobile
  * payload from [PayloadBuilder] in, an envelope of {"results":[...],"hash":"..."}
  * out -- so Aggregator and every caller are unchanged.
  */
+/**
+ * The cohort did not finish in time.
+ *
+ * Distinct from every other engine failure ON PURPOSE. A truncated engine or a
+ * WebView that will not start says nothing about the payload, so falling back
+ * to the other engine is right. A timeout says the opposite: these matches may
+ * not be simulable at all, and [GoRunner] cannot be stopped -- `Mobile.run` is
+ * a blocking JNI call with no cancellation -- so retrying there turns a bounded
+ * failure into a thread that never comes back. Draft #2424 is what that looks
+ * like: one match whose board doubled every turn, 120 permanents at t24 and
+ * 6,167 at t36. Matching on an exception message would be the fragile way to
+ * tell these apart, so they are different types.
+ */
+class CohortTimeout(message: String) : RuntimeException(message)
+
 interface CohortRunner {
     /** Short name for the engine that ran, for labelling a measurement. */
     val label: String

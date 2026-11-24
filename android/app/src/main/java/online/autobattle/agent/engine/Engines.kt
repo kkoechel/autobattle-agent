@@ -73,6 +73,13 @@ object Engines {
         if (runner === GoRunner) return runner.run(payload, workers)
         return try {
             runner.run(payload, workers)
+        } catch (t: CohortTimeout) {
+            // Deliberately not falling back: see CohortTimeout. Go would be
+            // handed the same payload with no way to interrupt it, so the
+            // caller gets a failure it can report instead of a thread that
+            // never returns. Every other JS failure still falls back below.
+            synchronized(this) { js?.close(); js = null; jsSha = null }
+            throw t
         } catch (t: Throwable) {
             // The JS path broke: a truncated engine, a WebView that would not
             // come up, a payload too big for the bridge. A number from the

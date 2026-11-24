@@ -157,6 +157,9 @@ class TrainingService : Service() {
     }
 
     private fun readableError(t: Throwable): String = when (t) {
+        is online.autobattle.agent.engine.CohortTimeout ->
+            "Training stopped: one match would not finish. That is a card " +
+                "interaction rather than anything about the deck."
         // SAY WHAT THE LEAGUE OBJECTED TO. The status alone sent me to the
         // server to find out that a shell held a card banned since the pool
         // was built; a player has no such option. PUT /deck answers with

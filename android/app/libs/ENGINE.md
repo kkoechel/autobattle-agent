@@ -378,3 +378,38 @@ the WebView object (done) did **not** fix this — measured, it saved ~0.5s
 across eleven runs, because the cost is the re-parse and not the WebView.
 Fixing it properly means keeping one page and one worker pool alive across
 runs; `cohort-worker.js` already has the `loaded !== engineUrl` guard for it.
+
+## 2026-11-24: one page and one worker pool, and a timeout that does not fall back
+
+Two changes to the JS path, both Ryan's call.
+
+**The pool.** `JsRunner` used to reload its page on every call, which gave each
+run fresh workers that had to parse the 437KB engine before playing a match.
+The page is now loaded once and its workers are kept; `cohort-worker.js` already
+refused to re-import an engine it held, so that guard finally does something.
+
+Measured on the S22 with `JsEngineParityTest`'s eleven fixtures, before and
+after: **10.86s -> 8.85s**, about **0.18s a call**. That is a quarter of the
+~0.67s fixed per-call cost, so spawning workers and parsing the engine was
+never the bulk of it. What remains is the payload round trip -- every call
+still fetches `/payload.json` and `JSON.parse`s it, and that reaches ~3.4MB on
+a training sweep. Start there, not at the pool, if the cost matters again.
+
+Estimates of this overhead have now been too high twice (reusing the WebView
+alone: predicted ~7s, returned ~0.5s). Measure before believing either number.
+
+The pool is torn down, never reused, on a failure, a timeout, a change of
+engine bytes or a change of worker count: a stale engine living on inside a
+worker would measure with the wrong one and say nothing about it.
+
+**The timeout.** A JS run that hits the 30-minute cap now throws `CohortTimeout`
+and does NOT fall back to Go. Every other JS failure still falls back. The
+reason is that a timeout implicates the payload rather than the engine, and
+`Mobile.run` is a blocking JNI call with no cancellation -- so handing Go the
+same payload turns a bounded failure into a thread that never comes back.
+Draft #2424 was what that looks like: one match whose board doubled every turn,
+120 permanents at t24 and 6,167 at t36. Ryan fixed the card (Clockwork Castle,
+"Structure Relic" -> "Structure") on 2026-11-24, so the known trigger is gone;
+this guards the next one.
+
+47/47 instrumented tests on the S22 with both changes in.

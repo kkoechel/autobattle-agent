@@ -168,6 +168,14 @@ private fun KeyEntry(busy: Boolean, onSubmit: (String) -> Unit) {
 }
 
 internal fun readable(t: Throwable): String = when {
+    // NOT THE PLAYER'S FAULT, AND WORTH SAYING SO. A cohort that never
+    // finishes is a card interaction the engine cannot bound -- draft #2424
+    // was one match whose board doubled every turn -- and the deck on screen
+    // is usually innocent. Without this the player reads a raw millisecond
+    // count and assumes they built something broken.
+    t is online.autobattle.agent.engine.CohortTimeout ->
+        "That run was stopped: one of its matches would not finish. " +
+            "It is a card interaction, not a problem with your deck."
     t is ApiException && t.status == 401 -> "That key was not accepted. Check it on your profile page."
     t is ApiException && t.status == 403 ->
         "Your account does not have API access enabled — ask an admin to turn it on."
