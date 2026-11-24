@@ -64,18 +64,37 @@ import org.junit.runner.RunWith
  * Eleven fixtures now, seven of which can witness the change they were built
  * for. The v4.70 and v4.71 asks were superseded unbuilt, so no fixture exists
  * for either; `payload_v472` is the only witness that the AAR is not 4.69.
+ *
+ * ## 2026-11-24, v4.76 -- and TEN OF ELEVEN FIXTURES ARE BLIND TO IT
+ *
+ * This build crosses 4.73, 4.74 and 4.75 as well, and exactly one digest
+ * moves: `payload.json`, `1b5e48ac...` -> `6ac148d4...`. That is the v4.75
+ * change (xN link keywords use the whole multiplier, `create_token_copy`
+ * takes `max_tokens`); 4.76 is speed only and alters no result. The other ten
+ * are byte-identical from 4.72 through 4.76.
+ *
+ * So the broad 1,491-match fixture from 2026-09-24 -- the one kept purely as
+ * a collateral check, and the only one here that was never built to witness
+ * anything -- is the sole witness that this AAR is not 4.72. Every fixture
+ * built FOR a specific change says "no drift" across four engine versions.
+ * Keep the broad one.
+ *
+ * Re-derived from the Go CLI across three witnesses that agree byte for byte:
+ * `cmd/parity --hash`, `cmd/mobilecheck` (this test's own `mobile.Run`
+ * surface, which also reports `4.76`), and `validate --local-payload` piped
+ * through sha256. All eleven.
  */
 @RunWith(AndroidJUnit4::class)
 class EngineParityTest {
 
     /** Keep in step with android/app/libs/engine.aar.json and ENGINE.md. */
-    private val engineVersion = "4.72"
+    private val engineVersion = "4.76"
 
     private data class Fixture(val asset: String, val matches: Int, val digest: String)
 
     private val fixtures = listOf(
         Fixture("payload.json", 1491,
-            "1b5e48ac07ba3eb90ffaab7504d0bbc58c49cc7a39939c7b052f991a39c9b56b"),
+            "6ac148d4a7067324d7aed3b59af88388de41ae86f6cf52eceab34e4c96fbb2aa"),
         Fixture("payload_v460.json", 120,
             "b303ea8872bf6807ff218f1a7b20c54b574f0d66505632a3da7b4128ae0a9055"),
         Fixture("payload_v461.json", 80,

@@ -33,12 +33,20 @@ import java.security.MessageDigest
  * by running a canary through it: a fixed canary only ever detects the change
  * it was built for.
  *
+ * 2026-11-24: ONE of them can now tell 4.72 from 4.76 -- `payload.json`, the
+ * broad 1,491-match fixture, which v4.75 moved to `6ac148d4...`. The ten
+ * built for a specific change still cannot, which is the same lesson from the
+ * other side: the fixture that witnessed this bump is the one nobody designed
+ * to witness anything.
+ *
  * androidTest/assets/battle-engine.js is pinned so this test is hermetic:
- * sha256 0d507afbf3d3e01e83bc100d341da1962aceb7965cc893a1583f5e7caa059067,
- * 423,760 bytes, autobattle.online e369faf (v4.73), the exact bytes
- * https://autobattle.online/js/battle-engine.js served on 2026-11-23.
- * Re-pin it from the live URL when the engine moves, and re-derive digests
- * from the Go CLI (`cmd/parity <asset> --hash`), never from what this returns.
+ * sha256 9d768f30a3cf7aca68974de1d55feac1750c95cc80a57a6f11c42eef2391ebbb,
+ * 442,610 bytes, autobattle.online dd1b394 (v4.76), re-pinned 2026-11-24.
+ * Taken from the main repo at that commit rather than over HTTP, because the
+ * two were first proven identical: `GET /api/v1/engine` declares exactly this
+ * sha for the file it serves. Re-pin when the engine moves, and re-derive
+ * digests from the Go CLI (`cmd/parity <asset> --hash`), never from what this
+ * returns.
  */
 @RunWith(AndroidJUnit4::class)
 class JsEngineParityTest {
@@ -48,7 +56,7 @@ class JsEngineParityTest {
     /** The same table as EngineParityTest. If one changes, both must. */
     private val fixtures = listOf(
         Fixture("payload.json", 1491,
-            "1b5e48ac07ba3eb90ffaab7504d0bbc58c49cc7a39939c7b052f991a39c9b56b"),
+            "6ac148d4a7067324d7aed3b59af88388de41ae86f6cf52eceab34e4c96fbb2aa"),
         Fixture("payload_v460.json", 120,
             "b303ea8872bf6807ff218f1a7b20c54b574f0d66505632a3da7b4128ae0a9055"),
         Fixture("payload_v461.json", 80,
@@ -72,7 +80,7 @@ class JsEngineParityTest {
     )
 
     private val pinnedEngineSha =
-        "0d507afbf3d3e01e83bc100d341da1962aceb7965cc893a1583f5e7caa059067"
+        "9d768f30a3cf7aca68974de1d55feac1750c95cc80a57a6f11c42eef2391ebbb"
 
     private fun assetBytes(name: String): ByteArray =
         InstrumentationRegistry.getInstrumentation().context.assets

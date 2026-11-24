@@ -61,6 +61,13 @@
   // clamp already used by return_opponent_permanent and
   // destroy_permanents_by_cost, and no sane card creates 10+ tokens in one fire.
   const MAX_TOKEN_COPIES_PER_FIRE = 10;
+  // v4.75: create_token_copy's own `max_tokens` may raise that limit for one
+  // effect (Pity Pete's 27 Terrains), never past this. It only ever raises.
+  const MAX_TOKEN_OVERRIDE = 50;
+  function tokenCap(eff) {
+    const m = Math.floor(Number(eff.max_tokens) || 0);
+    return Math.max(MAX_TOKEN_COPIES_PER_FIRE, Math.min(m, MAX_TOKEN_OVERRIDE));
+  }
 
   // v4.18 -- coinlink (printed as "Avarice") mints Gold Coin tokens when the
   // attack connects. Hardcoded card id, the same convention as
@@ -782,7 +789,7 @@
       :  !canFulfillShieldsCost(ap, def)             ? `needs ${ac.shields} shields (has ${ap.shields})`
       :  !canFulfillRecycleCost(ap, def)             ? 'needs cards in the discard to recycle'
       :  !canFulfillExileDiscardCost(ap, def)        ? 'needs cards in the discard to exile'
-      :  null);
+      :  extraCostBlocker(ap, op, cardDefs, ac));   // v4.74
     if (champBlock) {
       if (log && ap.blockedLogged && !ap.blockedLogged.has(cid)) {
         ap.blockedLogged.add(cid);
@@ -804,12 +811,13 @@
     if (ac?.shields)       fulfillShieldsCost(ap, op, cardDefs, def, rand, costLog, plan, opPlan);
     if (ac?.recycle)       fulfillRecycleCost(ap, op, cardDefs, def, rand, costLog, plan, opPlan);
     if (ac?.exile_discard) fulfillExileDiscardCost(ap, op, cardDefs, def, rand, costLog, plan, opPlan);
+    payExtraCosts(ap, op, cardDefs, def, rand, costLog, plan, opPlan, ac);   // v4.74
     // v4.48: a champion takes its supplement too (owner's call 2026-10-24),
     // consistent with v4.41's rule that a champion satisfies To Play gates and
     // pays additional costs. Both Go engines and validate.py hook both sites;
     // this one was missing here, which is exactly the kind of single-engine
     // gap a parity run only finds once a card actually uses it.
-    const supDeferred = canPaySupplement(ap, def, cardDefs, plan) ? paySupplement(ap, op, cardDefs, def, rand, costLog, plan, opPlan) : null;
+    const supDeferred = canPaySupplement(ap, op, def, cardDefs, plan) ? paySupplement(ap, op, cardDefs, def, rand, costLog, plan, opPlan) : null;
     ap.championInZone = false;
     const entry = {
       owner:    ap,
@@ -1150,7 +1158,52 @@
 
   function matchesSupertype(def, targetType) {
     if (targetType === 'permanent') return true;
-    return (def?.supertype || '').toLowerCase().trim().split(/\s+/).includes(targetType.toLowerCase());
+    const st = def?.supertype || '';
+    let words = __superWords.get(st);
+    if (!words) { words = st.toLowerCase().trim().split(/\s+/); __superWords.set(st, words); }
+    return words.includes(targetType.toLowerCase());
+  }
+  // Split supertypes, remembered by the printed string (a handful exist).
+  const __superWords = new Map();
+
+  // Which card ids can be an anthem_keyword / anthem_melee / anthem_armor
+  // SOURCE at all -- a read of the printed cards only, rebuilt at the start of
+  // every game, so the per-permanent scans below can skip everything else
+  // (draft #2427: thousands of permanents). What a source DOES right now (mute,
+  // destroyed, requires, tags) is still asked live, every time.
+  let __srcIndex = null;
+  function sourceIndex(cardDefs) {
+    if (__srcIndex && __srcIndex.defs === cardDefs) return __srcIndex;
+    const ix = { defs: cardDefs, kw: new Map(), anthem: new Map() };
+    const add = (map, key, id) => {
+      let ids = map.get(key);
+      if (!ids) map.set(key, ids = Object.create(null));
+      ids[id] = true;
+    };
+    for (const id in cardDefs) {
+      const ps = cardDefs[id]?.effects_json?.passives;
+      if (!Array.isArray(ps)) continue;
+      for (const p of ps) {
+        if (!p) continue;
+        if (p.type === 'anthem_keyword') add(ix.kw, p.keyword, id);
+        else if (p.type === 'anthem_melee' || p.type === 'anthem_armor') add(ix.anthem, p.type, id);
+      }
+    }
+    return (__srcIndex = ix);
+  }
+  // The entries of `board` whose card id is in `ids`. Inside a read-only
+  // stretch (the combat sums -- nothing enters, leaves or changes) each board
+  // is scanned once; outside one, __readOnly is null and every call rescans.
+  let __readOnly = null;
+  function sourcesOn(board, ids) {
+    if (__readOnly) {
+      let byIds = __readOnly.get(board);
+      if (!byIds) __readOnly.set(board, byIds = new Map());
+      let list = byIds.get(ids);
+      if (!list) byIds.set(ids, list = board.filter(e => ids[e.card_id]));
+      return list;
+    }
+    return board.filter(e => ids[e.card_id]);
   }
 
   // See validate.go's grantableKeywords: boolean flags only.
@@ -1181,9 +1234,11 @@
   // short-circuited: a boolean keyword only needs one, but a melee-scaled one
   // stacks. A granter never confers on itself, mirroring anthemBonus.
   function keywordGrantsFrom(board, entry, kw, targetPlayer, cardDefs) {
+    const ids = sourceIndex(cardDefs).kw.get(kw);
+    if (!ids) return 0;
     const def = cardDefs[entry.card_id];
     let n = 0;
-    for (const src of board) {
+    for (const src of sourcesOn(board, ids)) {
       if (src === entry || src.destroyed) continue;
       const ps = activePassives(src, cardDefs);          // v4.22 mute chokepoint
       if (!ps) continue;
@@ -1311,21 +1366,40 @@
     return ps ? ps.some(p => p.type === type) : false;
   }
 
+  // v4.74 cost counts and tags (ENGINE_ALT_COSTS.md). `<key>_count` (default
+  // 1) permanents must be paid, each carrying one of `<key>_tags` when that
+  // list is set. Absent both, the pool, the single pick and its RNG use are
+  // exactly v4.73's, so every existing card replays bit-identically.
+  function costCount(n) { return Math.max(1, Math.floor(n ?? 1) || 1); }
+  function hasAnyTag(entry, tags, cardDefs) {
+    if (!Array.isArray(tags) || !tags.length) return true;
+    return tags.some(t => entryHasTag(entry, t, cardDefs));
+  }
+
+  function utilizeCostPool(ap, cardDefs, ac) {
+    return ap.board.filter(e => !e.utilized && matchesSupertype(cardDefs[e.card_id], ac.utilize)
+      && hasAnyTag(e, ac.utilize_tags, cardDefs));
+  }
+
   function canFulfillUtilizeCost(ap, cardDefs, def, cost) {
-    const target = (cost ?? def?.effects_json?.additional_cost)?.utilize;
-    if (!target) return true;
-    return ap.board.some(e => !e.utilized && matchesSupertype(cardDefs[e.card_id], target));
+    const ac = cost ?? def?.effects_json?.additional_cost;
+    if (!ac?.utilize) return true;
+    return utilizeCostPool(ap, cardDefs, ac).length >= costCount(ac.utilize_count);
   }
 
   function fulfillUtilizeCost(ap, op, cardDefs, def, rand, log, plan, opPlan, cost) {
     const ac     = cost ?? def.effects_json.additional_cost;
-    const cands  = ap.board.filter(e => !e.utilized && matchesSupertype(cardDefs[e.card_id], ac.utilize));
-    const t      = selectUtilizeTarget(cands, plan?.cost_preference ?? 'random', rand, cardDefs);
-    t.utilized   = true;
-    if (log) log.push(`  utilized ${cardDefs[t.card_id]?.name || t.card_id} as additional cost`);
-    firePassives(ap, 'on_utilized', ap, op, rand, cardDefs, log, false, plan, opPlan, t);
-    firePassives(ap, 'on_self_utilized', ap, op, rand, cardDefs, log, false, plan, opPlan, t);
-    firePassives(op, 'on_opponent_utilized', op, ap, rand, cardDefs, log, false, opPlan, plan, t);
+    const n      = costCount(ac.utilize_count);
+    for (let k = 0; k < n; k++) {
+      const cands = utilizeCostPool(ap, cardDefs, ac);
+      if (!cands.length) break;
+      const t     = selectUtilizeTarget(cands, plan?.cost_preference ?? 'random', rand, cardDefs);
+      t.utilized  = true;
+      if (log) log.push(`  utilized ${cardDefs[t.card_id]?.name || t.card_id} as additional cost`);
+      firePassives(ap, 'on_utilized', ap, op, rand, cardDefs, log, false, plan, opPlan, t);
+      firePassives(ap, 'on_self_utilized', ap, op, rand, cardDefs, log, false, plan, opPlan, t);
+      firePassives(op, 'on_opponent_utilized', op, ap, rand, cardDefs, log, false, opPlan, plan, t);
+    }
     if (ac.effect) applyEffect(ac.effect, ap, op, rand, cardDefs, log, plan, undefined, undefined, opPlan);
   }
 
@@ -1357,24 +1431,34 @@
     return !onlyTags.some(t => tags.includes(t));
   }
 
+  function sacrificeCostPool(ap, cardDefs, ac) {
+    // destroyed: already claimed by a mass-destroy in flight (pay_and can run
+    // inside one), exactly as Go's sacrificeCands.
+    return ap.board.filter(e => !e.destroyed && matchesSupertype(cardDefs[e.card_id], ac.sacrifice)
+      && !entryExcluded(e, cardDefs, ac.sacrifice_exclude_tags)
+      && hasAnyTag(e, ac.sacrifice_tags, cardDefs));
+  }
+
   function canFulfillSacrificeCost(ap, cardDefs, def, cost) {
     const ac = cost ?? def?.effects_json?.additional_cost;
-    const target = ac?.sacrifice;
-    if (!target) return true;
-    return ap.board.some(e => matchesSupertype(cardDefs[e.card_id], target)
-      && !entryExcluded(e, cardDefs, ac.sacrifice_exclude_tags));
+    if (!ac?.sacrifice) return true;
+    return sacrificeCostPool(ap, cardDefs, ac).length >= costCount(ac.sacrifice_count);
   }
 
   function fulfillSacrificeCost(ap, op, cardDefs, def, rand, log, plan, opPlan, cost) {
     const ac    = cost ?? def.effects_json.additional_cost;
-    const cands = ap.board.filter(e => matchesSupertype(cardDefs[e.card_id], ac.sacrifice)
-      && !entryExcluded(e, cardDefs, ac.sacrifice_exclude_tags));
-    const t     = selectTarget(cands, plan?.cost_preference ?? 'random', rand, cardDefs);
-    if (log) log.push(`  sacrificed ${cardDefs[t.card_id]?.name || t.card_id} as additional cost`);
-    fireTriggerOn(t, 'on_death', ap, op, rand, cardDefs, log, plan, opPlan);
-    fireTriggerOn(t, 'on_leave', ap, op, rand, cardDefs, log, plan, opPlan);
-    ap.board = ap.board.filter(c => c !== t);
-    if (!championLeave(ap, t.card_id, log, cardDefs)) toDiscardOrExile(ap, t, cardDefs, rand, log, op, plan, opPlan);
+    const n     = costCount(ac.sacrifice_count);
+    for (let k = 0; k < n; k++) {
+      // Re-pooled per pick: a death trigger may itself remove a candidate.
+      const cands = sacrificeCostPool(ap, cardDefs, ac);
+      if (!cands.length) break;
+      const t     = selectTarget(cands, plan?.cost_preference ?? 'random', rand, cardDefs);
+      if (log) log.push(`  sacrificed ${cardDefs[t.card_id]?.name || t.card_id} as additional cost`);
+      fireTriggerOn(t, 'on_death', ap, op, rand, cardDefs, log, plan, opPlan);
+      fireTriggerOn(t, 'on_leave', ap, op, rand, cardDefs, log, plan, opPlan);
+      ap.board = ap.board.filter(c => c !== t);
+      if (!championLeave(ap, t.card_id, log, cardDefs)) toDiscardOrExile(ap, t, cardDefs, rand, log, op, plan, opPlan);
+    }
     if (ac.effect) applyEffect(ac.effect, ap, op, rand, cardDefs, log, plan, undefined, undefined, opPlan);
   }
 
@@ -1510,6 +1594,175 @@
     if (ac.effect) applyEffect(ac.effect, ap, op, rand, cardDefs, log, plan, undefined, undefined, opPlan);
   }
 
+  // ── v4.74 new payment keys (ENGINE_ALT_COSTS.md) ─────────────────────────
+  // Appended to the cost vocabulary that additional_cost, supplement, a
+  // gravecast `pay` and the pay_and effect all share. Every key is checked by
+  // extraCostBlocker() BEFORE anything is paid and paid by payExtraCosts() in
+  // this fixed order, after the v4.73 keys:
+  //   poison, mill, exile_library, return, counters, gift_token,
+  //   gift_manifest, gift_honor, gift_life, gift_shields, gift_draw
+  // RULES (Ryan, 2026-11-24):
+  //   * the check reads the very pools the payment takes from;
+  //   * a prevent_* passive makes a payment UNPAYABLE, never free;
+  //   * a new key is NEVER fatal -- refused when it would end the game for
+  //     you: poison that the next tick alone would kill you with, a mill or
+  //     library exile that empties your library, honor that hands the
+  //     opponent the honor win.
+  // Like the v4.73 keys, each new component fires the cost's `effect` rider
+  // once (additional_cost's long-standing per-component rule); supplement and
+  // pay_and strip the rider before calling, as before.
+  const EXTRA_COST_KEYS = ['poison', 'mill', 'exile_library', 'return', 'counters', 'gift_token',
+                           'gift_manifest', 'gift_honor', 'gift_life', 'gift_shields', 'gift_draw'];
+  function costInt(n) { return Math.max(0, Math.floor(n ?? 0) || 0); }
+  function hasExtraCost(ac) {
+    return !!ac && EXTRA_COST_KEYS.some(k => ac[k] !== undefined && ac[k] !== null && ac[k] !== false);
+  }
+  function returnCostPool(ap, cardDefs, ac) {
+    return ap.board.filter(e => !e.destroyed && matchesSupertype(cardDefs[e.card_id], ac['return'])
+      && hasAnyTag(e, ac.return_tags, cardDefs));
+  }
+  function giftCardOf(g) {
+    if (!g || typeof g !== 'object') return null;
+    return { card_id: g.card_id, amount: Math.min(Math.max(1, Math.floor(g.amount ?? 1) || 1), MAX_TOKEN_COPIES_PER_FIRE) };
+  }
+
+  // null = payable; else the reason, worded for the "could not play" line.
+  function extraCostBlocker(ap, op, cardDefs, ac) {
+    if (!ac) return null;
+    const poison = costInt(ac.poison);
+    if (poison > 0) {
+      if (hasPassive(ap, 'prevent_poison', cardDefs)) return 'cannot pay poison (prevented)';
+      const amp = poison + sumCombatKW(ap.board, 'amplify_poison', cardDefs);
+      // life is paid first, so the poison is weighed against what is left.
+      if (ap.poison + amp >= ap.life - costInt(ac.life)) return `paying ${amp} poison would be fatal`;
+    }
+    const mill = costInt(ac.mill);
+    let libraryUse = 0;   // mill + exile_library together must leave a card
+    if (mill > 0) {
+      if (hasPassive(ap, 'prevent_mill', cardDefs)) return 'cannot mill (prevented)';
+      const amp = mill + sumCombatKW(ap.board, 'amplify_mill', cardDefs);
+      libraryUse = amp;
+      if (ap.deck.length <= amp) return `needs more than ${amp} cards in library to mill`;
+    }
+    const exl = costInt(ac.exile_library);
+    if (exl > 0) {
+      if (hasPassive(ap, 'prevent_mill', cardDefs)) return 'cannot exile from library (prevented)';
+      if (ap.deck.length <= libraryUse + exl) return `needs more than ${libraryUse + exl} cards in library to exile`;
+    }
+    // Sacrifice is paid first and picks freely, so count what it could take:
+    // all or nothing must hold whichever permanents it chooses.
+    const sacPool = ac.sacrifice ? sacrificeCostPool(ap, cardDefs, ac) : [];
+    const sacN    = ac.sacrifice ? costCount(ac.sacrifice_count) : 0;
+    const retPool = ac['return'] ? returnCostPool(ap, cardDefs, ac) : [];
+    if (ac['return'] && retPool.length - Math.min(sacN, retPool.filter(e => sacPool.includes(e)).length) < 1)
+      return 'needs a permanent to return to hand';
+    if (ac.counters && typeof ac.counters === 'object') {
+      const tag = String(ac.counters.tag || ''), need = Math.max(1, Math.floor(ac.counters.amount ?? 1) || 1);
+      let have = 0;   // counters on anything the cost may remove do not count
+      for (const e of ap.board) if (!e.destroyed && !sacPool.includes(e) && !retPool.includes(e)) have += (e.counters?.[tag] || 0);
+      if (!tag || have < need) return `needs ${need} [${tag}] counter${need !== 1 ? 's' : ''}`;
+    }
+    for (const k of ['gift_token', 'gift_manifest']) {
+      if (!ac[k]) continue;
+      const g = giftCardOf(ac[k]);
+      const gd = g && cardDefs[g.card_id];
+      if (!gd || (k === 'gift_token' && !isPermanent(gd))) return `${k} names no usable card`;
+    }
+    const gh = costInt(ac.gift_honor);
+    if (gh > 0) {
+      const amp = gh + sumCombatKW(ap.board, 'amplify_honor', cardDefs);
+      if (op.honor + amp >= (ap.honorThreshold ?? HONOR_TO_WIN)) return 'giving that honor would hand the opponent the win';
+    }
+    if (costInt(ac.gift_shields) > 0 && hasPassive(ap, 'prevent_opponent_shield', cardDefs))
+      return 'cannot give shields (prevented)';
+    return null;
+  }
+
+  function payExtraCosts(ap, op, cardDefs, def, rand, log, plan, opPlan, ac) {
+    if (!hasExtraCost(ac)) return;
+    const rider = () => { if (ac.effect) applyEffect(ac.effect, ap, op, rand, cardDefs, log, plan, undefined, undefined, opPlan); };
+    const eff = (e) => applyEffect(e, ap, op, rand, cardDefs, log, plan, undefined, undefined, opPlan);
+    if (costInt(ac.poison) > 0)        { eff({ type: 'gain_poison', amount: costInt(ac.poison) }); rider(); }
+    if (costInt(ac.mill) > 0)          { eff({ type: 'mill_self', amount: costInt(ac.mill) }); rider(); }
+    const exl = costInt(ac.exile_library);
+    if (exl > 0) {
+      const n = Math.min(exl, ap.deck.length);
+      ap.deck.splice(0, n);
+      tally(ap, 'cards_exiled', n);
+      // Same wording as exile_self_deck: js/battle-visualizer.js parses it
+      // (anchored, so no "as additional cost" suffix) to keep library counts.
+      if (log) log.push(`  exiled ${n} card${n !== 1 ? 's' : ''} from the top of your own library (${ap.deck.length} remain)`);
+      rider();
+    }
+    if (ac['return']) {
+      const pool = returnCostPool(ap, cardDefs, ac);
+      if (pool.length) {
+        const entry = selectTarget(pool, plan?.cost_preference ?? 'random', rand, cardDefs);
+        fireLeaveTrigger(entry, ap, op, rand, cardDefs, log, true, plan, opPlan);
+        ap.board = ap.board.filter(e => e !== entry);
+        if (!championLeave(ap, entry.card_id, log, cardDefs)) {
+          toHandOrExile(ap, entry);
+          // return_own_permanent's wording, which both replay viewers parse.
+          if (log) log.push(entry.isToken
+            ? `  token copy of ${cardDefs[entry.card_id]?.name || entry.card_id} exiled instead of returning to hand`
+            : `  returned ${cardDefs[entry.card_id]?.name || entry.card_id} to your hand`);
+        }
+      }
+      rider();
+    }
+    if (ac.counters && typeof ac.counters === 'object') {
+      const tag = String(ac.counters.tag || ''), need = Math.max(1, Math.floor(ac.counters.amount ?? 1) || 1);
+      if (spendCounters(ap, tag, need, false, null) && log)
+        log.push(`  spent ${need} [${tag}] counter${need !== 1 ? 's' : ''}`);   // spend_counters_and's wording
+      rider();
+    }
+    if (ac.gift_token)    { const g = giftCardOf(ac.gift_token);    eff({ type: 'create_token_copy', side: 'opponent', card_id: g.card_id, amount: g.amount }); rider(); }
+    if (ac.gift_manifest) { const g = giftCardOf(ac.gift_manifest); eff({ type: 'manifest_card', side: 'opponent', card_id: g.card_id, amount: g.amount }); rider(); }
+    if (costInt(ac.gift_honor) > 0)   { eff({ type: 'opponent_gain_honor',  amount: costInt(ac.gift_honor) }); rider(); }
+    if (costInt(ac.gift_life) > 0)    { eff({ type: 'opponent_gain_life',   amount: costInt(ac.gift_life) }); rider(); }
+    if (costInt(ac.gift_shields) > 0) { eff({ type: 'opponent_gain_shield', amount: costInt(ac.gift_shields) }); rider(); }
+    if (costInt(ac.gift_draw) > 0)    { eff({ type: 'opponent_draw_card',   amount: costInt(ac.gift_draw) }); rider(); }
+  }
+
+  // The FULL check / payment for a cost object outside the play loop (pay_and).
+  // Same helpers in the same order as playOneCard. `life` here is never fatal
+  // (pay_and is new, so Ryan's D3 applies: an effect never pays your last life).
+  function costBlocker(ap, op, cardDefs, ac) {
+    if (!canFulfillUtilizeCost(ap, cardDefs, null, ac))   return 'needs a permanent to utilize';
+    if (!canFulfillSacrificeCost(ap, cardDefs, null, ac)) return 'needs a permanent to sacrifice';
+    if (!canFulfillHonorCost(ap, null, ac))               return `needs ${ac.honor} honor (has ${ap.honor})`;
+    if (!canFulfillDiscardCost(ap, null, false, ac))      return 'needs cards in hand to discard';
+    if (ac.life && ap.life <= ac.life)                    return `needs more than ${ac.life} life (has ${ap.life})`;
+    if (!canFulfillShieldsCost(ap, null, ac))             return `needs ${ac.shields} shields (has ${ap.shields})`;
+    if (!canFulfillRecycleCost(ap, null, ac))             return 'needs cards in the discard to recycle';
+    if (!canFulfillExileDiscardCost(ap, null, ac))        return 'needs cards in the discard to exile';
+    return extraCostBlocker(ap, op, cardDefs, ac);
+  }
+
+  function payCost(ap, op, cardDefs, def, rand, log, plan, opPlan, ac) {
+    if (ac.utilize)       fulfillUtilizeCost(ap, op, cardDefs, def, rand, log, plan, opPlan, ac);
+    if (ac.sacrifice)     fulfillSacrificeCost(ap, op, cardDefs, def, rand, log, plan, opPlan, ac);
+    if (ac.honor)         fulfillHonorCost(ap, op, cardDefs, def, rand, log, plan, opPlan, ac);
+    if (ac.discard)       fulfillDiscardCost(ap, op, cardDefs, def, -1, rand, log, plan, opPlan, ac);
+    if (ac.life)          fulfillLifeCost(ap, op, cardDefs, def, rand, log, plan, opPlan, ac);
+    if (ac.shields)       fulfillShieldsCost(ap, op, cardDefs, def, rand, log, plan, opPlan, ac);
+    if (ac.recycle)       fulfillRecycleCost(ap, op, cardDefs, def, rand, log, plan, opPlan, ac);
+    if (ac.exile_discard) fulfillExileDiscardCost(ap, op, cardDefs, def, rand, log, plan, opPlan, ac);
+    payExtraCosts(ap, op, cardDefs, def, rand, log, plan, opPlan, ac);
+  }
+
+  // v4.74 gravecast `pay` (D1: INSTEAD of the card's additional_cost when it is
+  // cast from the discard). null = none, which keeps v4.73 behaviour.
+  function gravecastPay(def) {
+    const ps = def?.effects_json?.passives;
+    if (!ps) return null;
+    for (const p of ps) {
+      if (p.type !== 'gravecast') continue;
+      return (p.pay && typeof p.pay === 'object') ? p.pay : null;
+    }
+    return null;
+  }
+
   // ── v4.48 Supplement ──────────────────────────────────────────────────────
   // An OPTIONAL additional cost with a bonus. Same vocabulary as
   // additional_cost (which is mandatory), plus `energy`, which additional_cost
@@ -1537,7 +1790,7 @@
     return (s && typeof s === 'object') ? s : null;
   }
 
-  function canPaySupplement(ap, def, cardDefs, plan) {
+  function canPaySupplement(ap, op, def, cardDefs, plan) {
     const s = supplementOf(def);
     if (!s) return false;
     if ((plan?.supplements ?? 'on') === 'off') return false;
@@ -1566,6 +1819,7 @@
     if (!canFulfillShieldsCost(ap, def, pay))             return false;
     if (!canFulfillRecycleCost(ap, def, pay))             return false;
     if (!canFulfillExileDiscardCost(ap, def, pay))        return false;
+    if (extraCostBlocker(ap, op, cardDefs, pay))          return false;   // v4.74
     // Life is checked here rather than through canFulfillLifeCost: paying a
     // MANDATORY cost may take you to exactly 0, but an OPTIONAL extra must
     // never be the thing that kills you.
@@ -1621,6 +1875,7 @@
     if (pay.shields)       fulfillShieldsCost(ap, op, cardDefs, def, rand, sub, plan, opPlan, pay);
     if (pay.recycle)       fulfillRecycleCost(ap, op, cardDefs, def, rand, sub, plan, opPlan, pay);
     if (pay.exile_discard) fulfillExileDiscardCost(ap, op, cardDefs, def, rand, sub, plan, opPlan, pay);
+    payExtraCosts(ap, op, cardDefs, def, rand, sub, plan, opPlan, pay);   // v4.74
     if (log) {
       log.push(`  supplement paid for ${def.name || def.card_id}${need > 0 ? ` (${need} energy)` : ''}`);
       for (const l of sub) log.push(l.replace(' as additional cost', ' for the supplement'));
@@ -2131,8 +2386,8 @@
   // The pool adjust_health / add_melee_counters / add_armor_counters pick
   // from on `side`. A function (v4.70) so only_if_target's guard asks the
   // exact question the effect itself answers.
-  function counterStatPool(eff, side, a, cardDefs) {
-    return side.board.filter(c => {
+  function counterStatTest(eff, a, cardDefs) {
+    return c => {
       if (c.hp === null || c.destroyed) return false;
       // v4.57: a permanent at 0 hp or below is dead, waiting only for the
       // next prune -- a heal must not lift it back (Ryan, 2026-11-05: "a
@@ -2152,7 +2407,10 @@
       if (entryExcluded(c, cardDefs, eff.exclude_tags) || entryLacksRequired(c, cardDefs, eff.only_tags)) return false;
       if (eff.cost_op && !matchesCostFilter(def, '', eff.cost_op, eff.cost_threshold ?? 0)) return false;
       return true;
-    });
+    };
+  }
+  function counterStatPool(eff, side, a, cardDefs) {
+    return side.board.filter(counterStatTest(eff, a, cardDefs));
   }
 
   // v4.70 only_if_target (Ryan, 2026-11-18): a "pay X, then Y" ability with
@@ -2180,7 +2438,7 @@
         // (Mighty Mushroom, Treasure Horde) -- same side rule as the effect.
         targeted = true;
         const side = sub.side === 'opponent' ? op : ap;
-        if (counterStatPool(sub, side, resolveAmount(sub, ap, op, cardDefs), cardDefs).length) return false;
+        if (side.board.some(counterStatTest(sub, resolveAmount(sub, ap, op, cardDefs), cardDefs))) return false;
       }
     }
     return targeted;
@@ -3377,6 +3635,26 @@
         break;
       }
 
+      // v4.74. Any mix of payment keys (ENGINE_ALT_COSTS.md), all or nothing:
+      // checked in full by costBlocker() first, paid by payCost(), then
+      // `then[]`; unpayable pays nothing and fires `else[]`. Its own `effect`
+      // rider, if a card sets one, is stripped -- `then` is the payoff.
+      case 'pay_and': {
+        const pc = (eff.pay && typeof eff.pay === 'object') ? Object.assign({}, eff.pay) : {};
+        delete pc.effect;
+        const why = costBlocker(ap, op, cardDefs, pc);
+        if (why) {
+          push(`could not pay (${why}) — effect skipped`);
+          for (const sub of (eff['else'] || [])) applyEffect(sub, ap, op, rand, cardDefs, log, plan, fromPassive, source, opPlan);
+          break;
+        }
+        const sub = log ? [] : null;
+        payCost(ap, op, cardDefs, cardDefs[source?.card_id] || {}, rand, sub, plan, opPlan, pc);
+        if (log) for (const l of sub) log.push(l.replace(' as additional cost', ''));
+        for (const s2 of (eff.then || [])) applyEffect(s2, ap, op, rand, cardDefs, log, plan, fromPassive, source, opPlan);
+        break;
+      }
+
       case 'pay_life_and': {
         const cost = Math.max(0, Math.floor(a) || 0);
         if (ap.life < cost) { push(`not enough life to pay ${cost} — effect skipped`); break; }
@@ -3871,7 +4149,7 @@
         // no deck/discard/hand interaction at all, unlike Tutor. The token
         // exiles instead of going to discard/hand whenever it later leaves
         // play (see the isToken checks in toDiscardOrExile/toHandOrExile).
-        const amt = Math.min(Math.max(1, a), MAX_TOKEN_COPIES_PER_FIRE);
+        const amt = Math.min(Math.max(1, a), tokenCap(eff));
         if (eff.random_from) {
           // v4.53: a random permanent from a library. The pool is taken ONCE,
           // before any copy enters, and each copy costs exactly one rand().
@@ -4409,6 +4687,34 @@
   // rather than recomputing anthemBonus per keyword per call. Same
   // `|| 1` amount coercion as sumCombatKW -- required for 3-engine parity
   // with shell/validate.go / shell/validate.py.
+  // v4.75 (Ryan, 2026-11-23): xN raises the CAP too. A link is limited by the
+  // combat damage dealt, and that limit used to swallow the multiplier: Foog's
+  // Envenom x77 on 1 melee gave 1 poison. Each point of damage an xN source
+  // could have dealt now counts N times, highest N first, so the result is
+  // min(sum, damage + the extra those points are worth). With no N above 1 the
+  // extra is 0 -- exactly v4.74 -- and it can never be lower than v4.74.
+  function linkAmount(attackers, meleeOf, kw, cardDefs, combatDmg) {
+    const total = sumCombatKWScaled(attackers, meleeOf, kw, cardDefs);
+    if (total <= combatDmg) return total;
+    const units = [];
+    for (let i = 0; i < attackers.length; i++) {
+      if (meleeOf[i] <= 0) continue;
+      for (const p of activePassives(attackers[i], cardDefs) || []) {
+        const n = Math.trunc(p.amount || 1);
+        if (p.type === kw && n > 1) units.push([n, meleeOf[i]]);
+      }
+    }
+    units.sort((a, b) => b[0] - a[0]);
+    let left = combatDmg, cap = combatDmg;
+    for (const [n, m] of units) {
+      const take = Math.min(left, m);
+      cap += take * (n - 1);
+      left -= take;
+      if (left <= 0) break;
+    }
+    return Math.min(total, cap);
+  }
+
   function sumCombatKWScaled(attackers, meleeOf, kw, cardDefs) {
     let total = 0;
     for (let i = 0; i < attackers.length; i++) {
@@ -4584,9 +4890,11 @@
     // printed value, so anthem_melee contributes 0 in either direction;
     // anthem_armor is unaffected.
     if (passiveType === 'anthem_melee' && hasCardPassive(def, 'melee_locked')) return 0;
+    const ids = sourceIndex(cardDefs).anthem.get(passiveType);
+    if (!ids) return 0;
     const recip = excludeEntry && excludeEntry.card_id === cardId ? excludeEntry : null;
     let bonus = 0;
-    for (const src of board) {
+    for (const src of sourcesOn(board, ids)) {
       if (src === excludeEntry) continue;
       const ps = activePassives(src, cardDefs);          // v4.22 mute chokepoint
       if (!ps) continue;
@@ -4942,13 +5250,29 @@
       advanceSaga(bc, ap, op, rand, cardDefs, log, plan, opPlan);
   }
 
+  function printsTrigger(bc, event, cardDefs) {
+    const ts = cardDefs[bc.card_id]?.effects_json?.triggers;
+    if (!ts) return false;
+    for (const t of ts) if (t.event === event) return true;
+    return false;
+  }
+
   // Fire one event across an ordered list of board entries.
   // Prunes dead creatures after each entry so later triggers can't re-target them.
   function fireTriggers(entries, event, ap, op, rand, cardDefs, log, plan, opPlan) {
+    // `clean`: the last pair of prunes found nothing dead and nothing has run
+    // since, so an entry that does not print this event (it would do nothing)
+    // can be skipped, prunes included. The first entry is always pruned after
+    // -- see the "NOT inert" note below. on_enter / on_leave also reach the tag
+    // watchers, so those never skip (no caller passes them today).
+    const skippable = event !== 'on_enter' && event !== 'on_leave';
+    let clean = false;
     for (const bc of entries) {
+      if (clean && skippable && !printsTrigger(bc, event, cardDefs)) continue;
       fireTriggerOn(bc, event, ap, op, rand, cardDefs, log, plan);
-      pruneBoard(ap, op, rand, cardDefs, log, plan, opPlan);
-      pruneBoard(op, ap, rand, cardDefs, log, opPlan, plan);
+      const d1 = pruneBoard(ap, op, rand, cardDefs, log, plan, opPlan);
+      const d2 = pruneBoard(op, ap, rand, cardDefs, log, opPlan, plan);
+      clean = !d1 && !d2;
     }
   }
 
@@ -5086,6 +5410,15 @@
   // ── Prune dead permanents ─────────────────────────────────────────────────────
   // Fires on_death + on_leave for each permanent whose hp ≤ 0.
   function pruneBoard(owner, opp, rand, cardDefs, log, plan, opPlan) {
+    // Called twice after every trigger, so the usual "nothing died" answer must
+    // not copy the board. Same test as the re-filter at the end.
+    const board = owner.board;
+    let any = false;
+    for (let i = 0; i < board.length; i++) {
+      const hp = board[i].hp;
+      if (!(hp === null || hp > 0)) { any = true; break; }
+    }
+    if (!any) return false;
     const dead = owner.board.filter(c => c.hp !== null && c.hp <= 0);
     for (const bc of dead) {
       if (log) log.push(`  ${cardDefs[bc.card_id]?.name || bc.card_id} died`);
@@ -5826,7 +6159,15 @@
       //   * this card has not already been explained this turn, because the
       //     hand is rescanned after every single play
       const affordable = canAfford(ap, effCost, def);
-      let blockedBy = null;
+      let blockedBy = null, xb = null;
+      // v4.74: a gravecast `pay` is the WHOLE extra price from the discard,
+      // INSTEAD of the card's additional_cost (Ryan's D1). Without one,
+      // playCost is the additional_cost object itself, as in v4.73. A
+      // gravecast card is not in the hand, so its discard cost needs no slot
+      // reserved for it -- but only on the new path: v4.73 reserved one, and
+      // existing gravecast cards keep that exactly.
+      const gcPay    = fromDiscard ? gravecastPay(def) : null;
+      const playCost = gcPay ?? def?.effects_json?.additional_cost ?? {};
       if (affordable) {
         // v4.41: the To Play gate goes FIRST because it is what the card
         // prints first, so when several things block at once the replay
@@ -5836,14 +6177,15 @@
         // a card whose gate is unmet (blockedBy null => the play proceeds).
         const gate = playGateBlocker(def, ap, op, cardDefs);
         if      (gate)                                           blockedBy = gate;
-        else if (!canFulfillUtilizeCost(ap, cardDefs, def))      blockedBy = 'needs a permanent to utilize';
-        else if (!canFulfillSacrificeCost(ap, cardDefs, def))    blockedBy = 'needs a permanent to sacrifice';
-        else if (!canFulfillHonorCost(ap, def))                  blockedBy = `needs ${def.effects_json.additional_cost.honor} honor (has ${ap.honor})`;
-        else if (!canFulfillDiscardCost(ap, def))                blockedBy = 'needs cards in hand to discard';
-        else if (!canFulfillLifeCost(ap, def))                   blockedBy = `needs ${def.effects_json.additional_cost.life} life (has ${ap.life})`;
-        else if (!canFulfillShieldsCost(ap, def))                blockedBy = `needs ${def.effects_json.additional_cost.shields} shields (has ${ap.shields})`;
-        else if (!canFulfillRecycleCost(ap, def))                blockedBy = 'needs cards in the discard to recycle';
-        else if (!canFulfillExileDiscardCost(ap, def))           blockedBy = 'needs cards in the discard to exile';
+        else if (!canFulfillUtilizeCost(ap, cardDefs, def, playCost))      blockedBy = 'needs a permanent to utilize';
+        else if (!canFulfillSacrificeCost(ap, cardDefs, def, playCost))    blockedBy = 'needs a permanent to sacrifice';
+        else if (!canFulfillHonorCost(ap, def, playCost))                  blockedBy = `needs ${playCost.honor} honor (has ${ap.honor})`;
+        else if (!canFulfillDiscardCost(ap, def, !gcPay, playCost))        blockedBy = 'needs cards in hand to discard';
+        else if (!canFulfillLifeCost(ap, def, playCost) || (gcPay && gcPay.life && ap.life <= gcPay.life)) blockedBy = `needs ${playCost.life} life (has ${ap.life})`;
+        else if (!canFulfillShieldsCost(ap, def, playCost))                blockedBy = `needs ${playCost.shields} shields (has ${ap.shields})`;
+        else if (!canFulfillRecycleCost(ap, def, playCost))                blockedBy = 'needs cards in the discard to recycle';
+        else if (!canFulfillExileDiscardCost(ap, def, playCost))           blockedBy = 'needs cards in the discard to exile';
+        else if ((xb = extraCostBlocker(ap, op, cardDefs, playCost)))      blockedBy = xb;
         // v4.69: the player's own plan holds a destroy card with nothing to destroy.
         else if (plan?.hold_removal_without_target === true && !removalWouldHit(def, op, cardDefs)) blockedBy = 'held: nothing to destroy';
       }
@@ -5869,19 +6211,20 @@
       // block for the card ABOVE it -- the last card's costs looked unpaid
       // (Fry Guy, 2026-10-28). Log order only; payment order is unchanged.
       const costLog = log ? [] : null;
-      if (def?.effects_json?.additional_cost?.utilize) fulfillUtilizeCost(ap, op, cardDefs, def, rand, costLog, plan, opPlan);
-      if (def?.effects_json?.additional_cost?.sacrifice) fulfillSacrificeCost(ap, op, cardDefs, def, rand, costLog, plan, opPlan);
-      if (def?.effects_json?.additional_cost?.honor) fulfillHonorCost(ap, op, cardDefs, def, rand, costLog, plan, opPlan);
-      if (def?.effects_json?.additional_cost?.discard) i = fulfillDiscardCost(ap, op, cardDefs, def, i, rand, costLog, plan, opPlan);
-      if (def?.effects_json?.additional_cost?.life) fulfillLifeCost(ap, op, cardDefs, def, rand, costLog, plan, opPlan);
-      if (def?.effects_json?.additional_cost?.shields) fulfillShieldsCost(ap, op, cardDefs, def, rand, costLog, plan, opPlan);
-      if (def?.effects_json?.additional_cost?.recycle) fulfillRecycleCost(ap, op, cardDefs, def, rand, costLog, plan, opPlan);
-      if (def?.effects_json?.additional_cost?.exile_discard) fulfillExileDiscardCost(ap, op, cardDefs, def, rand, costLog, plan, opPlan);
+      if (playCost.utilize) fulfillUtilizeCost(ap, op, cardDefs, def, rand, costLog, plan, opPlan, playCost);
+      if (playCost.sacrifice) fulfillSacrificeCost(ap, op, cardDefs, def, rand, costLog, plan, opPlan, playCost);
+      if (playCost.honor) fulfillHonorCost(ap, op, cardDefs, def, rand, costLog, plan, opPlan, playCost);
+      if (playCost.discard) i = fulfillDiscardCost(ap, op, cardDefs, def, i, rand, costLog, plan, opPlan, playCost);
+      if (playCost.life) fulfillLifeCost(ap, op, cardDefs, def, rand, costLog, plan, opPlan, playCost);
+      if (playCost.shields) fulfillShieldsCost(ap, op, cardDefs, def, rand, costLog, plan, opPlan, playCost);
+      if (playCost.recycle) fulfillRecycleCost(ap, op, cardDefs, def, rand, costLog, plan, opPlan, playCost);
+      if (playCost.exile_discard) fulfillExileDiscardCost(ap, op, cardDefs, def, rand, costLog, plan, opPlan, playCost);
+      payExtraCosts(ap, op, cardDefs, def, rand, costLog, plan, opPlan, playCost);
       // v4.48: the OPTIONAL extra, paid last -- after the base cost and every
       // mandatory cost, so it can never affect whether this card was playable.
       // A card with no supplement takes a path that consumes zero RNG, which
       // is what keeps the existing catalogue replaying bit-identically.
-      const supDeferred = canPaySupplement(ap, def, cardDefs, plan) ? paySupplement(ap, op, cardDefs, def, rand, costLog, plan, opPlan) : null;
+      const supDeferred = canPaySupplement(ap, op, def, cardDefs, plan) ? paySupplement(ap, op, cardDefs, def, rand, costLog, plan, opPlan) : null;
       // Re-locate the played card by identity rather than trusting the
       // stale index i -- unlike fulfillDiscardCost (which explicitly
       // tracks and adjusts the played card's own index as it discards
@@ -5972,6 +6315,7 @@
 
   // ── Single-game simulation (firstPlayer: 0=A goes first, 1=B goes first) ─────
   function _simSingleGame(cardsA, cardsB, cardDefs, seed, planA, planB, firstPlayer, championA, championB, chaosEffect, startingLife, honorToWin, startA, startB) {
+    __srcIndex = null; __readOnly = null;
     const rand  = RNG(seed);
     const deckA = shuffle(cardsA, rand);
     const deckB = shuffle(cardsB, rand);
@@ -5994,6 +6338,7 @@
     const chaos = chaosEffect || null;
     const chaosCounts = parseChaosEffects(chaos);
     const ht    = honorToWin ?? ((chaosCounts.honor_threshold_50 > 0) ? 50 : HONOR_TO_WIN);
+    p[0].honorThreshold = ht; p[1].honorThreshold = ht;   // v4.74: gift_honor's "never fatal" check
 
     // Opening hands: first player draws 5, second draws 6
     const draws = first === 0 ? [5, 6] : [6, 5];
@@ -6140,6 +6485,7 @@
       // 6c. Combat phase — active player's total creature melee vs opponent's total permanent armor
       {
         const attackers    = ap.board.filter(e => !e.utilized);
+        __readOnly = new Map();   // nothing changes until combatDmg is known
         const meleeOf      = attackers.map(e => effectiveMelee(e, ap.board, cardDefs));
         // linkCapOf is the basis sumCombatKWScaled multiplies each attacker's
         // link/bound amount by -- see linkCapBasis's own comment for why
@@ -6151,6 +6497,7 @@
         // combatDmg := totalMelee - totalOpArmor - op.shields) -- unlike deal_damage_to_player,
         // shields aren't consumed here; they just naturally decay by 1/turn regardless.
         const evasion      = combatWithEvasion(attackers, meleeOf, op, cardDefs);   // v4.62
+        __readOnly = null;
         const combatDmg    = evasion ? evasion.dmg : totalMelee - totalOpArmor - op.shields;
         if (combatDmg > 0) {
           op.life -= combatDmg; tally(op, 'life_lost', combatDmg);
@@ -6165,12 +6512,12 @@
           // longer draws/gains off the WHOLE board's pooled damage, only
           // its own contribution, while still never exceeding what
           // actually got through. (reported: Fry Guy/phodos, 2026-08-08)
-          const lifelink   = Math.min(sumCombatKWScaled(attackers, linkCapOf, 'lifelink',   cardDefs), combatDmg);
-          const honorlink  = Math.min(sumCombatKWScaled(attackers, linkCapOf, 'honorlink',  cardDefs), combatDmg);
-          const drawlink   = Math.min(sumCombatKWScaled(attackers, linkCapOf, 'drawlink',   cardDefs), combatDmg);
-          const shieldlink = Math.min(sumCombatKWScaled(attackers, linkCapOf, 'shieldlink', cardDefs), combatDmg);
-          const millbound  = Math.min(sumCombatKWScaled(attackers, linkCapOf, 'millbound',  cardDefs), combatDmg);
-          const honorbound = Math.min(sumCombatKWScaled(attackers, linkCapOf, 'honorbound', cardDefs), combatDmg);
+          const lifelink   = linkAmount(attackers, linkCapOf, 'lifelink', cardDefs, combatDmg);
+          const honorlink  = linkAmount(attackers, linkCapOf, 'honorlink', cardDefs, combatDmg);
+          const drawlink   = linkAmount(attackers, linkCapOf, 'drawlink', cardDefs, combatDmg);
+          const shieldlink = linkAmount(attackers, linkCapOf, 'shieldlink', cardDefs, combatDmg);
+          const millbound  = linkAmount(attackers, linkCapOf, 'millbound', cardDefs, combatDmg);
+          const honorbound = linkAmount(attackers, linkCapOf, 'honorbound', cardDefs, combatDmg);
           // lifelink/honorlink/shieldlink used to mutate the resource directly
           // without firing the same on_*_gain passives the equivalent explicit
           // card effect (gain_life/gain_honor/gain_shield) always fires -- e.g.
@@ -6214,13 +6561,13 @@
           // melee-scaled formula as the 6 above, each just triggering an
           // existing, already-3-engine-parity'd effect payload with the
           // computed capped amount.
-          const poisonlink = Math.min(sumCombatKWScaled(attackers, linkCapOf, 'poisonlink', cardDefs), combatDmg);
+          const poisonlink = linkAmount(attackers, linkCapOf, 'poisonlink', cardDefs, combatDmg);
           if (poisonlink > 0 && !hasPassive(op, 'prevent_poison', cardDefs)) {
             op.poison += poisonlink; tally(op, 'poison_gained', poisonlink);
             firePassives(op, 'on_poisoned', op, ap, rand, cardDefs, null, false, plans[oi], plan);
             firePassives(ap, 'on_opponent_poisoned', ap, op, rand, cardDefs, null, false, plan, plans[oi]);
           }
-          const damagelink = Math.min(sumCombatKWScaled(attackers, linkCapOf, 'damagelink', cardDefs), combatDmg);
+          const damagelink = linkAmount(attackers, linkCapOf, 'damagelink', cardDefs, combatDmg);
           if (damagelink > 0) {
             const lost = dmgPlayer(op, damagelink, 'combat');
             if (lost > 0) {
@@ -6230,7 +6577,7 @@
             firePassives(ap, 'on_damage_dealt', ap, op, rand, cardDefs, null, false, plan, plans[oi]);
             firePassives(op, 'on_opponent_damage_dealt', op, ap, rand, cardDefs, null, false, plans[oi], plan);
           }
-          const discardlink = Math.min(sumCombatKWScaled(attackers, linkCapOf, 'discardlink', cardDefs), combatDmg);
+          const discardlink = linkAmount(attackers, linkCapOf, 'discardlink', cardDefs, combatDmg);
           if (discardlink > 0) {
             const n = Math.min(discardlink, 10);
             for (let _k = 0; _k < n && op.hand.length; _k++) {
@@ -6242,7 +6589,7 @@
           // unconditionally ('gte'/0 is this codebase's existing "match
           // everything of this supertype" idiom). The full amount applies
           // to EACH matching structure, not divided among them.
-          const siegelink = Math.min(sumCombatKWScaled(attackers, linkCapOf, 'siegelink', cardDefs), combatDmg);
+          const siegelink = linkAmount(attackers, linkCapOf, 'siegelink', cardDefs, combatDmg);
           if (siegelink > 0) {
             for (const c of op.board) {
               if (!matchesCostFilter(cardDefs[c.card_id], 'structure', 'gte', 0)) continue;
@@ -6250,7 +6597,7 @@
               dmgCreature(c, siegelink);
             }
           }
-          const reliclink = Math.min(sumCombatKWScaled(attackers, linkCapOf, 'reliclink', cardDefs), combatDmg);
+          const reliclink = linkAmount(attackers, linkCapOf, 'reliclink', cardDefs, combatDmg);
           if (reliclink > 0) {
             for (const c of op.board.slice()) {
               if (c.destroyed || !matchesCostFilter(cardDefs[c.card_id], 'relic', 'lte', reliclink) || isIndestructible(c, cardDefs)) continue;
@@ -6260,7 +6607,7 @@
             }
             op.board = op.board.filter(c => !c.destroyed);
           }
-          const enchantmentlink = Math.min(sumCombatKWScaled(attackers, linkCapOf, 'enchantmentlink', cardDefs), combatDmg);
+          const enchantmentlink = linkAmount(attackers, linkCapOf, 'enchantmentlink', cardDefs, combatDmg);
           if (enchantmentlink > 0) {
             for (const c of op.board.slice()) {
               if (c.destroyed || !matchesCostFilter(cardDefs[c.card_id], 'enchantment', 'lte', enchantmentlink) || isIndestructible(c, cardDefs)) continue;
@@ -6273,7 +6620,7 @@
           // animatelink: self-directed (like lifelink/honorlink/drawlink),
           // reanimates ONE creature from the caster's own discard costing
           // <= the computed amount.
-          const animatelink = Math.min(sumCombatKWScaled(attackers, linkCapOf, 'animatelink', cardDefs), combatDmg);
+          const animatelink = linkAmount(attackers, linkCapOf, 'animatelink', cardDefs, combatDmg);
           if (animatelink > 0) {
             const pool = reanimateCandidates(ap, cardDefs, '', 'creature', 'lte', animatelink);
             if (pool.length) {
@@ -6288,7 +6635,7 @@
           // no RNG/config needed), not random, to match millbound/honorbound/
           // poisonlink's deterministic nature. Mirrors deal_damage_to_weakest_
           // creature's own inline-filter style.
-          const creaturelink = Math.min(sumCombatKWScaled(attackers, linkCapOf, 'creaturelink', cardDefs), combatDmg);
+          const creaturelink = linkAmount(attackers, linkCapOf, 'creaturelink', cardDefs, combatDmg);
           if (creaturelink > 0) {
             const crlTs = op.board.filter(c => !c.destroyed && c.hp !== null && c.hp > 0 && matchesSupertype(cardDefs[c.card_id], 'creature') && !isUntargetable(c, cardDefs)).sort((x, y) => {
               const xs = cardDefs[x.card_id]?.stats_json ?? {};
@@ -6301,7 +6648,7 @@
           // so it is capped twice -- by combatDmg like every other link, and
           // again by MAX_TOKEN_COPIES_PER_FIRE (the Rabbit Queen guard; see
           // its comment for why an uncapped token fire hung the validators).
-          const coinlink = Math.min(sumCombatKWScaled(attackers, linkCapOf, 'coinlink', cardDefs), combatDmg, MAX_TOKEN_COPIES_PER_FIRE);
+          const coinlink = Math.min(linkAmount(attackers, linkCapOf, 'coinlink', cardDefs, combatDmg), MAX_TOKEN_COPIES_PER_FIRE);
           if (coinlink > 0 && cardDefs[COINLINK_TOKEN_ID]) {
             for (let _cl = 0; _cl < coinlink; _cl++) {
               reanimateOne(ap, op, COINLINK_TOKEN_ID, cardDefs, rand, null, '', true, plan, plans[oi]);
@@ -6655,6 +7002,7 @@
   // player, lineStart, lineEnd, pBefore[2], pAfter[2] }. pBefore/pAfter index [0]
   // always = slotA, [1] always = slotB regardless of who goes first.
   function recordBattle(cardsA, cardsB, cardDefs, seed, planA, planB, firstPlayer, championA, championB, chaosEffect, startingLife, honorToWin, startA, startB) {
+    __srcIndex = null; __readOnly = null;
     const rand  = RNG(seed);
     const deckA = shuffle(cardsA, rand);
     const deckB = shuffle(cardsB, rand);
@@ -6688,6 +7036,7 @@
     const chaos = chaosEffect || null;
     const chaosCounts = parseChaosEffects(chaos);
     const ht    = honorToWin ?? ((chaosCounts.honor_threshold_50 > 0) ? 50 : HONOR_TO_WIN);
+    p[0].honorThreshold = ht; p[1].honorThreshold = ht;   // v4.74: gift_honor's "never fatal" check
     const lines    = [];
     const turnData = [];
 
@@ -6953,6 +7302,7 @@
       // 6c. Combat phase — active player's non-utilized creature melee vs opponent's total armor
       {
         const attackers    = ap.board.filter(e => !e.utilized);
+        __readOnly = new Map();   // nothing changes until combatDmg is known
         const meleeOf      = attackers.map(e => effectiveMelee(e, ap.board, cardDefs));
         // linkCapOf is the basis sumCombatKWScaled multiplies each attacker's
         // link/bound amount by -- see linkCapBasis's own comment for why
@@ -6964,6 +7314,7 @@
         // combatDmg := totalMelee - totalOpArmor - op.shields) -- unlike deal_damage_to_player,
         // shields aren't consumed here; they just naturally decay by 1/turn regardless.
         const evasion      = combatWithEvasion(attackers, meleeOf, op, cardDefs);   // v4.62
+        __readOnly = null;
         const combatDmg    = evasion ? evasion.dmg : totalMelee - totalOpArmor - op.shields;
         if (totalMelee > 0) {
           if (evasion) {
@@ -6982,12 +7333,12 @@
           // see the equivalent fast-path block above for the full comment.
           // Values below are already the final applied amount (post-cap),
           // no more `combatDmg * x` at any use site.
-          const lifelink   = Math.min(sumCombatKWScaled(attackers, linkCapOf, 'lifelink',   cardDefs), combatDmg);
-          const honorlink  = Math.min(sumCombatKWScaled(attackers, linkCapOf, 'honorlink',  cardDefs), combatDmg);
-          const drawlink   = Math.min(sumCombatKWScaled(attackers, linkCapOf, 'drawlink',   cardDefs), combatDmg);
-          const shieldlink = Math.min(sumCombatKWScaled(attackers, linkCapOf, 'shieldlink', cardDefs), combatDmg);
-          const millbound  = Math.min(sumCombatKWScaled(attackers, linkCapOf, 'millbound',  cardDefs), combatDmg);
-          const honorbound = Math.min(sumCombatKWScaled(attackers, linkCapOf, 'honorbound', cardDefs), combatDmg);
+          const lifelink   = linkAmount(attackers, linkCapOf, 'lifelink', cardDefs, combatDmg);
+          const honorlink  = linkAmount(attackers, linkCapOf, 'honorlink', cardDefs, combatDmg);
+          const drawlink   = linkAmount(attackers, linkCapOf, 'drawlink', cardDefs, combatDmg);
+          const shieldlink = linkAmount(attackers, linkCapOf, 'shieldlink', cardDefs, combatDmg);
+          const millbound  = linkAmount(attackers, linkCapOf, 'millbound', cardDefs, combatDmg);
+          const honorbound = linkAmount(attackers, linkCapOf, 'honorbound', cardDefs, combatDmg);
           // See the equivalent fast-path block above for why the on_*_gain fires
           // and the prevent_opponent_shield check are here now -- same bug,
           // both paths (reported: Tristal, 2026-08-05). Also brings
@@ -7052,7 +7403,7 @@
           // 2026-08-08: Phase 2 -- 8 new combat-link keywords, same
           // melee-scaled formula as the 6 above -- see the equivalent
           // fast-path block above for the full comment.
-          const poisonlink = Math.min(sumCombatKWScaled(attackers, linkCapOf, 'poisonlink', cardDefs), combatDmg);
+          const poisonlink = linkAmount(attackers, linkCapOf, 'poisonlink', cardDefs, combatDmg);
           if (poisonlink > 0) {
             if (hasPassive(op, 'prevent_poison', cardDefs)) {
               push(`  poisonlink: prevented by ${pn(oi)}'s passive`);
@@ -7062,7 +7413,7 @@
               const opgl = []; firePassives(ap, 'on_opponent_poisoned', ap, op, rand, cardDefs, opgl, false, plan, plans[oi]); flushPassive(opgl, 'on_opponent_poisoned', pn(ai));
             }
           }
-          const damagelink = Math.min(sumCombatKWScaled(attackers, linkCapOf, 'damagelink', cardDefs), combatDmg);
+          const damagelink = linkAmount(attackers, linkCapOf, 'damagelink', cardDefs, combatDmg);
           if (damagelink > 0) {
             const lost = dmgPlayer(op, damagelink, 'combat');
             push(`  damagelink: ${pn(oi)} took ${damagelink} bonus damage → ${op.life} life`);
@@ -7073,7 +7424,7 @@
             const ddl = []; firePassives(ap, 'on_damage_dealt', ap, op, rand, cardDefs, ddl, false, plan, plans[oi]); flushPassive(ddl, 'on_damage_dealt', pn(ai));
             const oddl = []; firePassives(op, 'on_opponent_damage_dealt', op, ap, rand, cardDefs, oddl, false, plans[oi], plan); flushPassive(oddl, 'on_opponent_damage_dealt', pn(oi));
           }
-          const discardlink = Math.min(sumCombatKWScaled(attackers, linkCapOf, 'discardlink', cardDefs), combatDmg);
+          const discardlink = linkAmount(attackers, linkCapOf, 'discardlink', cardDefs, combatDmg);
           if (discardlink > 0) {
             const n = Math.min(discardlink, 10);
             let discarded = 0;
@@ -7086,7 +7437,7 @@
           }
           // siegelink: no cost threshold -- hits every enemy structure
           // unconditionally -- see the fast-path block above for why.
-          const siegelink = Math.min(sumCombatKWScaled(attackers, linkCapOf, 'siegelink', cardDefs), combatDmg);
+          const siegelink = linkAmount(attackers, linkCapOf, 'siegelink', cardDefs, combatDmg);
           if (siegelink > 0) {
             let hitCount = 0;
             for (const c of op.board) {
@@ -7097,7 +7448,7 @@
             }
             push(hitCount ? `  siegelink: dealt ${siegelink} to ${hitCount} enemy structure(s)` : `  siegelink: no enemy structures to hit`);
           }
-          const reliclink = Math.min(sumCombatKWScaled(attackers, linkCapOf, 'reliclink', cardDefs), combatDmg);
+          const reliclink = linkAmount(attackers, linkCapOf, 'reliclink', cardDefs, combatDmg);
           if (reliclink > 0) {
             let destroyedCount = 0;
             for (const c of op.board.slice()) {
@@ -7110,7 +7461,7 @@
             op.board = op.board.filter(c => !c.destroyed);
             if (!destroyedCount) push(`  reliclink: no relics matching cost filter`);
           }
-          const enchantmentlink = Math.min(sumCombatKWScaled(attackers, linkCapOf, 'enchantmentlink', cardDefs), combatDmg);
+          const enchantmentlink = linkAmount(attackers, linkCapOf, 'enchantmentlink', cardDefs, combatDmg);
           if (enchantmentlink > 0) {
             let destroyedCount2 = 0;
             for (const c of op.board.slice()) {
@@ -7124,7 +7475,7 @@
             if (!destroyedCount2) push(`  enchantmentlink: no enchantments matching cost filter`);
           }
           // animatelink: self-directed -- see the fast-path block above.
-          const animatelink = Math.min(sumCombatKWScaled(attackers, linkCapOf, 'animatelink', cardDefs), combatDmg);
+          const animatelink = linkAmount(attackers, linkCapOf, 'animatelink', cardDefs, combatDmg);
           if (animatelink > 0) {
             const pool = reanimateCandidates(ap, cardDefs, '', 'creature', 'lte', animatelink);
             if (!pool.length) { push(`  animatelink: no creatures in discard matching cost filter`); }
@@ -7142,7 +7493,7 @@
             }
           }
           // creaturelink: weakest, not random -- see the fast-path block above.
-          const creaturelink = Math.min(sumCombatKWScaled(attackers, linkCapOf, 'creaturelink', cardDefs), combatDmg);
+          const creaturelink = linkAmount(attackers, linkCapOf, 'creaturelink', cardDefs, combatDmg);
           if (creaturelink > 0) {
             const crlTs = op.board.filter(c => !c.destroyed && c.hp !== null && c.hp > 0 && matchesSupertype(cardDefs[c.card_id], 'creature') && !isUntargetable(c, cardDefs)).sort((x, y) => {
               const xs = cardDefs[x.card_id]?.stats_json ?? {};
@@ -7159,7 +7510,7 @@
           // coinlink (Avarice): see the fast-path block above. `lines`, not
           // `log` -- that name is undefined in this scope and is exactly the
           // ReferenceError animatelink shipped with (comment above).
-          const coinlink = Math.min(sumCombatKWScaled(attackers, linkCapOf, 'coinlink', cardDefs), combatDmg, MAX_TOKEN_COPIES_PER_FIRE);
+          const coinlink = Math.min(linkAmount(attackers, linkCapOf, 'coinlink', cardDefs, combatDmg), MAX_TOKEN_COPIES_PER_FIRE);
           if (coinlink > 0) {
             if (!cardDefs[COINLINK_TOKEN_ID]) {
               push(`  coinlink: Gold Coin (card ${COINLINK_TOKEN_ID}) is not in this payload — no coins minted`);

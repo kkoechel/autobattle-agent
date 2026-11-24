@@ -1,10 +1,10 @@
 {
-  "version": "4.72",
-  "source_commit": "b863852",
-  "source_tree": "361b8fb28c3f07c41ffe8eaf0ef84639bf76dd12",
+  "version": "4.76",
+  "source_commit": "dd1b394",
+  "source_tree": "f0a3efe29803b6589f26d9b150d179e2e6adad9c",
   "source_repo": "autobattle.online",
-  "built": "2026-11-20",
-  "sha256": "900987feac0e15873372c298986d5d6bf5203eb01d234d186087afdb21f30674",
+  "built": "2026-11-24",
+  "sha256": "d87a37283f04249e9314823197609b13c39ab71c9761a4ce2c92c8f2c6e1b7a3",
   "note": "The AAR itself is gitignored (2MB binary). This file is tracked so a stale or unexpected engine is detectable; tools/check_engine_parity.sh verifies both the checksum and the version against the live league. source_tree is the engine subtree, not HEAD -- HEAD moves for unrelated commits. js_sha256 is sha256 of js/battle-engine.js AT source_commit: the app compares the live file against it to decide whether this AAR is still current, and gradle reads both fields into BuildConfig so this stays the single source of truth.",
-  "js_sha256": "3167415248d0f4deb7679ff9aad35b0969383fbd45df037accc175912b99796e"
+  "js_sha256": "9d768f30a3cf7aca68974de1d55feac1750c95cc80a57a6f11c42eef2391ebbb"
 }

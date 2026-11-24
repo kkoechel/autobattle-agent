@@ -130,8 +130,22 @@ android {
         //
         // Check tools/check_engine_parity.sh immediately before uploading, not
         // when starting the build, because the answer changes daily.
-        versionCode 46
-        versionName "1.35"
+        //
+        // 47 / 1.36 on 2026-11-24, engine 4.76 (dd1b394), on Ryan's go. 46 WAS
+        // uploaded, so that code is spent. This bundle collapses four engine
+        // asks -- 4.73, 4.74, 4.75, 4.76 -- and only one of the eleven parity
+        // fixtures can tell it from 46: payload.json, which v4.75 moved to
+        // 6ac148d4. 4.76 itself is speed only.
+        //
+        // IT IS ALSO THE FIRST BUNDLE THAT CARRIES BOTH ENGINES. The sha-based
+        // router landed 11-23, three days after 46 was built, so every tester
+        // on 46 runs its baked-in 4.72 with no fallback while the league
+        // scores 4.76 -- and 4.75 moved real results, so that is a correctness
+        // gap and not just a slow one. From 47 on, an AAR behind the league
+        // costs SPEED: the app hashes the live engine and runs the server's JS
+        // when its own is stale. That is what makes the next rebuild unhurried.
+        versionCode 47
+        versionName "1.36"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         // THE AAR'S PROVENANCE, READ FROM ITS OWN METADATA.

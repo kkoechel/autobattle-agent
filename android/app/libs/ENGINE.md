@@ -6,9 +6,9 @@ built artefact against the live league before a release.
 
 | | |
 |---|---|
-| engine version | **4.72** |
-| built from | `autobattle.online` commit `b863852`, `Engine v4.72: per-ability only_if conditions + card_count gate` (engine subtree `361b8fb`) |
-| built on | 2026-11-20 |
+| engine version | **4.76** |
+| built from | `autobattle.online` commit `dd1b394`, `Engine 4.76: large boards run several times faster, results unchanged` (engine subtree `f0a3efe`) |
+| built on | 2026-11-24 |
 | built by | `shell/engine/build_aar.sh`, extracted with `git archive` so the main repo is never touched |
 
 ## Build it from the engine source at the version the league scores with
@@ -365,10 +365,23 @@ meaning something after the AAR is rebuilt. 47/47 on the S22.
 `check_engine_parity.sh` still compares this AAR against the league and is still
 worth reading — a stale AAR now costs speed instead of correctness, but it is
 still stale. **Rebuild the AAR as usual; you just no longer have to hurry.**
-When you do, update `js_sha256` alongside `version`/`sha256`, re-pin
-`androidTest/assets/battle-engine.js` from the live URL, and re-derive fixture
-digests from the Go CLI (`cmd/parity <asset> --hash`), never from what the app
-returns.
+
+There are **five** pinned things to update, not three, and this list was
+missing two of them until 2026-11-24, when the device suite failed on both:
+
+1. `engine.aar.json` -- `version`, `sha256`, `source_commit`, `source_tree`,
+   `built` and `js_sha256`
+2. `androidTest/assets/battle-engine.js` -- re-pin it
+3. the `Fixture` digest tables in **both** `EngineParityTest.kt` and
+   `JsEngineParityTest.kt`, re-derived from the Go CLI
+   (`cmd/parity <asset> --hash`), never from what the app returns
+4. `EngineParityTest.engineVersion` -- the assertion on `Mobile.version()`,
+   which is the only check that catches a stale AAR when no fixture can
+5. `JsEngineParityTest.pinnedEngineSha` -- asserts the pinned asset is the
+   file its own comment claims
+
+Grep the tree for the OLD version string and the OLD sha before building, and
+expect to find more sites than this list names.
 
 ### Known cost, not yet paid down
 
@@ -451,3 +464,67 @@ It also means a stale AAR is no longer only slower. On 4.72 against a league
 scoring 4.75, a 1,491-match cohort now measures differently.
 
 49/49 instrumented tests on the S22.
+
+## 2026-11-24: v4.76, versionCode 47 — and the fixture that witnessed it was the one nobody designed to
+
+Built from `dd1b394` (engine subtree `f0a3efe`) on Ryan's go. versionCode
+**47**, versionName **1.36**. `engine.aar` is 2,190,480 bytes, sha256
+`d87a3728…`; the handover bundle is `~/Downloads/cardbattle-agent-1.36-47.aab`.
+
+Four asks in one bundle — 4.73, 4.74, 4.75, 4.76 — continuing the pattern the
+11-16 and 11-20 entries describe.
+
+### Only ONE of eleven fixtures can tell this from 4.72
+
+| | |
+|---|---|
+| `payload.json` (1491, from 2026-09-24) | `1b5e48ac…` → **`6ac148d4…`** |
+| the other ten | byte-identical 4.72 → 4.76 |
+
+The one that moved is the broad collateral fixture — the only one here that
+was **never built to witness anything**. Every fixture built FOR a specific
+engine change reports "no drift" across four versions. The 11-16 entry
+celebrated that six of ten could witness their own change; the inverse is
+true here, and the lesson is to keep the broad fixture no matter how little
+it looks like a regression test. The digest moved on v4.75 (xN link keywords
+use the whole multiplier, `create_token_copy` takes `max_tokens`); 4.76 is
+speed only and alters no result, exactly as the handoff said.
+
+### This is the first bundle that carries BOTH engines
+
+The sha-based router landed in `5338e8f`…`016e8e2`, all dated **2026-11-23** —
+three days AFTER the 46 bundle was built on 11-20. So **46 has no fallback at
+all**: every internal tester on it ran its baked-in 4.72 against a league
+scoring 4.76, and since 4.75 moved results on a real 1,491-match cohort that
+was a correctness gap, not merely a slow one. The design that makes staleness
+cost speed instead of correctness existed only in this working tree until now.
+
+With `js_sha256` equal to the live `engine_sha256`, the router picks **Go**
+again, so the app also gets its ~2.5x back.
+
+### Verification
+
+| | |
+|---|---|
+| `go test ./...` on the extracted tree | ok |
+| three witnesses agree on all eleven digests | `cmd/parity --hash`, `cmd/mobilecheck` (reporting `4.76`) and `validate --local-payload` piped through sha256, byte for byte |
+| the live server serves the JS this AAR records | `GET /api/v1/engine` declares `9d768f30…`; `git show dd1b394:js/battle-engine.js` hashes the same |
+| `check_engine_parity.sh` | **PARITY OK**, run again immediately before handover — red by Ryan's choice since 11-23 |
+| the `.so` in the bundle is the one in the AAR | both `508e0b1b…`, 3,957,832 bytes |
+| engine strings inside the shipped library | `4.76`, and no other 4.5x/4.6x/4.7x |
+| versionCode read from the bundle | `47` / `1.36`, decoded out of the protobuf manifest rather than trusted from build.gradle |
+| not the dev variant | no `agent.dev` or `Cardbattle (dev)` string |
+| **on-device** | **49/49 on the S22**, gradle's own exit status read directly rather than through a pipe |
+
+It did not pass first time, and the failure was mine: the `Fixture` tables were
+updated and `EngineParityTest.engineVersion` (`4.72`) and
+`JsEngineParityTest.pinnedEngineSha` were not, so two tests failed with the new
+values in the "was" position. The suite was right. The checklist above now
+names all five sites; it named three.
+
+Two other things were stale and are fixed. `androidTest/assets/battle-engine.js`
+was 423,760 bytes against a live 442,610 — pinned at v4.73 while the file above
+claimed to re-pin every time. And **the phone is at `192.168.88.38`**, not the
+`.39` recorded on 11-21; `adb devices -l` before assuming either.
+
+The upload stays Ryan's.

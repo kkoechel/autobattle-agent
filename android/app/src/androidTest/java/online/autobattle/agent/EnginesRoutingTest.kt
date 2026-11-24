@@ -18,13 +18,13 @@ import org.junit.runner.RunWith
 /**
  * Which engine a measurement is taken with, and whether the app says so.
  *
- * These assert the RULE, not today's world. The interesting case right now is
- * that the AAR is 4.72 while the server serves 4.73, so the router should pick
- * JS -- but the moment the AAR is rebuilt that flips, and a test pinned to
- * "expect JS" would start failing for the best possible reason. So the
- * expectation is computed from the same two shas the router compares, and what
- * is asserted is that the router agrees with them and that the digest is right
- * either way.
+ * These assert the RULE, not today's world. When this was written the AAR was
+ * 4.72 against a server serving 4.73, so the router had to pick JS; since the
+ * 2026-11-24 rebuild to 4.76 the two shas agree and it picks Go. That flip is
+ * exactly why a test pinned to "expect JS" would have started failing for the
+ * best possible reason. So the expectation is computed from the same two shas
+ * the router compares, and what is asserted is that the router agrees with
+ * them and that the digest is right either way.
  */
 @RunWith(AndroidJUnit4::class)
 class EnginesRoutingTest {
