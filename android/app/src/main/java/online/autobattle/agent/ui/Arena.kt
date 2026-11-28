@@ -245,6 +245,21 @@ fun ArenaPane(
     var builtPoorly by remember { mutableStateOf(false) }
     // The player asking the agent to talk, rather than waiting to be asked.
     var askNow by remember { mutableStateOf(false) }
+    /**
+     * Whether the whole menu is open.
+     *
+     * THE SCREEN OPENS ON A POSITION, NOT ON A WALL OF CHOICES. Ryan, 11-27:
+     * "there needs to be a clear thing telling what deck, our strategies, our
+     * record, and how long we've been running this configuration, and like a
+     * two buttons: keep at it and change something, and only if change
+     * something is pressed should all the dialogue come up."
+     *
+     * False by default on purpose: the common visit is a glance at how the
+     * deck is doing, and eight options is the wrong answer to that.
+     */
+    var ordersOpen by remember { mutableStateOf(false) }
+    /** The player has said to hold, so the screen goes quiet until something changes. */
+    var ordersHeld by remember { mutableStateOf(false) }
     var showHelp by remember { mutableStateOf(false) }
     // The rules conversation, and which question is open in it. Null means
     // the list of questions rather than an answer.
@@ -846,6 +861,20 @@ fun ArenaPane(
                 else -> "\u201c${directive.summary()}\u201d"
             }
 
+            // SAID ONCE. The idle line IS the standing orders, so the card
+            // below would otherwise print the same sentence directly under
+            // it -- and duplication is most of what makes this screen feel
+            // like a wall. The card carries the orders only when the line
+            // above is busy saying something else (a question, a result, a
+            // deck still waiting for its round).
+            val lineIsOrders = !newsBusy && !busy && q == null &&
+                justBuilt == null && !planPending && !awaitingRound
+            // Same reasoning for the clock: the awaiting-round block below
+            // already prints "Next round in about N minutes" in exactly the
+            // case it is shown.
+            val nextShownAbove = !busy && q == null && awaitingRound &&
+                !planPending && justBuilt == null
+
             // Cards the agent could plausibly be naming: the one the plan is
             // built around, the one being proposed, and everything in the
             // deck. Deliberately not the whole catalogue -- there are cards
@@ -877,12 +906,33 @@ fun ArenaPane(
                     (LocalConfiguration.current.screenHeightDp * 0.20f).dp))
             }
 
+            // THE RUNNING CONFIGURATION, hoisted above the window because
+            // the link row BELOW the window is gated on it too -- those four
+            // doors are part of the same wall the card replaces.
+            //
+            // Only with a deck actually in play: a new player has no
+            // configuration to summarise and needs the choices, and during a
+            // build or a rehearsal the state is changing under the card. In
+            // those cases the screen behaves exactly as it did.
+            val config = myDeck?.takeIf {
+                !busy && justBuilt == null && !trialBusy && loaded
+            }
+            val revNow = config?.optInt("revision") ?: 0
+
             SnesWindow {
                 // No portrait here any more. The avatar now stands full
                 // height behind this window, so drawing the little one as
                 // well put the same character on screen twice -- the exact
                 // thing that looked wrong when the dialogue had two.
-                TypedLine(line, spoken, onOpenCard = { showCard = it })
+                // THE CARD SAYS IT NOW. In the idle state the spoken line
+                // IS the standing orders -- the same sentence the card
+                // prints directly under it -- and saying a thing twice is
+                // most of what made this screen read as a wall. The Paragon
+                // still speaks in every other state: a question, a result, a
+                // deck waiting for its round, a build in flight, the news.
+                if (!(lineIsOrders && config != null)) {
+                    TypedLine(line, spoken, onOpenCard = { showCard = it })
+                }
                 if (busy) {
                     val pr = progress
                     if (pr != null) SnesProgress(pr.done, pr.total) else SnesProgress(0, 1)
@@ -974,7 +1024,41 @@ fun ArenaPane(
                         })
                 }
 
-                if (!busy) SnesChoiceBox {
+                // WHAT WE ARE RUNNING, ABOVE WHAT COULD BE DONE ABOUT IT.
+                // A NEW DECK IS A NEW CONVERSATION, but a new ROUND is not:
+                // resetting the open menu whenever a round landed would shut
+                // it under the player's finger every half hour. A round only
+                // clears the hold, because a fresh result is exactly the
+                // thing worth looking at again.
+                LaunchedEffect(revNow) { ordersOpen = false; ordersHeld = false }
+                LaunchedEffect(standings?.optJSONObject("round")?.optInt("id") ?: 0) {
+                    ordersHeld = false
+                }
+                if (config != null) {
+                    StandingOrders(
+                        deckName = config.optString("name"),
+                        revision = revNow,
+                        orders = directive.summary(),
+                        // Counted by REVISION. "How long have we been running
+                        // this" has an exact answer -- the rounds this deck
+                        // has actually been scored in -- and deriving it from
+                        // updated_at and a half-hour cadence would be a guess
+                        // printed as a fact.
+                        played = history?.let { h ->
+                            (0 until h.length()).map { h.getJSONObject(it) }
+                                .filter { it.optInt("revision") == revNow }
+                        } ?: emptyList(),
+                        nextAt = if (nextShownAbove) null
+                                 else standings?.optJSONObject("round")
+                                     ?.optString("next_at"),
+                        asking = q != null,
+                        open = ordersOpen,
+                        held = ordersHeld,
+                        onHold = { ordersOpen = false; ordersHeld = true },
+                        onChange = { ordersOpen = true; ordersHeld = false },
+                    )
+                }
+                if (!busy && (config == null || ordersOpen)) SnesChoiceBox {
                     if (q != null) {
                         for (c in q.choices) {
                             SnesChoice(
@@ -1512,7 +1596,11 @@ fun ArenaPane(
                 if (trialBusy) SnesProgress(0, 1)
             }
 
-            if (!busy && q == null) {
+            // BEHIND THE BUTTON WITH THE REST. "Pick a theme...", "Find a
+            // card..." and the rest are change-something actions, and
+            // leaving them on screen would have kept most of the wall the
+            // card was meant to replace.
+            if (!busy && q == null && (config == null || ordersOpen)) {
                 // A ROW THAT WRAPS. These are GameLinks, which are
                 // maxLines=1 and clip rather than wrap, so a third button
                 // pushed the last one off the edge -- "Let's talk" was
@@ -3414,6 +3502,118 @@ private fun DriftingCards(cards: Map<Int, CardInfo>, modifier: Modifier = Modifi
  * because that is the common case and hiding it would make the agent look
  * like it improves the deck every time, which it does not.
  */
+/**
+ * The standing position: this deck, these orders, this record, this long.
+ *
+ * Asked for by Ryan on 2026-11-27, looking at a screen that opened on eight
+ * options and stated nothing. Everything here was already on the device --
+ * the deck in `GET /me`, the orders in the Directive, the record in the
+ * history rows -- but it was spread over a spoken sentence, a settings
+ * screen and a table two screens down, so the one question a player actually
+ * arrives with ("how are we doing?") had no answer in one place.
+ *
+ * THE ROUNDS ARE COUNTED, NOT ESTIMATED. `played` is the history rows whose
+ * revision matches the deck in play, so "four rounds under these orders" is
+ * four rounds that were really scored with this list. A timestamp and an
+ * assumed cadence would have printed a number that drifts.
+ */
+@Composable
+private fun StandingOrders(
+    deckName: String,
+    revision: Int,
+    /** Null when the spoken line above already says it, so it is not said twice. */
+    orders: String?,
+    /** History rows for THIS revision, newest first. */
+    played: List<JSONObject>,
+    nextAt: String?,
+    asking: Boolean,
+    open: Boolean,
+    held: Boolean,
+    onHold: () -> Unit,
+    onChange: () -> Unit,
+) {
+    val gold = androidx.compose.ui.graphics.Color(0xFFFFE28C)
+    val dim = androidx.compose.ui.graphics.Color(0xFF8A8AA8)
+    val pale = androidx.compose.ui.graphics.Color(0xFFA8A8C8)
+    val good = androidx.compose.ui.graphics.Color(0xFF8CE8A0)
+    SnesChoiceBox {
+        Row(Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(deckName.ifBlank { "Your deck" }, Modifier.weight(1f),
+                style = snesText(14, gold),
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            // The revision is how the history table names a run, so it is
+            // the one number that ties this card to the rounds below it.
+            Text("r$revision", style = snesText(13, dim))
+        }
+        orders?.let { Text(it, style = snesText(13, pale)) }
+        if (played.isEmpty()) {
+            Text("Not scored under these orders yet.", style = snesText(13))
+        } else {
+            val places = played.map { it.optInt("placement") }.filter { it > 0 }
+            val of = played.first().optInt("of")
+            val best = places.minOrNull() ?: 0
+            val w = played.sumOf { it.optDouble("wins") }
+            val l = played.sumOf { it.optDouble("losses") }
+            val d = played.sumOf { it.optDouble("draws") }
+            // Six is as many as reads at a glance; a deck left alone for a
+            // day would otherwise print a paragraph of ordinals.
+            val shown = places.take(6).joinToString(", ") { ordinal(it) } +
+                if (places.size > 6) "\u2026" else ""
+            // LATEST FIRST, said out loud. The history table below this is
+            // ordered newest-first (the server sends it that way), so the
+            // two have to agree -- and a bare list of ordinals gives no clue
+            // which end is now.
+            // A row can carry a 0 placement -- a deck entered but not
+            // placed. With every row like that there is no list to print,
+            // and "2 rounds under these orders: of 24." is what the
+            // unguarded version says.
+            Text("${played.size} round${if (played.size == 1) "" else "s"} " +
+                "under these orders" +
+                (if (places.isEmpty()) "."
+                 else (if (places.size > 1) ", latest first" else "") +
+                      ": $shown" + (if (of > 0) " of $of" else "") + "."),
+                style = snesText(13))
+            if (best > 0) {
+                Text("Best ${ordinal(best)}. " +
+                    "${"%.0f".format(w)}-${"%.0f".format(l)}-${"%.0f".format(d)} " +
+                    "across them.",
+                    // Lit the same way the history table lights a top-third
+                    // finish, so the two agree about what counts as good.
+                    style = snesText(12, if (of > 0 && best * 3 <= of) good else pale))
+            }
+        }
+        nextAt?.takeIf { it.isNotBlank() }?.let {
+            Text(untilRound(it) + ".", style = snesText(12, dim))
+        }
+        // The agent still speaks its question in the line above this card;
+        // what moved is only the ANSWERS. Without this the player would read
+        // a question with no visible way to answer it.
+        if (asking && !open) {
+            Text("\u25b8 Something to decide \u2014 it is under " +
+                "\u201cChange something\u201d.",
+                style = snesText(12, gold))
+        }
+        if (held && !open) {
+            Text("Holding. Nothing changes until you say so.",
+                style = snesText(12, dim))
+        }
+        Row(Modifier.padding(top = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // EVERY BUTTON HERE DOES SOMETHING. With the menu open "Keep at
+            // it" shuts it; with the menu shut it quietens the card. A
+            // button whose press changes nothing on screen is the thing this
+            // app keeps being reported for.
+            if (open) {
+                GameLink("Keep at it") { onHold() }
+            } else {
+                if (!held) GameLink("Keep at it") { onHold() }
+                GameLink("Change something") { onChange() }
+            }
+        }
+    }
+}
+
 @Composable
 private fun DojoBench(passes: List<Compete.Bench>, now: Compete.Progress?) {
     if (passes.isEmpty()) {
