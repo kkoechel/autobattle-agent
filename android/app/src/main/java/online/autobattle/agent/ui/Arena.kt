@@ -869,6 +869,14 @@ fun ArenaPane(
             // deck still waiting for its round).
             val lineIsOrders = !newsBusy && !busy && q == null &&
                 justBuilt == null && !planPending && !awaitingRound
+            // A PENDING QUESTION IS DIALOGUE TOO. The rule for this screen is
+            // that nothing but the card shows until "Change something" is
+            // pressed, and a question's prose is the loudest thing on it --
+            // it was still printing above the card on the first device run.
+            // The card already points at it ("Something to decide -- it is
+            // under Change something"), so the words wait for the menu.
+            val questionHeldBack = q != null && !newsBusy && !busy &&
+                justBuilt == null && !planPending
             // Same reasoning for the clock: the awaiting-round block below
             // already prints "Next round in about N minutes" in exactly the
             // case it is shown.
@@ -930,7 +938,8 @@ fun ArenaPane(
                 // most of what made this screen read as a wall. The Paragon
                 // still speaks in every other state: a question, a result, a
                 // deck waiting for its round, a build in flight, the news.
-                if (!(lineIsOrders && config != null)) {
+                val cardSaysIt = lineIsOrders || (questionHeldBack && !ordersOpen)
+                if (!(cardSaysIt && config != null)) {
                     TypedLine(line, spoken, onOpenCard = { showCard = it })
                 }
                 if (busy) {
